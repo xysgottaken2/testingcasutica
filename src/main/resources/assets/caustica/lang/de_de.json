@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Raytracing",
 
-	"caustica.options.rt.exposureMode": "Belichtung",
-	"caustica.options.rt.exposureMode.tooltip": "Wie das Raytracing-Bild auf die Anzeigehelligkeit abgebildet wird. Automatisch passt sich der Szenenhelligkeit an; Manuell verwendet den Belichtungswert direkt.",
-	"caustica.options.rt.exposureMode.auto": "Automatisch",
-	"caustica.options.rt.exposureMode.manual": "Manuell",
+	"caustica.options.rt.eyeAdaptation": "Augenanpassung",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Passt die Belichtung automatisch an die Helligkeit der Szene an, so wie sich die Augen an Dunkelheit und helles Licht gewöhnen. Beim Betreten von Höhlen oder tiefen Strukturen wird die Belichtung sanft angehoben, sodass dunkle Bereiche sichtbar werden; bei der Rückkehr in helles Tageslicht wird sie wieder reduziert, um Überbelichtung zu vermeiden. Aus fixiert die Belichtung auf den festen Wert für Belichtung EV, ohne Anpassung.",
 
 	"caustica.options.rt.manualEv": "Belichtung EV",
-	"caustica.options.rt.manualEv.tooltip": "Belichtungskorrektur in Blendenstufen. Im manuellen Modus ist dies die feste Belichtung. Im automatischen Modus verschiebt dies die automatische Belichtung heller oder dunkler.",
+	"caustica.options.rt.manualEv.tooltip": "Fester Belichtungswert in Blendenstufen (EV), der verwendet wird, wenn Augenanpassung aus ist. Wenn Augenanpassung an ist, verschiebt dieser Wert die automatische Belichtung heller (positiv) oder dunkler (negativ).",
 
 	"caustica.options.rt.spp": "Samples pro Pixel",
 	"caustica.options.rt.spp.tooltip": "Pathtracing-Samples, die pro Pixel in jedem Frame genommen werden. Höhere Werte sind sauberer, aber anspruchsvoller.",

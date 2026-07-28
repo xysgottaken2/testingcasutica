@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Ray Tracing",
 
-	"caustica.options.rt.exposureMode": "Exposure",
-	"caustica.options.rt.exposureMode.tooltip": "How the ray-traced image is mapped to display brightness. Auto adapts to scene luminance; Manual uses the exposure value directly.",
-	"caustica.options.rt.exposureMode.auto": "Auto",
-	"caustica.options.rt.exposureMode.manual": "Manual",
+	"caustica.options.rt.eyeAdaptation": "Eye Adaptation",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Automatically adjust exposure based on scene luminance, mimicking how the eyes adapt to darkness and bright light. When entering caves or deep structures, exposure ramps up smoothly so dark areas become visible; when returning to bright daylight, exposure scales back down to prevent overexposure. Off pins exposure to the fixed Exposure EV value with no adaptation.",
 
 	"caustica.options.rt.manualEv": "Exposure EV",
-	"caustica.options.rt.manualEv.tooltip": "Exposure compensation in stops. In Manual, this is the fixed exposure. In Auto, this biases the auto exposure brighter or darker.",
+	"caustica.options.rt.manualEv.tooltip": "Fixed exposure value, in EV stops, used when Eye Adaptation is Off. When Eye Adaptation is On, this biases the automatic exposure brighter (positive) or darker (negative).",
 
 	"caustica.options.rt.spp": "Samples Per Pixel",
 	"caustica.options.rt.spp.tooltip": "Path-tracing samples taken per pixel each frame. Higher is cleaner but more demanding.",

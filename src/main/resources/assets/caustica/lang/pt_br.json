@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Traçado de raios",
 
-	"caustica.options.rt.exposureMode": "Exposição",
-	"caustica.options.rt.exposureMode.tooltip": "Como a imagem com traçado de raios é mapeada para o brilho da tela. Automático se adapta à luminância da cena; Manual usa diretamente o valor de exposição.",
-	"caustica.options.rt.exposureMode.auto": "Automático",
-	"caustica.options.rt.exposureMode.manual": "Manual",
+	"caustica.options.rt.eyeAdaptation": "Adaptação ocular",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Ajusta automaticamente a exposição com base na luminância da cena, imitando como os olhos se adaptam à escuridão e à luz intensa. Ao entrar em cavernas ou estruturas profundas, a exposição aumenta suavemente para que áreas escuras fiquem visíveis; ao voltar à luz do dia forte, a exposição diminui para evitar superexposição. Desativado fixa a exposição no valor fixo de Exposição EV, sem adaptação.",
 
 	"caustica.options.rt.manualEv": "Exposição EV",
-	"caustica.options.rt.manualEv.tooltip": "Compensação de exposição em pontos. No Manual, esta é a exposição fixa. No Automático, ela desloca a exposição automática para mais clara ou mais escura.",
+	"caustica.options.rt.manualEv.tooltip": "Valor fixo de exposição, em pontos EV, usado quando Adaptação ocular está desativada. Quando ativada, esse valor desvia a exposição automática para mais clara (positivo) ou mais escura (negativo).",
 
 	"caustica.options.rt.spp": "Amostras por pixel",
 	"caustica.options.rt.spp.tooltip": "Amostras de path tracing tomadas por pixel em cada quadro. Valores maiores são mais limpos, mas exigem mais desempenho.",

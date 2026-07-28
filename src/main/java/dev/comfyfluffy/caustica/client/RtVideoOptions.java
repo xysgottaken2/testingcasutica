@@ -68,7 +68,7 @@ public final class RtVideoOptions {
     /** Tonemapping/exposure options for the display-mapping pass. */
     public static OptionInstance<?>[] tonemapOptions() {
         return new OptionInstance<?>[] {
-            exposureMode(),
+            eyeAdaptation(),
             manualEv(),
             tonemapOperator(),
             tonemapExposure(),
@@ -78,17 +78,13 @@ public final class RtVideoOptions {
         };
     }
 
-    private static OptionInstance<String> exposureMode() {
-        StringSetting setting = CausticaConfig.Rt.Exposure.MODE;
-        return new OptionInstance<>(
-            "caustica.options.rt.exposureMode",
-            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.exposureMode.tooltip")),
-            // CycleButton (used for Enum values) already prepends "caption: " itself (DisplayState.
-            // NAME_AND_VALUE), so this must return only the value's text, not caption + value again.
-            (caption, value) -> Component.translatable("caustica.options.rt.exposureMode." + value),
-            new OptionInstance.Enum<>(List.of("auto", "manual"), Codec.STRING),
-            setting.get(),
-            setting::set);
+    /**
+     * Eye Adaptation (Auto-Exposure) master toggle. On: meters scene luminance each frame and smoothly
+     * ramps exposure — caves/deep structures brighten, bright daylight scales back down. Off: pins
+     * exposure to the fixed base value ({@code Exposure EV}) with no adaptation.
+     */
+    private static OptionInstance<Boolean> eyeAdaptation() {
+        return bool("caustica.options.rt.eyeAdaptation", CausticaConfig.Rt.Exposure.EYE_ADAPTATION);
     }
 
     private static OptionInstance<Integer> manualEv() {

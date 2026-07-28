@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "레이 트레이싱",
 
-	"caustica.options.rt.exposureMode": "노출",
-	"caustica.options.rt.exposureMode.tooltip": "레이 트레이싱 이미지가 디스플레이 밝기에 매핑되는 방식을 정합니다. 자동은 장면 휘도에 맞춰 조정하고, 수동은 노출 값을 그대로 사용합니다.",
-	"caustica.options.rt.exposureMode.auto": "자동",
-	"caustica.options.rt.exposureMode.manual": "수동",
+	"caustica.options.rt.eyeAdaptation": "눈 적응",
+	"caustica.options.rt.eyeAdaptation.tooltip": "눈이 어둠과 밝은 빛에 적응하는 방식을 본떠 장면의 휘도에 따라 노출을 자동으로 조절합니다. 동굴이나 깊은 구조물에 들어가면 노출이 부드럽게 높아져 어두운 영역이 잘 보이고, 밝은 낮으로 돌아오면 노출이 낮아져 과노출을 방지합니다. 끄면 노출이 적응 없이 '노출 EV' 값으로 고정됩니다.",
 
 	"caustica.options.rt.manualEv": "노출 EV",
-	"caustica.options.rt.manualEv.tooltip": "스톱 단위의 노출 보정입니다. 수동에서는 고정 노출로 사용되며, 자동에서는 자동 노출을 더 밝거나 어둡게 보정합니다.",
+	"caustica.options.rt.manualEv.tooltip": "눈 적응이 꺼져 있을 때 사용되는 고정 노출 값(EV 스톱 단위). 켜져 있을 때는 자동 노출을 밝게(양수) 또는 어둡게(음수) 보정합니다.",
 
 	"caustica.options.rt.spp": "픽셀당 샘플 수",
 	"caustica.options.rt.spp.tooltip": "각 프레임에서 픽셀마다 사용하는 패스 트레이싱 샘플 수입니다. 높을수록 깨끗하지만 더 많은 성능이 필요합니다.",

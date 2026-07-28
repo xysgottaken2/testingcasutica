@@ -61,7 +61,7 @@ public final class CausticaConfig {
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
             Rt.Entities.ENABLED, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
             Rt.Reflex.ENABLED, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY, Rt.Hand.FOV_FOLLOWS_CAMERA,
-            Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
+            Rt.Exposure.MODE, Rt.Exposure.EYE_ADAPTATION, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
 
@@ -120,6 +120,15 @@ public final class CausticaConfig {
                         + " sampled area-light contribution. ris-candidates = 0 disables RIS emitter NEE\n"
                         + " entirely (emitters just gather on direct hit). min-fill-ratio drops sparse emissive\n"
                         + " footprints from the light buffer. stats/dump/dump-radius are debug logging.");
+        FILE.setComment("exposure",
+                " Display exposure (brightness). eye-adaptation is the master toggle in Video Settings:\n"
+                        + " true (On) meters the scene each frame and smoothly ramps exposure between caves and\n"
+                        + " daylight; false (Off) pins exposure to manual-ev, a fixed EV bias applied to the\n"
+                        + " base scene. key is the target middle-gray in EV; min-ev / max-ev clamp the auto\n"
+                        + " range (defaults allow roughly 1/8x dimming in highlights and ~500x brightening in\n"
+                        + " deep caves); adapt-up / adapt-down control how quickly exposure chases the\n"
+                        + " luminance target (adapt-up = eye dark-adapting going into caves, adapt-down =\n"
+                        + " recovery from glare stepping back into daylight).");
         FILE.setComment("tonemap",
                 " Scene tonemapping after exposure and before writing the vanilla SDR target. operator selects\n"
                         + " the curve; exposure-ev is an extra post-exposure bias; gamma/saturation/contrast\n"
@@ -783,13 +792,25 @@ public final class CausticaConfig {
         public static final class Exposure {
             public static final StringSetting MODE =
                     string("caustica.rt.exposure.mode", "exposure.mode", "auto", Exposure::sanitizeMode);
+            /**
+             * Player-facing master switch for automatic luminance-based exposure (a.k.a. "Eye Adaptation").
+             * When On, the renderer meters the denoised HDR image each frame and smoothly ramps exposure
+             * so caves and deep structures brighten up and blinding daylight scales back down. When Off,
+             * exposure is pinned to the fixed base (manual EV) value with no adaptation.
+             *
+             * <p>The older {@link #MODE} string setting ("auto"/"manual") is kept for config/toml
+             * compatibility and is driven by this toggle at runtime: whenever eye adaptation is disabled
+             * the resolver forces manual mode, and whenever it is enabled it forces auto mode.
+             */
+            public static final BooleanSetting EYE_ADAPTATION =
+                    bool("caustica.rt.exposure.eyeAdaptation", "exposure.eye-adaptation", true);
             public static final FloatSetting MANUAL_EV =
                     finiteFloat("caustica.rt.exposure.manualEv", "exposure.manual-ev", 0.0f);
             public static final FloatSetting KEY = exposureScale("caustica.rt.exposure.key", "exposure.key", 0.18f);
             public static final FloatSetting MIN_EV =
-                    finiteFloat("caustica.rt.exposure.minEv", "exposure.min-ev", -1.5f);
+                    finiteFloat("caustica.rt.exposure.minEv", "exposure.min-ev", -3.0f);
             public static final FloatSetting MAX_EV =
-                    finiteFloat("caustica.rt.exposure.maxEv", "exposure.max-ev", 4.0f);
+                    finiteFloat("caustica.rt.exposure.maxEv", "exposure.max-ev", 9.0f);
             public static final FloatSetting ADAPT_UP =
                     exposureScale("caustica.rt.exposure.adaptUp", "exposure.adapt-up", 0.12f);
             public static final FloatSetting ADAPT_DOWN =

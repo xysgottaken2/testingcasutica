@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Lancer de rayons",
 
-	"caustica.options.rt.exposureMode": "Exposition",
-	"caustica.options.rt.exposureMode.tooltip": "Détermine comment l'image en lancer de rayons est convertie en luminosité d'affichage. Auto s'adapte à la luminance de la scène ; Manuel utilise directement la valeur d'exposition.",
-	"caustica.options.rt.exposureMode.auto": "Auto",
-	"caustica.options.rt.exposureMode.manual": "Manuel",
+	"caustica.options.rt.eyeAdaptation": "Adaptation oculaire",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Ajuste automatiquement l'exposition en fonction de la luminance de la scène, à l'image de la façon dont les yeux s'adaptent à l'obscurité et à la lumière vive. En entrant dans les grottes ou les structures profondes, l'exposition augmente en douceur pour rendre visibles les zones sombres ; en revenant à la lumière vive du jour, elle diminue pour éviter la surexposition. Désactivé, l'exposition reste bloquée sur la valeur fixe d'Exposition EV, sans adaptation.",
 
 	"caustica.options.rt.manualEv": "Exposition EV",
-	"caustica.options.rt.manualEv.tooltip": "Correction d'exposition en stops. En mode Manuel, c'est l'exposition fixe. En mode Auto, elle décale l'exposition automatique vers plus clair ou plus sombre.",
+	"caustica.options.rt.manualEv.tooltip": "Valeur d'exposition fixe, en stops EV, utilisée lorsque l'Adaptation oculaire est désactivée. Lorsqu'elle est activée, cette valeur décale l'exposition automatique vers le clair (positif) ou le sombre (négatif).",
 
 	"caustica.options.rt.spp": "Échantillons par pixel",
 	"caustica.options.rt.spp.tooltip": "Échantillons de path tracing pris par pixel à chaque image. Une valeur plus élevée est plus propre, mais plus coûteuse.",

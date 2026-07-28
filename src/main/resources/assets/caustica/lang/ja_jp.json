@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "レイトレーシング",
 
-	"caustica.options.rt.exposureMode": "露出",
-	"caustica.options.rt.exposureMode.tooltip": "レイトレーシング画像をディスプレイの明るさにどう変換するかを設定します。自動はシーンの輝度に合わせて調整し、手動は露出値をそのまま使用します。",
-	"caustica.options.rt.exposureMode.auto": "自動",
-	"caustica.options.rt.exposureMode.manual": "手動",
+	"caustica.options.rt.eyeAdaptation": "目の順応",
+	"caustica.options.rt.eyeAdaptation.tooltip": "目が暗闇や明るい光に順応する様子を模して、シーンの輝度に基づいて自動的に露出を調整します。洞窟や深部の構造物に入ると、スムーズに露出が上がって暗い部分が見えるようになり、明るい昼間に戻ると露出が下がって白飛びを防ぎます。オフの場合は順応を行わず、露出 EV で設定した固定露出を使用します。",
 
 	"caustica.options.rt.manualEv": "露出 EV",
-	"caustica.options.rt.manualEv.tooltip": "露出補正を段数で指定します。手動では固定露出として使い、自動では自動露出を明るくまたは暗く補正します。",
+	"caustica.options.rt.manualEv.tooltip": "目の順応がオフのときに使われる固定露出値 (EV 段数)。オンのときは自動露出を明るく (正) または暗く (負) 補正します。",
 
 	"caustica.options.rt.spp": "ピクセルあたりのサンプル数",
 	"caustica.options.rt.spp.tooltip": "各フレームでピクセルごとに取得するパストレーシングサンプル数。高いほどきれいですが負荷が増えます。",

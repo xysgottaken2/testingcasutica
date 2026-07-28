@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Trazado de rayos",
 
-	"caustica.options.rt.exposureMode": "Exposición",
-	"caustica.options.rt.exposureMode.tooltip": "Cómo se asigna la imagen con trazado de rayos al brillo de la pantalla. Automática se adapta a la luminancia de la escena; Manual usa directamente el valor de exposición.",
-	"caustica.options.rt.exposureMode.auto": "Automática",
-	"caustica.options.rt.exposureMode.manual": "Manual",
+	"caustica.options.rt.eyeAdaptation": "Adaptación ocular",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Ajusta automáticamente la exposición según la luminosidad de la escena, imitando cómo los ojos se adaptan a la oscuridad y a la luz brillante. Al entrar en cuevas o estructuras profundas, la exposición aumenta suavemente para que las zonas oscuras sean visibles; al volver a la luz brillante del día, la exposición se reduce para evitar el sobreexpuesto. Desactivado fija la exposición al valor fijo de Exposición EV, sin adaptación.",
 
 	"caustica.options.rt.manualEv": "Exposición EV",
-	"caustica.options.rt.manualEv.tooltip": "Compensación de exposición en pasos. En Manual, es la exposición fija. En Automática, desplaza la exposición automática para aclararla u oscurecerla.",
+	"caustica.options.rt.manualEv.tooltip": "Valor fijo de exposición, en pasos EV, que se usa cuando la Adaptación ocular está desactivada. Cuando está activada, este valor sesga la exposición automática hacia más brillante (positivo) o más oscuro (negativo).",
 
 	"caustica.options.rt.spp": "Muestras por píxel",
 	"caustica.options.rt.spp.tooltip": "Muestras de trazado de caminos tomadas por píxel en cada fotograma. Un valor más alto es más limpio, pero más exigente.",
