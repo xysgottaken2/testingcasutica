@@ -32,7 +32,12 @@ float binCenter(uint bin) {
 
 void main() {
     uint total = max(pc.pixelCount, 1u);
-    uint lowCount = uint(floor(float(total) * 0.50));
+    // Trim the top 5% (bright speculars, the sun disc, emissive hotspots) so a small torch or sun
+    // peek doesn't dominate the average, but keep the lower tail down to ~2%: discarding 50% of the
+    // darkest pixels (the historical trim here) made caves read as "half-bright" because in a deep
+    // cave the vast majority of pixels ARE dark and get thrown out before averaging, so the meter
+    // only saw the hotbar/torch highlights and refused to ramp exposure up.
+    uint lowCount = uint(floor(float(total) * 0.02));
     uint highCount = max(lowCount + 1u, uint(ceil(float(total) * 0.95)));
 
     uint cumulative = 0u;
@@ -52,7 +57,12 @@ void main() {
         cumulative = end;
     }
 
-    float avgLogLum = weightedCount > 0u ? weightedLogLum / float(weightedCount) : 0.0;
+    // If the whole image is black (weightedCount == 0 can happen when every pixel saturates the
+    // darkest bin, e.g. a void / unloaded terrain) drive exposure straight to maxEv instead of
+    // defaulting to key*1.0 which leaves the screen black.
+    float avgLogLum = weightedCount > 0u
+            ? weightedLogLum / float(weightedCount)
+            : pc.minEv;
     float target = pc.key * exp2(pc.evBias - avgLogLum);
     target = clamp(target, exp2(pc.minEv), exp2(pc.maxEv));
 
