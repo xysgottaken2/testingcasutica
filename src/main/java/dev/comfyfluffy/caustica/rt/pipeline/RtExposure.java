@@ -22,6 +22,7 @@ public final class RtExposure {
     private RtExposurePipeline pipeline;
     private boolean logged;
     private long lastFrameNanos;
+    private boolean wasEyeAdaptationEnabled;
 
     public RtImage image() {
         return image;
@@ -35,7 +36,7 @@ public final class RtExposure {
         if (image == null) {
             image = ctx.createStorageImage(1, 1, VK10.VK_FORMAT_R32_SFLOAT, "display exposure");
         }
-        if (mode() == Mode.AUTO) {
+        if (eyeAdaptationEnabled()) {
             if (histogram == null) {
                 histogram = ctx.createBuffer(256L * Integer.BYTES,
                         VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT, false,
@@ -48,7 +49,18 @@ public final class RtExposure {
             if (pipeline == null) {
                 pipeline = RtExposurePipeline.create(ctx);
             }
+        } else {
+            // Reclaim auto-exposure GPU resources when Eye Adaptation is Off so the live toggle isn't
+            // just a CPU-side override — we don't need the histogram/state/pipeline while in fixed exposure.
+            destroyAutoResources();
         }
+        // When toggling back on mid-session, reseed the auto history from the current manual exposure so
+        // the first adapted frame doesn't snap hard to the luminance target from a stale value.
+        boolean enabled = eyeAdaptationEnabled();
+        if (enabled && !wasEyeAdaptationEnabled) {
+            resetAutoHistory();
+        }
+        wasEyeAdaptationEnabled = enabled;
         logOnce();
     }
 
@@ -56,7 +68,7 @@ public final class RtExposure {
         if (image == null) {
             throw new IllegalStateException("RT exposure image not created");
         }
-        if (mode() == Mode.AUTO) {
+        if (eyeAdaptationEnabled()) {
             recordAuto(ctx, cmd, stack, traceColor);
             return;
         }
@@ -71,6 +83,14 @@ public final class RtExposure {
     }
 
     public void destroy() {
+        destroyAutoResources();
+        if (image != null) {
+            image.destroy();
+            image = null;
+        }
+    }
+
+    private void destroyAutoResources() {
         if (pipeline != null) {
             pipeline.destroy();
             pipeline = null;
@@ -83,10 +103,6 @@ public final class RtExposure {
             state.destroy();
             state = null;
         }
-        if (image != null) {
-            image.destroy();
-            image = null;
-        }
     }
 
     // Manual mode's exposure scale, also used as the auto-history seed (resetAutoHistory) so the very
@@ -97,7 +113,7 @@ public final class RtExposure {
 
     private void recordAuto(RtContext ctx, VkCommandBuffer cmd, MemoryStack stack, RtImage traceColor) {
         if (pipeline == null || histogram == null || state == null) {
-            throw new IllegalStateException("RT auto exposure resources not created");
+            throw new IllegalStateException("RT eye adaptation (auto exposure) resources not created");
         }
         pipeline.setResources(traceColor.view, histogram, image.view, state);
         try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "exposure histogram clear")) {
@@ -144,7 +160,16 @@ public final class RtExposure {
     }
 
     private static Mode mode() {
-        return Mode.parse(CausticaConfig.Rt.Exposure.MODE.get());
+        // The player-facing "Eye Adaptation" toggle in Video Settings is the master switch: when On the
+        // renderer meters scene luminance and smooths exposure across frames (AUTO), when Off exposure is
+        // pinned to the fixed manual EV (MANUAL). The underlying legacy MODE string is kept for config
+        // compatibility but its value is overridden here by the boolean toggle so other code paths that
+        // query MODE still see the effective mode.
+        return eyeAdaptationEnabled() ? Mode.AUTO : Mode.MANUAL;
+    }
+
+    private static boolean eyeAdaptationEnabled() {
+        return CausticaConfig.Rt.Exposure.EYE_ADAPTATION.value();
     }
 
     private static float manualEv() {

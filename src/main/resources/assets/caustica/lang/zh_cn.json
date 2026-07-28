@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "光线追踪",
 
-	"caustica.options.rt.exposureMode": "曝光",
-	"caustica.options.rt.exposureMode.tooltip": "决定如何将光线追踪图像映射到显示亮度。自动会适应场景亮度；手动会直接使用曝光值。",
-	"caustica.options.rt.exposureMode.auto": "自动",
-	"caustica.options.rt.exposureMode.manual": "手动",
+	"caustica.options.rt.eyeAdaptation": "眼睛适应",
+	"caustica.options.rt.eyeAdaptation.tooltip": "根据场景亮度自动调整曝光，模拟眼睛对黑暗和亮光的适应过程。进入洞穴或深层结构时，曝光会平滑升高让暗部可见；回到明亮的日光下时，曝光会平滑降低以防止过曝。关闭后曝光将固定为“曝光 EV”的数值，不会进行适应。",
 
 	"caustica.options.rt.manualEv": "曝光 EV",
-	"caustica.options.rt.manualEv.tooltip": "以档位为单位的曝光补偿。手动模式下这是固定曝光；自动模式下会让自动曝光更亮或更暗。",
+	"caustica.options.rt.manualEv.tooltip": "眼睛适应关闭时使用的固定曝光值（以 EV 档位为单位）。开启时，此值会让自动曝光整体变亮（正值）或变暗（负值）。",
 
 	"caustica.options.rt.spp": "每像素采样数",
 	"caustica.options.rt.spp.tooltip": "每帧对每个像素进行的路径追踪采样数。数值越高画面越干净，但负载也越高。",

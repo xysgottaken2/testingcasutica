@@ -1,13 +1,11 @@
 {
 	"caustica.options.rt.header": "Ray tracing",
 
-	"caustica.options.rt.exposureMode": "Esposizione",
-	"caustica.options.rt.exposureMode.tooltip": "Come l'immagine con ray tracing viene mappata sulla luminosità del display. Auto si adatta alla luminanza della scena; Manuale usa direttamente il valore di esposizione.",
-	"caustica.options.rt.exposureMode.auto": "Auto",
-	"caustica.options.rt.exposureMode.manual": "Manuale",
+	"caustica.options.rt.eyeAdaptation": "Adattamento oculare",
+	"caustica.options.rt.eyeAdaptation.tooltip": "Regola automaticamente l'esposizione in base alla luminanza della scena, imitando il modo in cui gli occhi si adattano al buio e alla luce intensa. Entrando in grotte o strutture profonde, l'esposizione aumenta dolcemente così che le aree scure diventino visibili; tornando alla luce piena del giorno, l'esposizione diminuisce per evitare la sovraesposizione. Disattivato fissa l'esposizione al valore di Esposizione EV, senza adattamento.",
 
 	"caustica.options.rt.manualEv": "Esposizione EV",
-	"caustica.options.rt.manualEv.tooltip": "Compensazione dell'esposizione in stop. In Manuale è l'esposizione fissa. In Auto sposta l'esposizione automatica rendendola più chiara o più scura.",
+	"caustica.options.rt.manualEv.tooltip": "Valore di esposizione fisso, in stop EV, usato quando Adattamento oculare è disattivato. Quando è attivo, questo valore sposta l'esposizione automatica più chiara (positivo) o più scura (negativa).",
 
 	"caustica.options.rt.spp": "Campioni per pixel",
 	"caustica.options.rt.spp.tooltip": "Campioni di path tracing presi per pixel in ogni fotogramma. Valori più alti sono più puliti, ma più esigenti.",
