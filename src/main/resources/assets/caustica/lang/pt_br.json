@@ -1,5 +1,7 @@
 {
 	"caustica.options.rt.header": "Traçado de raios",
+	"caustica.options.rt.title": "Configurações de Traçado de Raios",
+	"caustica.options.rt.button": "Configurações de Traçado de Raios...",
 
 	"caustica.options.rt.exposureMode": "Exposição",
 	"caustica.options.rt.exposureMode.tooltip": "Como a imagem com traçado de raios é mapeada para o brilho da tela. Automático se adapta à luminância da cena; Manual usa diretamente o valor de exposição.",
@@ -35,6 +37,26 @@
 
 	"caustica.options.rt.weatherLighting": "Iluminação do clima",
 	"caustica.options.rt.weatherLighting.tooltip": "Reduz a luz do sol e da lua e escurece o céu durante chuvas e tempestades, além de ocultar o sol, a lua e as estrelas atrás das nuvens. Desativado, mantém a iluminação de céu limpo em qualquer clima.",
+
+	"caustica.options.rt.clouds": "Nuvens com Traçado de Raios",
+	"caustica.options.rt.clouds.tooltip": "Desenha uma camada de nuvens no céu com traçado de raios. A Caustica substitui o renderizador de mundo vanilla, que é onde as nuvens do vanilla são desenhadas, então isso é o que coloca as nuvens de volta no céu. A camada é visível em reflexos e pode projetar sombras no mundo abaixo.",
+
+	"caustica.options.rt.cloudStyle": "Estilo das Nuvens",
+	"caustica.options.rt.cloudStyle.tooltip": "Como as nuvens são desenhadas. O Clássico reproduz a camada de nuvens plana e em blocos do Minecraft. O Volumétrico faz o ray-marching das nuvens como formas 3D reais com profundidade, auto-sombreamento e espalhamento de luz, como pacotes de shaders pesados - muito mais bonito, mas visivelmente mais exigente. Ambos usam as mesmas formas de nuvens, então a troca não move as nuvens.",
+	"caustica.options.rt.cloudStyle.classic": "Clássico",
+	"caustica.options.rt.cloudStyle.volumetric": "Volumétrico",
+
+	"caustica.options.rt.cloudHeight": "Altura das Nuvens",
+	"caustica.options.rt.cloudHeight.tooltip": "Altura do mundo onde a base das nuvens se situa. As nuvens do vanilla ficam no Y 192; o padrão aqui é mais alto porque estas nuvens têm espessura real, o que faz uma camada baixa parecer muito mais próxima do que a folha plana do vanilla. Aumente se as nuvens parecerem muito próximas do chão. Mede a base da nuvem, então mudar a espessura não a move.",
+
+	"caustica.options.rt.cloudThickness": "Espessura das Nuvens",
+	"caustica.options.rt.cloudThickness.tooltip": "Quão altas as nuvens são. 0% as torna uma folha plana; valores mais altos dão a elas uma profundidade 3D real na qual você pode voar. Nuvens clássicas tornam-se caixas sólidas com topos brilhantes e lados mais escuros como as do vanilla, e nuvens volumétricas tornam-se cúmulos altos e volumosos. Isso muda apenas sua forma, não o quão transparentes são - use Opacidade das Nuvens para isso. Nuvens mais espessas custam mais desempenho.",
+
+	"caustica.options.rt.cloudShadowStrength": "Sombras das Nuvens",
+	"caustica.options.rt.cloudShadowStrength.tooltip": "O quanto a camada de nuvens escurece a luz do sol e da lua que atinge o solo abaixo dela. 0% desenha nuvens que não projetam sombra alguma; 100% permite que uma nuvem sólida bloqueie o sol completamente. Não custa raios extras.",
+
+	"caustica.options.rt.cloudOpacity": "Opacidade das Nuvens",
+	"caustica.options.rt.cloudOpacity.tooltip": "Quão sólidas as nuvens são. 0% é totalmente transparente (as nuvens são ignoradas); 100% é o mais sólido que a forma da nuvem permite. Este é um teto rígido: a 20%, uma nuvem nunca é mais do que 20% opaca, não importa o quão espessa seja ou quão longe esteja, então ela nunca preenche o horizonte.",
 
 	"caustica.options.rt.denoiser": "Filtro de redução de ruído",
 	"caustica.options.rt.denoiser.tooltip": "Aplica o filtro de redução de ruído do DLSS Ray Reconstruction à imagem com path tracing. Desativado, mostra o traçado bruto e ruidoso em resolução total — útil como referência, mas bem mais granulado com poucas amostras. Requer suporte a DLSS Ray Reconstruction.",

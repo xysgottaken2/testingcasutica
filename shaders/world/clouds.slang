@@ -309,7 +309,10 @@ public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
     if (!h.hit) {
         return 1.0;
     }
-    return 1.0 - strength * cloudAlpha(push, h, cloudCoverage(push, h.samplePos));
+    float occlusion = cloudAlpha(push, h, cloudCoverage(push, h.samplePos));
+    // Clamp the cloud occlusion so it never completely zeroes out the light, preserving an ambient/indirect
+    // feel even under the heaviest clouds.
+    return 1.0 - strength * min(occlusion, 0.9);
 }
 
 // ---- Classic (vanilla-style) shading -------------------------------------------------------------
