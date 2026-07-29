@@ -82,7 +82,7 @@ public abstract class VideoSettingsScreenMixin {
             Boolean.TRUE,
             (value) -> {
                 if (this.minecraft != null) {
-                    this.minecraft.setScreen(new RtSettingsScreen((VideoSettingsScreen) (Object) this, this.options));
+                    this.minecraft.setScreen(null);
                 }
             });
 
