@@ -40,9 +40,6 @@ public abstract class VideoSettingsScreenMixin {
     @Shadow
     protected Options options;
 
-    @Shadow
-    protected Minecraft minecraft;
-
     @Redirect(
         method = "addOptions",
         at = @At(
@@ -73,18 +70,7 @@ public abstract class VideoSettingsScreenMixin {
         if (list == null) {
             return;
         }
-
-        OptionInstance<Boolean> rtButton = new OptionInstance<>(
-            "caustica.options.rt.button",
-            OptionInstance.noTooltip(),
-            (caption, value) -> caption,
-            new OptionInstance.Enum<>(List.of(Boolean.TRUE), com.mojang.serialization.Codec.BOOL),
-            Boolean.TRUE,
-            (value) -> {
-                Minecraft.getInstance().setScreen((net.minecraft.client.gui.screens.Screen) new RtSettingsScreen((VideoSettingsScreen) (Object) this, this.options));
-            });
-
-        list.addSmall(new OptionInstance<?>[] { rtButton });
+        list.addSmall(new OptionInstance<?>[] { RtVideoOptions.rtSettingsButton((VideoSettingsScreen) (Object) this, this.options) });
     }
 
     @Inject(method = "removed", at = @At("TAIL"))
