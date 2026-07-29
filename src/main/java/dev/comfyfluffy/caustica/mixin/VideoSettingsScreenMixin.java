@@ -1,12 +1,15 @@
 package dev.comfyfluffy.caustica.mixin;
 
 import dev.comfyfluffy.caustica.CausticaConfig;
-import dev.comfyfluffy.caustica.client.RtVideoOptions;
+import dev.comfyfluffy.caustica.client.RtSettingsScreen;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.OptionsList;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.VideoSettingsScreen;
 import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,13 +20,14 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Surfaces the runtime-tunable RT settings inside the vanilla Video Settings screen when the RT renderer is
- * enabled. Two changes, both gated on {@link CausticaConfig.Rt#ENABLED}:
+ * Surfaces a single "Ray Tracing Settings..." button inside the vanilla Video Settings screen when the
+ * RT renderer is enabled, gated on {@link CausticaConfig.Rt#ENABLED}:
  *
  * <ul>
  *   <li>The Quality section drops the vanilla options the path tracer supersedes (Ambient Occlusion and
  *       Entity Shadows are computed by RT global illumination / RT shadows).</li>
- *   <li>A trailing "Ray Tracing" section adds the {@link RtVideoOptions} controls.</li>
+ *   <li>A trailing button opens {@link RtSettingsScreen}, the dedicated RT sub-menu, instead of
+ *       injecting every individual RT toggle/slider straight into this already-busy screen.</li>
  * </ul>
  *
  * When RT is disabled the screen is left exactly as vanilla built it.
@@ -35,9 +39,8 @@ public abstract class VideoSettingsScreenMixin {
         throw new AssertionError("mixin stub");
     }
 
-    private static final Component CAUSTICA$RT_HEADER = Component.translatable("caustica.options.rt.header");
-    private static final Component CAUSTICA$RT_LIGHTS_HEADER = Component.translatable("caustica.options.rt.lightsHeader");
-    private static final Component CAUSTICA$RT_TONEMAP_HEADER = Component.translatable("caustica.options.rt.tonemapHeader");
+    private static final Component CAUSTICA$RT_SETTINGS_BUTTON =
+            Component.translatable("caustica.options.rt.settingsButton");
 
     @Redirect(
         method = "addOptions",
@@ -61,7 +64,7 @@ public abstract class VideoSettingsScreenMixin {
     }
 
     @Inject(method = "addOptions", at = @At("HEAD"))
-    private void caustica$addRtOptions(CallbackInfo ci) {
+    private void caustica$addRtSettingsButton(CallbackInfo ci) {
         if (!CausticaConfig.Rt.ENABLED.value()) {
             return;
         }
@@ -69,17 +72,18 @@ public abstract class VideoSettingsScreenMixin {
         if (list == null) {
             return;
         }
-        list.addHeader(CAUSTICA$RT_HEADER);
-        list.addSmall(RtVideoOptions.runtimeOptions());
-        list.addHeader(CAUSTICA$RT_LIGHTS_HEADER);
-        list.addSmall(RtVideoOptions.lightOptions());
-        list.addHeader(CAUSTICA$RT_TONEMAP_HEADER);
-        list.addSmall(RtVideoOptions.tonemapOptions());
+        Screen self = (Screen) (Object) this;
+        Minecraft minecraft = Minecraft.getInstance();
+        Button button = Button.builder(CAUSTICA$RT_SETTINGS_BUTTON,
+                        b -> minecraft.setScreen(new RtSettingsScreen(self, minecraft.options)))
+                .build();
+        list.addSmall(List.of(button));
     }
 
     @Inject(method = "removed", at = @At("TAIL"))
     private void caustica$saveConfig(CallbackInfo ci) {
-        // Persist any RT settings the player changed in this screen to the TOML config.
+        // Persist any RT settings the player changed on this screen (e.g. the vanilla options RT
+        // suppresses above) to the TOML config.
         CausticaConfig.save();
     }
 }

@@ -1,4 +1,7 @@
 {
+	"caustica.options.rt.settingsButton": "Configurações de traçado de raios...",
+	"caustica.options.rt.settingsTitle": "Configurações de traçado de raios",
+
 	"caustica.options.rt.header": "Traçado de raios",
 
 	"caustica.options.rt.exposureMode": "Exposição",
@@ -29,6 +32,12 @@
 
 	"caustica.options.rt.waterWaves": "Água animada",
 	"caustica.options.rt.waterWaves.tooltip": "Anima as normais da superfície da água para brilhos de ondas em movimento.",
+
+	"caustica.options.rt.pomHeader": "Mapeamento de oclusão de paralaxe",
+	"caustica.options.rt.pom": "Mapeamento de oclusão de paralaxe",
+	"caustica.options.rt.pom.tooltip": "Faz o traçado de raios percorrer o mapa de altura LabPBR para deslocar as texturas em relevo real (argamassa de paralelepípedos, fiadas de tijolos, caminhos e afins). Só afeta materiais com mapa normal autorado; pacotes de recursos sem texturas PBR são renderizados exatamente como antes.",
+	"caustica.options.rt.pomDepth": "Profundidade do POM",
+	"caustica.options.rt.pomDepth.tooltip": "Quão profundo o relevo de paralaxe aparece, como porcentagem da profundidade máxima definida pelo LabPBR. 0% é plano.",
 
 	"caustica.options.rt.sss": "Espalhamento subsuperficial",
 	"caustica.options.rt.sss.tooltip": "Permite que a luz se espalhe através de superfícies finas, como folhas e grama, fazendo a folhagem brilhar quando você olha através dela na direção do sol. Só afeta materiais que fornecem dados de subsuperfície; custa um raio de sombra adicional onde é aplicado.",

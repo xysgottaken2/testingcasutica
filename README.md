@@ -24,6 +24,7 @@ changes while the renderer is being built.
 - HDR output
 - Dynamic entity rendering in the ray-traced scene
 - LabPBR-style material support, including toggleable subsurface scattering
+  and Parallax Occlusion Mapping (heightmap relief on normal-mapped blocks)
 - Weather-driven lighting: rain and thunderstorms dim the sun/moon and darken the sky
 - Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
   with adjustable thickness, opacity and cloud shadows, visible in reflections
@@ -45,7 +46,7 @@ changes while the renderer is being built.
 2. Install Fabric API.
 3. Put the Caustica jar in your Minecraft `mods` folder.
 4. Launch the game with the Vulkan graphics backend.
-5. Open Video Settings to adjust Caustica's renderer options.
+5. Open Video Settings and click "Ray Tracing Settings..." to adjust Caustica's renderer options.
 
 ## Usage Notes
 

@@ -36,12 +36,12 @@ final class RtMaterialLayoutTest {
     @Test
     void reflectedWorldPushConstantsIncludeLightAndRestirBuffers() {
         // 12 uint64_t addresses (world/table/material, 5 light buffers, path queue, 2 ReSTIR buffers)
-        // followed by frame/debug/light-generation/restir-mode uints.
-        assertEquals(112, WorldPushConstantsData.BYTE_SIZE);
+        // followed by frame/debug/light-generation/restir-mode uints, then the POM depth float.
+        assertEquals(116, WorldPushConstantsData.BYTE_SIZE);
         ByteBuffer data = ByteBuffer.allocateDirect(WorldPushConstantsData.BYTE_SIZE)
                 .order(ByteOrder.nativeOrder());
         new WorldPushConstantsData(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L,
-                13, 14, 15, 16).write(data);
+                13, 14, 15, 16, 0.5f).write(data);
         assertEquals(4L, data.getLong(24));   // materialTableAddr
         assertEquals(5L, data.getLong(32));   // lightBufAddr
         assertEquals(9L, data.getLong(64));   // lightGridSpanAddr (last light-buffer address)
@@ -52,6 +52,7 @@ final class RtMaterialLayoutTest {
         assertEquals(14, data.getInt(100));   // debugView
         assertEquals(15, data.getInt(104));   // lightGeneration
         assertEquals(16, data.getInt(108));   // restirMode: authoritative live shading branch
+        assertEquals(0.5f, data.getFloat(112)); // pomDepth: POM relief intensity, 0..1
     }
 
     @Test

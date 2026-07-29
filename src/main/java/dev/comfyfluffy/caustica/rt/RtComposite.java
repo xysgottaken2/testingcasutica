@@ -862,6 +862,16 @@ public final class RtComposite {
         return restirResourcesEnabled && CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value() ? 1 : 0;
     }
 
+    /**
+     * Resolved POM relief strength pushed to world.rchit, 0..1. Zero (POM disabled or the slider at
+     * its floor) collapses {@code applyParallax}'s march to a single free iteration on every material,
+     * so this one value is both the enable switch and the intensity control the shader needs.
+     */
+    private static float pomDepth() {
+        return CausticaConfig.Rt.Composite.POM.value()
+                ? CausticaConfig.Rt.Composite.POM_DEPTH.value() : 0.0f;
+    }
+
     private void ensureOutput(RtContext ctx, int width, int height) {
         boolean rrEnabled = RtDlssRr.enabled();
         int rrQuality = rrEnabled ? RtDlssRr.quality() : Integer.MIN_VALUE;
@@ -1150,7 +1160,8 @@ public final class RtComposite {
                     terrain.lightLocalAliasBufferAddress(), terrain.lightGridCellBufferAddress(),
                     terrain.lightGridSpanBufferAddress(), continuationQueue.deviceAddress,
                     restirPreviousAddress(), restirCurrentAddress(),
-                    (int) frameCounter, debugView, terrain.lightGeneration(), restirMode()).write(pushConstants);
+                    (int) frameCounter, debugView, terrain.lightGeneration(), restirMode(),
+                    pomDepth()).write(pushConstants);
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world primary trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.tracePrimary")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 0);
