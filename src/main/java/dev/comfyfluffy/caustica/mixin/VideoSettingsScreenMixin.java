@@ -74,8 +74,14 @@ public abstract class VideoSettingsScreenMixin {
         }
         Screen self = (Screen) (Object) this;
         Minecraft minecraft = Minecraft.getInstance();
-        Button button = Button.builder(CAUSTICA$RT_SETTINGS_BUTTON,
-                        b -> minecraft.setScreen(new RtSettingsScreen(self, minecraft.options)))
+        Button button = Button.builder(CAUSTICA$RT_SETTINGS_BUTTON, b -> {
+                    // Minecraft 26.2 moved the current-screen field/methods off Minecraft and onto
+                    // the new Gui class (see Fabric's 26.2 migration notes: setScreen -> Gui#setScreen,
+                    // reached via Minecraft.getInstance().gui). Plain Minecraft#setScreen no longer
+                    // exists, which is why javac reported "cannot find symbol" here.
+                    Screen rtSettings = new RtSettingsScreen(self, minecraft.options);
+                    minecraft.gui.setScreen(rtSettings);
+                })
                 .build();
         list.addSmall(List.of(button));
     }
