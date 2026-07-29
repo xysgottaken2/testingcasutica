@@ -1,9 +1,11 @@
 package dev.comfyfluffy.caustica.mixin;
 
 import dev.comfyfluffy.caustica.CausticaConfig;
+import dev.comfyfluffy.caustica.client.RtSettingsScreen;
 import dev.comfyfluffy.caustica.client.RtVideoOptions;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.components.OptionsList;
@@ -35,9 +37,8 @@ public abstract class VideoSettingsScreenMixin {
         throw new AssertionError("mixin stub");
     }
 
-    private static final Component CAUSTICA$RT_HEADER = Component.translatable("caustica.options.rt.header");
-    private static final Component CAUSTICA$RT_LIGHTS_HEADER = Component.translatable("caustica.options.rt.lightsHeader");
-    private static final Component CAUSTICA$RT_TONEMAP_HEADER = Component.translatable("caustica.options.rt.tonemapHeader");
+    @Shadow
+    protected Options options;
 
     @Redirect(
         method = "addOptions",
@@ -61,7 +62,7 @@ public abstract class VideoSettingsScreenMixin {
     }
 
     @Inject(method = "addOptions", at = @At("HEAD"))
-    private void caustica$addRtOptions(CallbackInfo ci) {
+    private void caustica$addRtButton(CallbackInfo ci) {
         if (!CausticaConfig.Rt.ENABLED.value()) {
             return;
         }
@@ -69,12 +70,7 @@ public abstract class VideoSettingsScreenMixin {
         if (list == null) {
             return;
         }
-        list.addHeader(CAUSTICA$RT_HEADER);
-        list.addSmall(RtVideoOptions.runtimeOptions());
-        list.addHeader(CAUSTICA$RT_LIGHTS_HEADER);
-        list.addSmall(RtVideoOptions.lightOptions());
-        list.addHeader(CAUSTICA$RT_TONEMAP_HEADER);
-        list.addSmall(RtVideoOptions.tonemapOptions());
+        list.addSmall(new OptionInstance<?>[] { RtVideoOptions.rtSettingsButton((VideoSettingsScreen) (Object) this, this.options) });
     }
 
     @Inject(method = "removed", at = @At("TAIL"))

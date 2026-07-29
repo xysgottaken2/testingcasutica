@@ -1,5 +1,7 @@
 {
 	"caustica.options.rt.header": "Ray Tracing",
+	"caustica.options.rt.title": "Ray Tracing Settings",
+	"caustica.options.rt.button": "Ray Tracing Settings...",
 
 	"caustica.options.rt.exposureMode": "Exposure",
 	"caustica.options.rt.exposureMode.tooltip": "How the ray-traced image is mapped to display brightness. Auto adapts to scene luminance; Manual uses the exposure value directly.",

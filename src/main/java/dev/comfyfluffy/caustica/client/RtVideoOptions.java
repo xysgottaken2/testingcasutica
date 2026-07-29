@@ -8,8 +8,10 @@ import dev.comfyfluffy.caustica.CausticaConfig.IntSetting;
 import dev.comfyfluffy.caustica.CausticaConfig.StringSetting;
 import java.util.List;
 import java.util.Locale;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -83,6 +85,18 @@ public final class RtVideoOptions {
             tonemapSaturation(),
             tonemapContrast(),
         };
+    }
+
+    public static OptionInstance<Boolean> rtSettingsButton(Screen parent, Options options) {
+        return new OptionInstance<>(
+            "caustica.options.rt.button",
+            OptionInstance.noTooltip(),
+            (caption, value) -> caption,
+            new OptionInstance.Enum<>(List.of(Boolean.TRUE), Codec.BOOL),
+            Boolean.TRUE,
+            (value) -> {
+                Minecraft.getInstance().setScreenAndShow(new RtSettingsScreen(parent, options));
+            });
     }
 
     private static OptionInstance<String> exposureMode() {
