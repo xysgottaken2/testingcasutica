@@ -1160,8 +1160,8 @@ public final class RtComposite {
                     terrain.lightLocalAliasBufferAddress(), terrain.lightGridCellBufferAddress(),
                     terrain.lightGridSpanBufferAddress(), continuationQueue.deviceAddress,
                     restirPreviousAddress(), restirCurrentAddress(),
-                    (int) frameCounter, debugView, terrain.lightGeneration(), restirMode(),
-                    pomDepth()).write(pushConstants);
+                    (int) frameCounter, debugView, terrain.lightGeneration(), restirMode(), pomDepth())
+                    .write(pushConstants);
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world primary trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.tracePrimary")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 0);

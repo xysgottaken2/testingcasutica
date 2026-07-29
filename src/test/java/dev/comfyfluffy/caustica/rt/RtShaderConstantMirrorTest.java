@@ -92,7 +92,7 @@ final class RtShaderConstantMirrorTest {
                         && core.contains("pc.restirPreviousAddr != 0")
                         && core.contains("pc.restirCurrentAddr != 0"),
                 "restirEnabled must require both the live mode and bound ping-pong buffers");
-        assertTrue(java.contains("terrain.lightGeneration(), restirMode()).write(pushConstants)"),
+        assertTrue(java.contains("terrain.lightGeneration(), restirMode(), pomDepth())"),
                 "RtComposite must write restirMode into the world pipeline push constants every frame");
         assertTrue(raygen.contains("bool shadeWithRestir = restirReceiverPending && restirOwner;")
                         && raygen.contains("r = restirSpatiotemporal(r")
