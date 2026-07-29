@@ -95,7 +95,7 @@ public final class RtVideoOptions {
             new OptionInstance.Enum<>(List.of(Boolean.TRUE), Codec.BOOL),
             Boolean.TRUE,
             (value) -> {
-                net.minecraft.client.Minecraft.getInstance().setScreen(new RtSettingsScreen(parent, options));
+                net.minecraft.client.Minecraft.getInstance().setScreen((net.minecraft.client.gui.screens.Screen) new RtSettingsScreen(parent, options));
             });
     }
 
