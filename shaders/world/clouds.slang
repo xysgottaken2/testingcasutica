@@ -298,13 +298,18 @@ public float cloudAlpha(WorldPush push, CloudHit h, float density) {
  * away the cloud is.
  */
 public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
-    if (!cloudsEnabled(push)) {
+    // Checagem específica para sombra (não usa clouds.y)
+    if (push.dimension != DIMENSION_OVERWORLD
+        || !worldFeature(push, FEATURE_CLOUDS)
+        || push.clouds.x <= 0.0) {
         return 1.0;
     }
+
     float strength = cloudShadowStrength(push);
     if (strength <= 0.0) {
         return 1.0;
     }
+
     CloudHit h = cloudTrace(push, pointRel, lightDir, 1.0e9);
     if (!h.hit) {
         return 1.0;
