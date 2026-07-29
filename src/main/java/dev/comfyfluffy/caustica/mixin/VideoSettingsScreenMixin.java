@@ -1,9 +1,11 @@
 package dev.comfyfluffy.caustica.mixin;
 
 import dev.comfyfluffy.caustica.CausticaConfig;
+import dev.comfyfluffy.caustica.client.RtSettingsScreen;
 import dev.comfyfluffy.caustica.client.RtVideoOptions;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.components.OptionsList;
@@ -38,6 +40,9 @@ public abstract class VideoSettingsScreenMixin {
     @Shadow
     protected Options options;
 
+    @Shadow
+    protected Minecraft minecraft;
+
     @Redirect(
         method = "addOptions",
         at = @At(
@@ -68,7 +73,20 @@ public abstract class VideoSettingsScreenMixin {
         if (list == null) {
             return;
         }
-        list.addSmall(new OptionInstance<?>[] { RtVideoOptions.rtSettingsButton((VideoSettingsScreen) (Object) this, this.options) });
+
+        OptionInstance<Boolean> rtButton = new OptionInstance<>(
+            "caustica.options.rt.button",
+            OptionInstance.noTooltip(),
+            (caption, value) -> caption,
+            new OptionInstance.Enum<>(List.of(Boolean.TRUE), com.mojang.serialization.Codec.BOOL),
+            Boolean.TRUE,
+            (value) -> {
+                if (this.minecraft != null) {
+                    this.minecraft.setScreen(new RtSettingsScreen((VideoSettingsScreen) (Object) this, this.options));
+                }
+            });
+
+        list.addSmall(new OptionInstance<?>[] { rtButton });
     }
 
     @Inject(method = "removed", at = @At("TAIL"))

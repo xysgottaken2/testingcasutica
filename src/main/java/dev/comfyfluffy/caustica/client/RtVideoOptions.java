@@ -87,18 +87,6 @@ public final class RtVideoOptions {
         };
     }
 
-    public static OptionInstance<Boolean> rtSettingsButton(Screen parent, Options options) {
-        return new OptionInstance<>(
-            "caustica.options.rt.button",
-            OptionInstance.noTooltip(),
-            (caption, value) -> caption,
-            new OptionInstance.Enum<>(List.of(Boolean.TRUE), Codec.BOOL),
-            Boolean.TRUE,
-            (value) -> {
-                net.minecraft.client.Minecraft.getInstance().setScreenAndShow((net.minecraft.client.gui.screens.Screen) new RtSettingsScreen(parent, options));
-            });
-    }
-
     private static OptionInstance<String> exposureMode() {
         StringSetting setting = CausticaConfig.Rt.Exposure.MODE;
         return new OptionInstance<>(
