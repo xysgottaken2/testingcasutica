@@ -309,7 +309,14 @@ public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
     if (!h.hit) {
         return 1.0;
     }
-    return 1.0 - strength * cloudAlpha(push, h, cloudCoverage(push, h.samplePos));
+
+    // FIX: sombras de nuvem NÃO devem usar o fade de horizonte.
+    // O fade (h.fade) é só para renderização visual do deck.
+    // Usar ele aqui fazia sombra ficar absurdamente preta quando o jogador
+    // estava voando acima de construções (ex: telhado de vila).
+    float coverage = cloudCoverage(push, h.samplePos);
+    float alpha = clamp(coverage * clamp(push.clouds.y, 0.0, 1.0), 0.0, 1.0);
+    return 1.0 - strength * alpha;
 }
 
 // ---- Classic (vanilla-style) shading -------------------------------------------------------------
