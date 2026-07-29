@@ -1,4 +1,7 @@
 {
+	"caustica.options.rt.settingsButton": "Ray Tracing Settings...",
+	"caustica.options.rt.settingsTitle": "Ray Tracing Settings",
+
 	"caustica.options.rt.header": "Ray Tracing",
 
 	"caustica.options.rt.exposureMode": "Exposure",
@@ -29,6 +32,14 @@
 
 	"caustica.options.rt.waterWaves": "Animated Water",
 	"caustica.options.rt.waterWaves.tooltip": "Animate water-surface normals for moving wave highlights.",
+
+	"caustica.options.rt.pomHeader": "Parallax Occlusion Mapping",
+	"caustica.options.rt.pom": "Parallax Occlusion Mapping",
+	"caustica.options.rt.pom.tooltip": "Ray-march the LabPBR heightmap to displace textures into real relief (cobblestone mortar, brick courses, paths, and similar). Only affects materials with an authored normal map; resource packs without PBR textures render exactly as before.",
+	"caustica.options.rt.pomDepth": "POM Depth",
+	"caustica.options.rt.pomDepth.tooltip": "How deep the parallax relief reads, as a percentage of LabPBR's defined maximum depth. 0% is flat.",
+
+	"caustica.options.rt.cloudsHeader": "Ray-Traced Clouds",
 
 	"caustica.options.rt.sss": "Subsurface Scattering",
 	"caustica.options.rt.sss.tooltip": "Let light scatter through thin surfaces such as leaves and grass, so foliage glows when you look through it toward the sun. Only affects materials that provide subsurface data; costs an extra shadow ray where it applies.",

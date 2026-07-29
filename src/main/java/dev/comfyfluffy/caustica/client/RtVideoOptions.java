@@ -42,6 +42,35 @@ public final class RtVideoOptions {
             // pairs them two per row, so they read as one block rather than scattered checkboxes.
             subsurfaceScattering(),
             weatherLighting(),
+            denoiser(),
+            handFov(),
+            dlssQuality(),
+            hdrEnabled(),
+            hdrPaperWhite(),
+            hdrPeak(),
+            debugView(),
+        };
+    }
+
+    /**
+     * Parallax Occlusion Mapping: the toggle plus its relief-intensity slider. Kept as its own group in
+     * {@link dev.comfyfluffy.caustica.client.RtSettingsScreen} — a per-material effect distinct from the
+     * global path-tracing controls above, and one that is entirely inert on resource packs without
+     * LabPBR normal maps (see {@code world.rchit.slang}'s {@code applyParallax} safety fallback).
+     */
+    public static OptionInstance<?>[] pomOptions() {
+        return new OptionInstance<?>[] {
+            pom(),
+            pomDepth(),
+        };
+    }
+
+    /**
+     * The ray-traced cloud deck and its tuning sliders, split out from {@link #runtimeOptions()} into
+     * their own dedicated section of {@link dev.comfyfluffy.caustica.client.RtSettingsScreen}.
+     */
+    public static OptionInstance<?>[] cloudOptions() {
+        return new OptionInstance<?>[] {
             // Clouds: the on/off toggle followed by its two tuning sliders, so the control that gates
             // the other two reads immediately before them.
             clouds(),
@@ -50,13 +79,6 @@ public final class RtVideoOptions {
             cloudThickness(),
             cloudShadowStrength(),
             cloudOpacity(),
-            denoiser(),
-            handFov(),
-            dlssQuality(),
-            hdrEnabled(),
-            hdrPaperWhite(),
-            hdrPeak(),
-            debugView(),
         };
     }
 
@@ -228,6 +250,20 @@ public final class RtVideoOptions {
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */
     private static OptionInstance<Boolean> weatherLighting() {
         return bool("caustica.options.rt.weatherLighting", CausticaConfig.Rt.Composite.WEATHER_LIGHTING);
+    }
+
+    /**
+     * Parallax Occlusion Mapping. Only affects materials carrying an authored LabPBR normal map with a
+     * heightmap channel — everything else already skips the march (see {@code applyParallax} in
+     * {@code world.rchit.slang}), so this is safe to leave on for packs with no PBR textures at all.
+     */
+    private static OptionInstance<Boolean> pom() {
+        return bool("caustica.options.rt.pom", CausticaConfig.Rt.Composite.POM);
+    }
+
+    /** Relief intensity of the LabPBR heightmap march, as a percentage of its defined maximum depth. */
+    private static OptionInstance<Integer> pomDepth() {
+        return percent("caustica.options.rt.pomDepth", CausticaConfig.Rt.Composite.POM_DEPTH);
     }
 
     /**

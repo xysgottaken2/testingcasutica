@@ -57,7 +57,7 @@ public final class CausticaConfig {
         @SuppressWarnings("unused")
         Object[] touch = {
             Rt.ENABLED, Rt.Composite.SPP, Rt.Composite.MAX_BOUNCES, Rt.Composite.SSS,
-            Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER,
+            Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER, Rt.Composite.POM, Rt.Composite.POM_DEPTH,
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
             Rt.Entities.ENABLED, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
             Rt.Reflex.ENABLED, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
@@ -95,7 +95,10 @@ public final class CausticaConfig {
                         + " weather-lighting: attenuate sun/moon light and darken the sky during rain and\n"
                         + " thunderstorms. Off keeps clear-sky lighting in all weather.\n"
                         + " denoiser: the DLSS Ray Reconstruction denoise+upscale filter. Off presents the raw\n"
-                        + " path-traced image at full resolution (noisy reference view). Requires dlss-rr.enabled.");
+                        + " path-traced image at full resolution (noisy reference view). Requires dlss-rr.enabled.\n"
+                        + " pom: Parallax Occlusion Mapping using the LabPBR normal map's heightmap channel.\n"
+                        + " Materials with no authored normal map fall back to flat sampling automatically.\n"
+                        + " pom-depth: relief intensity, 0..1, scaling LabPBR's defined maximum displacement.");
         FILE.setComment("terrain",
                 " Render-thread terrain work is bounded by dispatch/result counts per streaming pass.\n"
                         + " Buffer fill and BLAS/OMM preparation run on workers. max-inflight-sections bounds\n"
@@ -597,6 +600,25 @@ public final class CausticaConfig {
              */
             public static final BooleanSetting DENOISER =
                     bool("caustica.rt.denoiser", "composite.denoiser", true);
+            /**
+             * Parallax Occlusion Mapping: ray-marches the sprite-local UV against the LabPBR normal
+             * map's height channel (alpha) so relief-mapped terrain (cobblestone mortar, brick courses,
+             * paths, ...) reads as real depth instead of a flat decal.
+             *
+             * <p>Safe on every material: {@code world.rchit}'s {@code applyParallax} falls straight
+             * through to plain flat sampling whenever the block/material has no authored LabPBR normal
+             * map (no heightmap channel to march), so packs without PBR textures are entirely
+             * unaffected. Off (or {@link #POM_DEPTH} at 0) skips the march for a single free iteration.
+             */
+            public static final BooleanSetting POM =
+                    bool("caustica.rt.pom", "composite.pom", true);
+            /**
+             * POM relief intensity, 0..1, scaling LabPBR's defined maximum displacement (25% of a
+             * block). 0 is a flat surface (same result as {@link #POM} off); 1 is the full LabPBR
+             * relief depth authored packs expect.
+             */
+            public static final FloatSetting POM_DEPTH =
+                    clampedFloat("caustica.rt.pomDepth", "composite.pom-depth", 0.5f, 0.0f, 1.0f);
             /**
              * Flat, vanilla-style cloud deck drawn by the sky shader.
              *

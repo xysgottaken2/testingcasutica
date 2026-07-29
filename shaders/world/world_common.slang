@@ -35,6 +35,12 @@ public struct WorldPushConstants {
     public uint debugView;
     public uint lightGeneration;         // low bits reject history after the emitter hierarchy changes
     public uint restirMode;              // explicit 0=RIS fallback, 1=ReSTIR read+shade (live UI toggle)
+    // Parallax Occlusion Mapping relief intensity, 0..1. Resolved on the CPU from the player's POM
+    // toggle + depth slider (CausticaConfig.Rt.Composite.POM/POM_DEPTH) into a single value: 0 when POM
+    // is off, so world.rchit's UV march only ever needs to check "is this non-zero", not a separate
+    // enable bit. Lives in this hot push-constant block, not the WorldPush BDA struct, because
+    // world.rahit/world.rchit (which is where POM runs) never dereference WorldPush at all.
+    public float pomDepth;
 };
 
 // Block-breaking overlay entry: xyz = breaking block position (rebased, same space as gl_WorldRay*),

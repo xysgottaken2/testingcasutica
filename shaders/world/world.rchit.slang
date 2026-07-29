@@ -80,24 +80,50 @@ float rayConeUnitUvLod(uint rayCone, float2 textureSizePx) {
     return clamp(log2(footprint), 0.0, RAY_CONE_MAX_LOD);
 }
 
-// LabPBR _n decode (shared): rotate the tangent-space normal into world space via a TBN built from the
-// hit triangle's vertex positions (VK_KHR_ray_tracing_position_fetch) + UVs. `n` must already be
-// oriented toward the viewer (`vdir`). Clamps the result above the horizon so grazing perturbations
-// don't invert it through the surface (the black-spot fix). Returns AO (blue) via `ao`; falls back to
-// `n` on a degenerate UV triangle. Instance transforms are translation-only, so object edges equal
-// world edges.
-float3 perturbNormal(float3 n, float3 p0, float3 p1, float3 p2, float2 t0, float2 t1, float2 t2, float3 vdir, float4 ntex, out float ao) {
-    ao = 1.0;
+// Canonical material pages use a compact page index shared by their three dedicated arrays.
+float4 samplePageSurface0(uint page, float2 uv, float lod) {
+    return materialSurface0Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
+}
+float4 samplePageSurface1(uint page, float2 uv, float lod) {
+    return materialSurface1Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
+}
+float4 samplePageNormalAo(uint page, float2 uv, float lod) {
+    return materialNormalAoTex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
+}
+
+// Shared tangent-space basis, built from the hit triangle's vertex positions
+// (VK_KHR_ray_tracing_position_fetch) + UVs. `n` must already be oriented toward the viewer. Used by
+// both the LabPBR _n decode below (perturbNormal) and the Parallax Occlusion Mapping UV march
+// (parallaxOffsetLocalUv), so the two effects agree on the same tangent frame for a given hit. Returns
+// false on a degenerate UV triangle, in which case T/B are left zeroed and the caller should fall back
+// to unperturbed shading. Instance transforms are translation-only, so object edges equal world edges.
+bool computeTangentBasis(float3 n, float3 p0, float3 p1, float3 p2, float2 t0, float2 t1, float2 t2,
+        out float3 T, out float3 B) {
     float2 g1 = t1 - t0;
     float2 g2 = t2 - t0;
     float det = g1.x * g2.y - g1.y * g2.x;
     if (abs(det) <= 1.0e-12) {
-        return n;
+        T = float3(0.0, 0.0, 0.0);
+        B = float3(0.0, 0.0, 0.0);
+        return false;
     }
     float r = 1.0 / det;
     float3 traw = ((p1 - p0) * g2.y - (p2 - p0) * g1.y) * r;
-    float3 T = normalize(traw - n * dot(n, traw));       // Gram-Schmidt against the viewer-oriented normal
-    float3 B = cross(n, T) * (det < 0.0 ? -1.0 : 1.0);   // handedness from the UV winding
+    T = normalize(traw - n * dot(n, traw));       // Gram-Schmidt against the viewer-oriented normal
+    B = cross(n, T) * (det < 0.0 ? -1.0 : 1.0);   // handedness from the UV winding
+    return true;
+}
+
+// LabPBR _n decode: rotate the tangent-space normal into world space via computeTangentBasis. `n` must
+// already be oriented toward the viewer (`vdir`). Clamps the result above the horizon so grazing
+// perturbations don't invert it through the surface (the black-spot fix). Returns AO (blue) via `ao`;
+// falls back to `n` on a degenerate UV triangle.
+float3 perturbNormal(float3 n, float3 p0, float3 p1, float3 p2, float2 t0, float2 t1, float2 t2, float3 vdir, float4 ntex, out float ao) {
+    ao = 1.0;
+    float3 T, B;
+    if (!computeTangentBasis(n, p0, p1, p2, t0, t1, t2, T, B)) {
+        return n;
+    }
     float2 nxy = ntex.xy * 2.0 - 1.0;                    // R,G = tangent-space X,Y
     float nz = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));      // reconstruct Z
     float3 nm = normalize(nxy.x * T + nxy.y * B + nz * n);
@@ -109,7 +135,94 @@ float3 perturbNormal(float3 n, float3 p0, float3 p1, float3 p2, float2 t0, float
     return nm;
 }
 
+// ---- Parallax Occlusion Mapping ----------------------------------------------------------------
+// LabPBR's height channel (materialNormalAoTex's alpha) spans 0.0 (fully recessed, 25% of a block deep)
+// .. 1.0 (at the surface, 0% recessed). POM_MAX_RELIEF is that 25%-of-a-block ceiling expressed in the
+// SAME normalized sprite-local UV space evaluateMaterial already computes (one block face == [0,1] in
+// both axes), so the march needs no world<->texel unit conversion. pomDepth (WorldPushConstants.pomDepth,
+// the player's "POM Depth" slider, 0..1) linearly scales from no relief up to that full LabPBR ceiling;
+// 0 collapses the march to a single, free iteration (see the early-out below).
+static const float POM_MAX_RELIEF = 0.25;
+static const int POM_MIN_LAYERS = 4;
+static const int POM_MAX_LAYERS = 16;
+
+float pomHeight(uint page, float2 localUv, float lod) {
+    return samplePageNormalAo(page, localUv, lod).a;
+}
+
+// Ray-marches the sprite-local UV in the tangent-space view direction against the heightmap (steep
+// parallax mapping with a final linear interpolation between the last two layers — Parallax Occlusion
+// Mapping proper). Returns the offset UV to re-sample albedo/material channels at, so the surface reads
+// as real relief instead of a flat decal, without any extra scene geometry.
+float2 parallaxOffsetLocalUv(uint page, float4 materialUv, float2 localUv, float3 T, float3 B, float3 n,
+        float3 vdir, float lod, float pomDepth) {
+    float3 viewTs = normalize(float3(dot(vdir, T), dot(vdir, B), max(dot(vdir, n), 0.05)));
+    // Grazing rays cross more UV distance per unit depth; more layers keep the visible step size (and
+    // thus the layer-banding artifact) roughly constant across view angles.
+    int layers = int(lerp(float(POM_MAX_LAYERS), float(POM_MIN_LAYERS), abs(viewTs.z)));
+    float layerDepth = 1.0 / float(layers);
+    // Total UV traversal for the full relief depth, LearnOpenGL-style: divide by view.z so grazing rays
+    // walk further per step (they are covering the same depth over more surface distance).
+    float2 fullTraversal = (viewTs.xy / viewTs.z) * (POM_MAX_RELIEF * pomDepth);
+    float2 deltaUv = fullTraversal * layerDepth;
+
+    float2 curUv = localUv;
+    float curLayerDepth = 0.0;
+    float curDepth = 1.0 - pomHeight(page, materialUv.xy + clamp(curUv, 0.0, 1.0) * materialUv.zw, lod);
+    float2 prevUv = curUv;
+    float prevDepth = curDepth;
+    float prevLayerDepth = curLayerDepth;
+
+    for (int i = 0; i < layers; i++) {
+        if (curLayerDepth >= curDepth) {
+            break;
+        }
+        prevUv = curUv;
+        prevDepth = curDepth;
+        prevLayerDepth = curLayerDepth;
+        curUv -= deltaUv;
+        curLayerDepth += layerDepth;
+        curDepth = 1.0 - pomHeight(page, materialUv.xy + clamp(curUv, 0.0, 1.0) * materialUv.zw, lod);
+    }
+
+    float afterDepth = curDepth - curLayerDepth;
+    float beforeDepth = prevDepth - prevLayerDepth;
+    float weight = afterDepth / max(afterDepth - beforeDepth, 1.0e-5);
+    return clamp(lerp(curUv, prevUv, weight), 0.0, 1.0);
+}
+
+// Entry point used at the hit-shader call sites. `atlasUv` is either the vanilla block-atlas UV
+// (terrain) or the entity resource's own texture UV (dynamic entities) — both are mapped into
+// sprite-local [0,1] space by header.albedoUv the same way evaluateMaterial does.
+//
+// SAFETY FALLBACK: materials without an authored LabPBR normal map (MATERIAL_FEATURE_NORMAL unset) have
+// no real heightmap — their normalAo.a defaults to 0 (see RtBlockMaterials' neutral-fallback pixels),
+// which would read as "maximally recessed" and produce a bogus, ugly displacement if ever sampled. This
+// check is exactly what keeps such materials on the ordinary flat sampling path, matching the same
+// feature-bit gate the normal map itself already uses a few lines below.
+float2 applyParallax(MaterialHeader header, float2 atlasUv, float3 p0, float3 p1, float3 p2,
+        float2 t0, float2 t1, float2 t2, float3 n, float3 vdir, float lod, float pomDepth) {
+    if ((header.features & MATERIAL_FEATURE_NORMAL) == 0u || pomDepth <= 0.0) {
+        return atlasUv;
+    }
+    float3 T, B;
+    if (!computeTangentBasis(n, p0, p1, p2, t0, t1, t2, T, B)) {
+        return atlasUv;
+    }
+    // Same max-valid-LOD clamp evaluateMaterial applies before sampling any material-page channel — the
+    // page's mip chain stops at MATERIAL_MAX_LOD_MASK, so an unclamped `lod` from a distant/oblique hit
+    // would sample past the last authored mip.
+    float maxMaterialLod = float((header.features >> MATERIAL_MAX_LOD_SHIFT) & MATERIAL_MAX_LOD_MASK);
+    float materialLod = min(lod, maxMaterialLod);
+    float2 localUv = clamp((atlasUv - header.albedoUv.xy) * header.albedoUv.zw, float2(0.0, 0.0), float2(1.0, 1.0));
+    float2 offsetLocalUv = parallaxOffsetLocalUv(header.texturePage, header.materialUv, localUv, T, B, n,
+            vdir, materialLod, pomDepth);
+    // Undo the localUv mapping: local = (atlas - uvMin) * invExtent, so atlas = uvMin + local / invExtent.
+    return header.albedoUv.xy + offsetLocalUv / header.albedoUv.zw;
+}
+
 struct Surface {
+
     float3 normal;
     float3 f0;
     float roughness;
@@ -118,17 +231,6 @@ struct Surface {
     float sss;
     float ao;
 };
-
-// Canonical material pages use a compact page index shared by their three dedicated arrays.
-float4 samplePageSurface0(uint page, float2 uv, float lod) {
-    return materialSurface0Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
-}
-float4 samplePageSurface1(uint page, float2 uv, float lod) {
-    return materialSurface1Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
-}
-float4 samplePageNormalAo(uint page, float2 uv, float lod) {
-    return materialNormalAoTex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
-}
 
 // The sole terrain/entity material evaluation path. LabPBR categorical bytes have already been
 // decoded on the CPU; every sample below is a continuously filterable physical channel with semantic mips.
@@ -298,8 +400,13 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
         float3 ep2 = mul(entityO2w, HitTriangleVertexPosition(2));
         float entityLod = rayConeTextureLod(rayCone, texSizePx(entityAlbedoTex[NonUniformResourceIndex(texSlot)]),
                 ep0, ep1, ep2, euv[e0], euv[e1], euv[e2]);
-        float4 entityTexel = entityAlbedoTex[NonUniformResourceIndex(texSlot)].SampleLevel(euvCoord, entityLod);
         MaterialHeader header = ConstPtr<MaterialHeader>(pc.materialTableAddr)[pr.materialId];
+        // Same parallax offset as terrain (see the opaque-terrain call site below for the full rationale):
+        // entities with an authored LabPBR normal+height map (banners, some resource-pack chests, ...)
+        // get real relief; everything else falls straight through to the flat euvCoord.
+        euvCoord = applyParallax(header, euvCoord, ep0, ep1, ep2, euv[e0], euv[e1], euv[e2], n, vdir,
+                entityLod, pc.pomDepth);
+        float4 entityTexel = entityAlbedoTex[NonUniformResourceIndex(texSlot)].SampleLevel(euvCoord, entityLod);
         uint material = header.model;
         float3 baseAlbedo = srgbToLinear(entityTexel.rgb) * pr.tint.rgb;
         float3 albedo = material == MATERIAL_DIELECTRIC
@@ -374,6 +481,14 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     if (dot(n, vdir) < 0.0) {
         n = -n;
     }
+
+    // Parallax Occlusion Mapping: offsets the sampled UV along the tangent-space view ray using the
+    // LabPBR heightmap, so relief-mapped terrain (cobblestone mortar lines, brick courses, ...) reads as
+    // real depth instead of a flat decal. Applied once, ahead of every texture read below (glass, water,
+    // opaque), so the dielectric and opaque paths shade the SAME displaced surface point. Materials
+    // without a normal map, and water (which never carries a block texture), fall straight through to
+    // the original flat `uv` — see applyParallax's safety fallback.
+    uv = applyParallax(materialHeader, uv, tp0, tp1, tp2, uv0, uv1, uv2, n, vdir, blockLod, pc.pomDepth);
 
     // Stained glass / ice: a thin colored filter resolved in raygen
     // (material 3). albedo carries the transmission tint = texel rgb mixed toward white by (1 − opacity),
