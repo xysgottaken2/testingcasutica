@@ -71,7 +71,6 @@ public final class CausticaClient implements ClientModInitializer {
 		});
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-			client.setScreen(null);
 			shutdownRt();
 		});
 	}

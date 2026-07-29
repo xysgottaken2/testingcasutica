@@ -81,9 +81,7 @@ public abstract class VideoSettingsScreenMixin {
             new OptionInstance.Enum<>(List.of(Boolean.TRUE), com.mojang.serialization.Codec.BOOL),
             Boolean.TRUE,
             (value) -> {
-                if (this.minecraft != null) {
-                    this.minecraft.setScreen(null);
-                }
+                Minecraft.getInstance().setScreen(new RtSettingsScreen((VideoSettingsScreen) (Object) this, this.options));
             });
 
         list.addSmall(new OptionInstance<?>[] { rtButton });
