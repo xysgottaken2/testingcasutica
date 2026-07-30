@@ -65,6 +65,7 @@ import dev.comfyfluffy.caustica.rt.pipeline.RtHdrCompositePipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtSdrPresentPipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtExposure;
 import dev.comfyfluffy.caustica.rt.pipeline.RtPipeline;
+import dev.comfyfluffy.caustica.rt.dh.RtDistantHorizons;
 import dev.comfyfluffy.caustica.rt.terrain.RtTerrain;
 
 import java.nio.ByteBuffer;
@@ -545,6 +546,9 @@ public final class RtComposite {
         // the ready gate below, because it is what MAKES terrain ready during the initial fill.
         try {
             RtTerrain.frame(ctx);
+            // Distant Horizons LOD frame streaming — publish completed LOD geometry into the
+            // ray tracing acceleration structure. No-op if DH is not installed or disabled.
+            RtDistantHorizons.getInstance().frame();
         } catch (Throwable t) {
             ctx.gpuExecutor().throwIfFailed();
             failed = true;

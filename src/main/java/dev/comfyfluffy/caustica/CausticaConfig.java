@@ -63,6 +63,8 @@ public final class CausticaConfig {
             Rt.Reflex.ENABLED, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
             Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
+            Rt.DistantHorizons.ENABLED, Rt.DistantHorizons.LOD_CHUNK_RADIUS,
+            Rt.DistantHorizons.SCAN_INTERVAL_TICKS, Rt.DistantHorizons.LOD_QUAD_SIZE,
         };
     }
 
@@ -963,6 +965,25 @@ public final class CausticaConfig {
             public static final BooleanSetting ENABLED = bool("caustica.rt.frameStats", "frame-stats.enabled", false);
 
             private FrameStats() {
+            }
+        }
+
+        /** Distant Horizons LOD integration. Requires the Distant Horizons mod to be installed. */
+        public static final class DistantHorizons {
+            /** Master switch — enable LOD ray tracing when DH is installed. */
+            public static final BooleanSetting ENABLED =
+                    bool("caustica.rt.dh.enabled", "distant-horizons.enabled", true);
+            /** How many chunks beyond vanilla render distance to extend with DH LOD data. */
+            public static final IntSetting LOD_CHUNK_RADIUS =
+                    intAtLeast("caustica.rt.dh.lodRadius", "distant-horizons.lod-chunk-radius", 128, 32);
+            /** How often (in ticks) to rescan DH data for changes. */
+            public static final IntSetting SCAN_INTERVAL_TICKS =
+                    intAtLeast("caustica.rt.dh.scanTicks", "distant-horizons.scan-interval-ticks", 60, 10);
+            /** LOD mesh quad size in chunks (higher = coarser distant LOD, less GPU memory). */
+            public static final IntSetting LOD_QUAD_SIZE =
+                    intAtLeast("caustica.rt.dh.quadSize", "distant-horizons.lod-quad-size", 8, 2);
+
+            private DistantHorizons() {
             }
         }
 

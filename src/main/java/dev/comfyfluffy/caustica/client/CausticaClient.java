@@ -6,6 +6,7 @@ import dev.comfyfluffy.caustica.rt.RtDeviceBringup;
 import dev.comfyfluffy.caustica.rt.RtComposite;
 import dev.comfyfluffy.caustica.rt.RtFrameStats;
 import dev.comfyfluffy.caustica.rt.RtUiOverlay;
+import dev.comfyfluffy.caustica.rt.dh.RtDistantHorizons;
 import dev.comfyfluffy.caustica.rt.entity.RtEntities;
 import dev.comfyfluffy.caustica.rt.entity.RtEntityTextures;
 import dev.comfyfluffy.caustica.rt.material.RtBlockMaterials;
@@ -22,6 +23,13 @@ public final class CausticaClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		CausticaMod.LOGGER.info("Caustica client initialized");
+
+		// Distant Horizons integration (soft dependency — no crash if absent).
+		// The DH API is initialized lazily from the first tick() call via reflection,
+		// so no event binding or compile-time dependency is needed.
+		if (RtDistantHorizons.isDhAvailable()) {
+			CausticaMod.LOGGER.info("[DH] DH available — tick() will initialize API handles lazily");
+		}
 
 		// The GpuDevice exists well before the first tick, so a one-shot at tick start
 		// runs on the render thread with the device idle between frames.
@@ -52,6 +60,10 @@ public final class CausticaClient implements ClientModInitializer {
 					// until we're in a world with the block atlas loaded, or once already created.
 					RtComposite.INSTANCE.ensureResourcesReady(ctx);
 					RtTerrain.update(ctx);
+					// Distant Horizons LOD tick — collects DH terrain data for areas beyond vanilla
+					// render distance, if DH is installed and the integration is enabled.
+					// API handles are initialized lazily on first call.
+					RtDistantHorizons.getInstance().tick();
 					// Log DLSS-FG availability once when frame generation is enabled (capability query only;
 					// the present-loop integration that consumes it is built separately).
 					if (dev.comfyfluffy.caustica.rt.pipeline.RtDlssFg.enabled()) {
@@ -68,9 +80,11 @@ public final class CausticaClient implements ClientModInitializer {
 		InvalidateRenderStateCallback.EVENT.register(() -> {
 			RtTerrain.requestFullClear();
 			RtComposite.INSTANCE.resetFailureLatch(); // F3+A doubles as manual RT recovery after a latched failure
+			RtDistantHorizons.getInstance().onWorldUnload(); // Clear DH LOD cache on dimension change
 		});
 
 		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+			RtDistantHorizons.getInstance().onWorldUnload();
 			shutdownRt();
 		});
 	}
