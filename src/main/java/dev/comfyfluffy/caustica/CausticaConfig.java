@@ -561,24 +561,6 @@ public final class CausticaConfig {
             public static final BooleanSetting WATER_WAVES =
                     bool("caustica.rt.waterWaves", "composite.water-waves", true);
             /**
-             * Shader-only Parallax Occlusion Mapping from the LabPBR {@code _n} alpha height channel.
-             * The closest-hit shader marches a short ray through the height field and shades the
-             * displaced texel; geometry, BLASes and terrain streaming are never touched, so toggling
-             * this (or dragging the sliders) is always safe mid-game. Resource packs without authored
-             * height maps are unaffected — the material FEATURE_NORMAL bit gates the whole path.
-             */
-            public static final BooleanSetting PARALLAX_ENABLED =
-                    bool("caustica.rt.parallax", "composite.parallax", true);
-            /** Virtual relief depth multiplier (1.0 = 1/8 block of relief). */
-            public static final FloatSetting PARALLAX_STRENGTH =
-                    clampedFloat("caustica.rt.parallaxStrength", "composite.parallax-strength", 1.0f, 0.0f, 4.0f);
-            /** Bilinear (smooth) vs pixel-aligned LabPBR height/normal sampling. */
-            public static final BooleanSetting PARALLAX_SMOOTHING =
-                    bool("caustica.rt.parallaxSmoothing", "composite.parallax-smoothing", true);
-            /** Camera distance (blocks) at which relief fades out; full through 80% of the range. */
-            public static final FloatSetting PARALLAX_DISTANCE =
-                    clampedFloat("caustica.rt.parallaxDistance", "composite.parallax-distance", 64.0f, 16.0f, 256.0f);
-            /**
              * LabPBR subsurface scattering. Light entering the back of a thin surface (leaves, grass,
              * ice plants) scatters through toward the viewer via a forward-biased Henyey-Greenstein
              * phase, which is what makes foliage glow when you look through it toward the sun.

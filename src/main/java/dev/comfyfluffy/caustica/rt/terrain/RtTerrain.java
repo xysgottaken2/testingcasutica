@@ -50,7 +50,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import org.joml.Vector3fc;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -195,11 +194,6 @@ public final class RtTerrain {
     // When the last streaming pass ran on a render frame — the tick fallback watches this (see
     // STREAM_FALLBACK_AFTER_NANOS).
     private long lastFrameStreamNanos;
-    // Per-section vanilla RT readiness bitmask serialized each frame for the DH/Voxy hand-off in
-    // world.rahit: a coarse LOD hit is suppressed only once its exact vanilla section is published
-    // (or known empty), so there is never a hole *or* double geometry at the transition ring.
-    private int[] distantReadyMaskWords = new int[0];
-    private boolean distantReadyMaskDirty = true;
 
     private RtTerrain() {
         missingIndex.defaultReturnValue(NO_MISSING_INDEX);
@@ -334,17 +328,7 @@ public final class RtTerrain {
     }
 
     public static void shutdown(RtContext ctx) {
-        RtDistantHorizonsTerrain.INSTANCE.shutdown(ctx);
         INSTANCE.clear(ctx, true);
-    }
-
-    /**
-     * Serialize the exact per-section vanilla readiness mask into a per-frame BDA ring slice.
-     *
-     * @return written byte count, or zero when no valid terrain window exists
-     */
-    public static int writeDistantReadyMask(ByteBuffer dst) {
-        return INSTANCE.writeReadyMask(dst);
     }
 
     /**
@@ -456,7 +440,6 @@ public final class RtTerrain {
         if (System.nanoTime() - lastFrameStreamNanos > STREAM_FALLBACK_AFTER_NANOS) {
             stream(ctx);
         }
-        distantReadyMaskDirty = true;
     }
 
     /** The per-render-frame entry point: run one count-bounded streaming pass. */
@@ -875,76 +858,6 @@ public final class RtTerrain {
 
     private int horizontalChunks(Minecraft mc) {
         return Math.max(1, mc.options.getEffectiveRenderDistance());
-    }
-
-    private int writeReadyMask(ByteBuffer dst) {
-        if (!windowValid) {
-            return 0;
-        }
-        if (distantReadyMaskDirty) {
-            rebuildReadyMask();
-            distantReadyMaskDirty = false;
-        }
-        int sizeX = windowRadius * 2 + 1;
-        int sizeY = windowHiY - windowLoY + 1;
-        int sizeZ = sizeX;
-        int bytes = 32 + distantReadyMaskWords.length * Integer.BYTES;
-        if (dst.capacity() < bytes) {
-            throw new IllegalArgumentException("Distant readiness mask requires " + bytes
-                    + " bytes, ring slice has " + dst.capacity());
-        }
-        int minScx = windowPcx - windowRadius;
-        int minScz = windowPcz - windowRadius;
-        dst.putInt(0, minScx * 16 - blockX);
-        dst.putInt(4, windowLoY * 16 - blockY);
-        dst.putInt(8, minScz * 16 - blockZ);
-        dst.putInt(12, sizeX);
-        dst.putInt(16, sizeY);
-        dst.putInt(20, sizeZ);
-        dst.putInt(24, distantReadyMaskWords.length);
-        dst.putInt(28, 0x43535452); // "CSTR": reject an invalid/stale pointer in shader diagnostics.
-        for (int i = 0; i < distantReadyMaskWords.length; i++) {
-            dst.putInt(32 + i * Integer.BYTES, distantReadyMaskWords[i]);
-        }
-        return bytes;
-    }
-
-    private void rebuildReadyMask() {
-        if (!windowValid) {
-            distantReadyMaskWords = new int[0];
-            return;
-        }
-        int sizeX = windowRadius * 2 + 1;
-        int sizeY = windowHiY - windowLoY + 1;
-        int sizeZ = sizeX;
-        int bitCount = Math.multiplyExact(Math.multiplyExact(sizeX, sizeY), sizeZ);
-        int wordCount = (bitCount + 31) >>> 5;
-        if (distantReadyMaskWords.length != wordCount) {
-            distantReadyMaskWords = new int[wordCount];
-        } else {
-            Arrays.fill(distantReadyMaskWords, 0);
-        }
-        int minScx = windowPcx - windowRadius;
-        int minScz = windowPcz - windowRadius;
-        for (LongIterator it = desired.iterator(); it.hasNext(); ) {
-            long key = it.nextLong();
-            if (!empty.contains(key)
-                    && !(resident.containsKey(key) && published.contains(key))) {
-                continue;
-            }
-            int x = sectionX(key) - minScx;
-            int y = sectionY(key) - windowLoY;
-            int z = sectionZ(key) - minScz;
-            if (x < 0 || x >= sizeX || y < 0 || y >= sizeY || z < 0 || z >= sizeZ) {
-                continue;
-            }
-            int bit = readyMaskBitIndex(x, y, z, sizeX, sizeZ);
-            distantReadyMaskWords[bit >>> 5] |= 1 << (bit & 31);
-        }
-    }
-
-    static int readyMaskBitIndex(int x, int y, int z, int sizeX, int sizeZ) {
-        return (y * sizeZ + z) * sizeX + x;
     }
 
     private void drainDirty() {
@@ -1380,7 +1293,6 @@ public final class RtTerrain {
             }
             inFlight.remove(task.key);
             long dirtyGroup = inFlightDirtyGroup.remove(task.key);
-            distantReadyMaskDirty = true;
             if (result.failure() != null) {
                 if (result.prepared() != null) {
                     destroyPreparedSection(result.prepared());
@@ -1766,8 +1678,6 @@ public final class RtTerrain {
 
     /** Full teardown (world exit / shutdown): drain the GPU, then free everything incl. an in-flight build. */
     private void clear(RtContext ctx, boolean shutdown) {
-        distantReadyMaskWords = new int[0];
-        distantReadyMaskDirty = true;
         if (!shutdown) {
             clearAsync(ctx);
             return;
@@ -1854,8 +1764,6 @@ public final class RtTerrain {
      * as unpublished resources in {@link #completeTask(SectionResult)}.
      */
     private void clearAsync(RtContext ctx) {
-        distantReadyMaskWords = new int[0];
-        distantReadyMaskDirty = true;
         ctx.gpuExecutor().throwIfFailed();
         terrainEpoch++;
 

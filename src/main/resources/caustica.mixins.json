@@ -7,7 +7,6 @@
 		"BlockModelRenderStateMixin",
 		"BlockModelResolverMixin",
 		"CommandEncoderAccessor",
-		"DistantHorizonsLodBufferMixin",
 		"GameRendererMixin",
 		"GpuDeviceAccessor",
 		"GlxMixin",

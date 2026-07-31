@@ -8,13 +8,8 @@ import dev.comfyfluffy.caustica.CausticaConfig.IntSetting;
 import dev.comfyfluffy.caustica.CausticaConfig.StringSetting;
 import java.util.List;
 import java.util.Locale;
-import dev.comfyfluffy.caustica.compat.DistantHorizonsCompat;
-import dev.comfyfluffy.caustica.compat.VoxyCompat;
-import dev.comfyfluffy.caustica.rt.terrain.RtDistantHorizonsTerrain;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -43,11 +38,6 @@ public final class RtVideoOptions {
             entities(),
             particles(),
             waterWaves(),
-            // POM: the on/off toggle followed by its tuning sliders, shader-only and safe live.
-            parallaxEnabled(),
-            parallaxStrength(),
-            parallaxSmoothing(),
-            parallaxDistance(),
             // Grouped: the three new effect/quality toggles sit together, and OptionsList.addSmall
             // pairs them two per row, so they read as one block rather than scattered checkboxes.
             subsurfaceScattering(),
@@ -439,97 +429,6 @@ public final class RtVideoOptions {
             new OptionInstance.IntRange(min, max),
             Math.clamp(Math.round(setting.value() * 100.0f), min, max),
             value -> setting.set(value / 100.0f));
-    }
-
-    private static OptionInstance<Boolean> parallaxEnabled() {
-        return bool("caustica.options.rt.parallax", CausticaConfig.Rt.Composite.PARALLAX_ENABLED);
-    }
-
-    private static OptionInstance<Integer> parallaxStrength() {
-        FloatSetting setting = CausticaConfig.Rt.Composite.PARALLAX_STRENGTH;
-        return new OptionInstance<>(
-            "caustica.options.rt.parallaxStrength",
-            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.parallaxStrength.tooltip")),
-            (caption, percent) -> Options.genericValueLabel(caption, Component.literal(percent + "%")),
-            new OptionInstance.IntRange(0, 400),
-            Math.clamp(Math.round(setting.value() * 100.0f), 0, 400),
-            percent -> setting.set(percent / 100.0f));
-    }
-
-    private static OptionInstance<Boolean> parallaxSmoothing() {
-        return bool("caustica.options.rt.parallaxSmoothing",
-                CausticaConfig.Rt.Composite.PARALLAX_SMOOTHING);
-    }
-
-    private static OptionInstance<Integer> parallaxDistance() {
-        FloatSetting setting = CausticaConfig.Rt.Composite.PARALLAX_DISTANCE;
-        return new OptionInstance<>(
-            "caustica.options.rt.parallaxDistance",
-            OptionInstance.cachedConstantTooltip(
-                    Component.translatable("caustica.options.rt.parallaxDistance.tooltip")),
-            (caption, blocks) -> Options.genericValueLabel(caption, Component.literal(blocks + " blocks")),
-            new OptionInstance.IntRange(16, 256),
-            Math.clamp(Math.round(setting.value()), 16, 256),
-            blocks -> setting.set(blocks.floatValue()));
-    }
-
-    /** Rebuild DH's render cache and Caustica's RT proxy after changing DH quality settings. */
-    public static Button distantHorizonsRefreshButton() {
-        Button button = Button.builder(Component.translatable("caustica.options.rt.dhRefresh"), clicked -> {
-            boolean dhReloaded = DistantHorizonsCompat.reloadRenderDataCache();
-            RtDistantHorizonsTerrain.INSTANCE.requestFullRefresh();
-            clicked.setMessage(Component.translatable(dhReloaded
-                    ? "caustica.options.rt.dhRefresh.queued"
-                    : "caustica.options.rt.dhRefresh.rtOnly"));
-        }).width(310).build();
-        button.active = DistantHorizonsCompat.enabled() && Minecraft.getInstance().level != null;
-        return button;
-    }
-
-    /** Live settings supplied by the bundled no-Sodium Voxy bridge. */
-    public static OptionInstance<?>[] voxyOptions() {
-        return new OptionInstance<?>[] {
-            OptionInstance.createBoolean(
-                    "caustica.options.voxy.enabled",
-                    OptionInstance.cachedConstantTooltip(
-                            Component.translatable("caustica.options.voxy.enabled.tooltip")),
-                    VoxyCompat.active(),
-                    enabled -> {
-                        if (VoxyCompat.setActive(enabled)) {
-                            RtDistantHorizonsTerrain.INSTANCE.requestFullRefresh();
-                        }
-                    }),
-            OptionInstance.createBoolean(
-                    "caustica.options.voxy.ingest",
-                    OptionInstance.cachedConstantTooltip(
-                            Component.translatable("caustica.options.voxy.ingest.tooltip")),
-                    VoxyCompat.ingestEnabled(),
-                    VoxyCompat::setIngestEnabled),
-            new OptionInstance<>(
-                    "caustica.options.voxy.distance",
-                    OptionInstance.cachedConstantTooltip(
-                            Component.translatable("caustica.options.voxy.distance.tooltip")),
-                    (caption, sections) -> Options.genericValueLabel(caption,
-                            Component.translatable("caustica.options.voxy.chunks", sections * 32)),
-                    // Voxy stores this value in 32-block sections. Exposing the native steps avoids
-                    // hundreds of config writes and full desired-set recalculations during one drag.
-                    new OptionInstance.IntRange(1, 16),
-                    Math.clamp(VoxyCompat.configuredRenderDistanceChunks() / 32, 1, 16),
-                    sections -> VoxyCompat.setConfiguredRenderDistanceChunks(sections * 32))
-        };
-    }
-
-    /** Drop Voxy's generated proxy cache and start a bounded rebuild around the current camera. */
-    public static Button voxyRefreshButton() {
-        Button button = Button.builder(Component.translatable("caustica.options.voxy.refresh"), clicked -> {
-            boolean reset = VoxyCompat.reset();
-            RtDistantHorizonsTerrain.INSTANCE.requestFullRefresh();
-            clicked.setMessage(Component.translatable(reset
-                    ? "caustica.options.voxy.refresh.queued"
-                    : "caustica.options.voxy.refresh.unavailable"));
-        }).width(310).build();
-        button.active = VoxyCompat.enabled() && Minecraft.getInstance().level != null;
-        return button;
     }
 
     private static OptionInstance<Boolean> bool(String captionKey, BooleanSetting setting) {

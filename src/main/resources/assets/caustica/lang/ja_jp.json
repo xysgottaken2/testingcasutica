@@ -90,29 +90,5 @@
 	"caustica.options.rt.tonemapSaturation": "Tonemap Saturation",
 	"caustica.options.rt.tonemapSaturation.tooltip": "Final saturation multiplier applied after tonemapping. 1.00 is neutral; 0.00 is grayscale.",
 	"caustica.options.rt.tonemapContrast": "Tonemap Contrast",
-	"caustica.options.rt.tonemapContrast.tooltip": "Final contrast multiplier around middle gray applied after tonemapping. 1.00 is neutral.",
-	"caustica.options.rt.parallax": "POM / Parallax",
-	"caustica.options.rt.parallax.tooltip": "Enable shader-only Parallax Occlusion Mapping from the LabPBR _n alpha channel. Geometry and BLASes are never rebuilt.",
-	"caustica.options.rt.parallaxStrength": "POM Depth",
-	"caustica.options.rt.parallaxStrength.tooltip": "Virtual POM relief depth. This creates no extra triangles.",
-	"caustica.options.rt.parallaxSmoothing": "Height-map Smoothing",
-	"caustica.options.rt.parallaxSmoothing.tooltip": "Switch LabPBR height, normal and surface sampling between smooth bilinear and crisp pixel-aligned sampling.",
-	"caustica.options.rt.parallaxDistance": "Parallax Distance",
-	"caustica.options.rt.parallaxDistance.tooltip": "Distance in blocks at which parallax smoothly disappears. Relief stays full through 80% of the selected range.",
-
-	"caustica.options.rt.dhRefresh": "Reload Distant Horizons Chunks",
-	"caustica.options.rt.dhRefresh.queued": "Distant Horizons Reload Queued",
-	"caustica.options.rt.dhRefresh.rtOnly": "Caustica RT Proxy Reload Queued",
-
-	"caustica.options.voxy.header": "Voxy LODs",
-	"caustica.options.voxy.enabled": "Voxy LODs",
-	"caustica.options.voxy.enabled.tooltip": "Enable Voxy distant terrain in the Caustica path tracer. This takes effect immediately.",
-	"caustica.options.voxy.ingest": "Load New Chunks",
-	"caustica.options.voxy.ingest.tooltip": "Allow Voxy to ingest and save newly loaded Minecraft chunks. Existing cached LODs remain available when disabled.",
-	"caustica.options.voxy.distance": "LOD Distance",
-	"caustica.options.voxy.distance.tooltip": "Maximum horizontal distance of Voxy terrain. Increasing it uses more memory and takes longer to populate.",
-	"caustica.options.voxy.chunks": "%s chunks",
-	"caustica.options.voxy.refresh": "Rebuild Voxy LODs",
-	"caustica.options.voxy.refresh.queued": "Voxy rebuild queued",
-	"caustica.options.voxy.refresh.unavailable": "Voxy is unavailable"
+	"caustica.options.rt.tonemapContrast.tooltip": "Final contrast multiplier around middle gray applied after tonemapping. 1.00 is neutral."
 }

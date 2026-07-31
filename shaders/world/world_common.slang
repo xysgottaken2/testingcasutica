@@ -20,8 +20,6 @@ public struct WorldPushConstants {
     public uint64_t worldPushAddr;
     public uint64_t tableAddr;
     public uint64_t entityTableAddr;
-    public uint64_t dhTableAddr;         // coarse DH/Voxy LOD section table (0 = no LOD proxy published)
-    public uint64_t dhReadyMaskAddr;     // per-frame vanilla-ready section bitmask (0 = suppress nothing)
     public uint64_t materialTableAddr;
     public uint64_t lightBufAddr;        // RIS emitter-NEE global light buffer (0 = none published)
     public uint64_t lightAliasAddr;      // power-weighted O(1) alias table (0 = uniform fallback)
@@ -105,9 +103,6 @@ public struct WorldPush {
     // pushed raw so a mid-frame change takes effect on the next frame like every other RT option.
     public float4   clouds;           // x coverage 0..1, y opacity 0..1, z shadow strength 0..1, w deck height (camera-relative blocks)
     public float4   cloudAnchor;      // xy wind-scrolled sample anchor (blocks, wrapped), z slab thickness, w view limit
-    // Shader-only Parallax Occlusion Mapping (LabPBR _n alpha height field). Geometry and BLASes are
-    // never rebuilt; a zero relief depth disables the effect entirely.
-    public float4   parallaxParams;   // x relief depth, y height-march layer count, z unused, w max distance
     public uint     dimension;        // DIMENSION_OVERWORLD / DIMENSION_NETHER / DIMENSION_END
     public uint     featureFlags;     // FEATURE_* toggles resolved from CausticaConfig
 };
@@ -132,10 +127,6 @@ public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume
 public static const uint WORLD_FLAG_WAVES = 16u;   // bit4: animated water wave normals
-public static const uint WORLD_FLAG_POM_SMOOTHING = 32u; // bit5: bilinear LabPBR height/normal sampling
-// Extra sharpening avoided: smooth POM samples the height field slightly above the exact ray-cone LOD
-// so pixel-art height cliffs do not alias into stairstepped relief.
-public static const float PARALLAX_SMOOTH_LOD_BIAS = 0.35;
 
 // Flag accessors live here, next to the bit definitions, and take the push explicitly: world.rmiss
 // loads its own WorldPush and must NOT import world_core (that module declares the raygen bindings).
@@ -245,31 +236,6 @@ public static const uint MATERIAL_WATER = 1u;
 public static const uint MATERIAL_PARTICLE = 2u;
 public static const uint MATERIAL_DIELECTRIC = 3u;
 
-// Distant Horizons / Voxy retain coarse geometry, vertex colours and a mini-material category, but no
-// original block sprite. The CPU importer stores these surface classes in TerrainPrim.tint.w.
-public static const uint DH_SURFACE_SOLID = 0u;
-public static const uint DH_SURFACE_WATER = 1u;
-public static const uint DH_SURFACE_GLASS = 2u;
-public static const uint DH_SURFACE_EMISSIVE = 3u;
-public static const uint DH_SURFACE_EMISSIVE_GLASS = 4u;
-
-public static const uint DH_MATERIAL_UNKNOWN = 0u;
-public static const uint DH_MATERIAL_LEAVES = 1u;
-public static const uint DH_MATERIAL_STONE = 2u;
-public static const uint DH_MATERIAL_WOOD = 3u;
-public static const uint DH_MATERIAL_METAL = 4u;
-public static const uint DH_MATERIAL_DIRT = 5u;
-public static const uint DH_MATERIAL_LAVA = 6u;
-public static const uint DH_MATERIAL_DEEPSLATE = 7u;
-public static const uint DH_MATERIAL_SNOW = 8u;
-public static const uint DH_MATERIAL_SAND = 9u;
-public static const uint DH_MATERIAL_TERRACOTTA = 10u;
-public static const uint DH_MATERIAL_NETHER_STONE = 11u;
-public static const uint DH_MATERIAL_WATER = 12u;
-public static const uint DH_MATERIAL_GRASS = 13u;
-public static const uint DH_MATERIAL_AIR = 14u;
-public static const uint DH_MATERIAL_ILLUMINATED = 15u;
-
 // Entity per-triangle record (48 B). The final lane mirrors TerrainPrim's integer material metadata.
 public struct Prim {
     public float4 normal; // xyz = geometric normal, w = per-primitive emission strength
@@ -344,11 +310,7 @@ public struct EntityGeom {
 // TLAS instance-custom-index encoding + terrain geometry buckets (shared by rahit/rchit).
 public static const uint ENTITY_BIT = 0x800000u;
 public static const uint PARTICLE_BIT = 0x400000u; // particles share the entity cutout path
-// ENTITY_BIT | PARTICLE_BIT never occurs for real entities/particles, so this combination marks
-// coarse Distant Horizons / Voxy LOD instances while still fitting Vulkan's 24-bit custom index.
-public static const uint DH_INSTANCE_KIND = ENTITY_BIT | PARTICLE_BIT;
 public static const uint IDX_MASK = 0x3FFFFFu;     // low 22 bits = geom-table index
-public static const uint BUCKET_SOLID = 0u;
 public static const uint BUCKET_CUTOUT = 1u;
 public static const uint BUCKET_TRANSLUCENT = 2u;
 public static const uint BUCKET_WATER = 3u;
@@ -361,16 +323,4 @@ public uint packHalf2(float2 v) {
 
 public float2 unpackHalf2(uint p) {
     return float2(f16tof32(p & 0xFFFFu), f16tof32(p >> 16));
-}
-
-// Turn DH's baked transparent vertex colour into a stable optical filter. Saturation keeps stained
-// glass coloured even when the source alpha is low, while clear glass remains close to neutral.
-public float3 glassTransmissionFilter(float3 linearColor, float alpha) {
-    float3 color = max(linearColor, float3(0.0, 0.0, 0.0));
-    float hi = max(color.r, max(color.g, color.b));
-    float lo = min(color.r, min(color.g, color.b));
-    float saturation = hi > 1.0e-4 ? (hi - lo) / hi : 0.0;
-    float dyeStrength = clamp(max(alpha, saturation * 0.92), 0.0, 0.96);
-    return max(lerp(float3(1.0, 1.0, 1.0), color, dyeStrength),
-            float3(0.012, 0.012, 0.012));
 }

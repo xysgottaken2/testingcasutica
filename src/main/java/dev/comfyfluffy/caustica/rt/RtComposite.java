@@ -13,7 +13,6 @@ import dev.comfyfluffy.caustica.client.CausticaJitter;
 import dev.comfyfluffy.caustica.mixin.CommandEncoderAccessor;
 import dev.comfyfluffy.caustica.rt.gen.RestirReservoirData;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushConstantsData;
-import dev.comfyfluffy.caustica.rt.terrain.RtDistantHorizonsTerrain;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushData;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushData.BreakEntry;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushData.Float2;
@@ -69,7 +68,6 @@ import dev.comfyfluffy.caustica.rt.pipeline.RtPipeline;
 import dev.comfyfluffy.caustica.rt.terrain.RtTerrain;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 
 
@@ -97,11 +95,6 @@ public final class RtComposite {
     // WorldPushData and its serializer are generated from Slang's reflected Std430DataLayout. Java never
     // owns or calculates a shader byte offset, struct size, array stride, or fixed-array capacity.
     private static final int WORLD_PUSH_SIZE = WorldPushData.BYTE_SIZE;
-    // Per-frame DH/Voxy hand-off readiness mask, appended in the same BDA ring slot behind WorldPush.
-    private static final int READY_MASK_OFFSET = (WORLD_PUSH_SIZE + 15) & ~15;
-    // Covers a 257x257x48-section window (render distance 128) with room to spare.
-    private static final int READY_MASK_CAPACITY = 512 * 1024;
-    private static final int WORLD_PUSH_BUFFER_SIZE = READY_MASK_OFFSET + READY_MASK_CAPACITY;
     // Real inline push constants (fast constant-bank reads), separate from the WorldPush BDA ring above.
     // Hot addresses/frameIndex and raygen's debugView avoid unnecessary global-memory dereferences;
     // WorldPushConstantsData is generated from the same Slang module and owns this second ABI as well.
@@ -123,14 +116,6 @@ public final class RtComposite {
 
     private static boolean waterWaves() {
         return CausticaConfig.Rt.Composite.WATER_WAVES.value();
-    }
-
-    /** Shader-only POM parameters: x relief depth (blocks), y layer count, z unused, w fade distance. */
-    private static Float4 parallaxParams() {
-        float depth = CausticaConfig.Rt.Composite.PARALLAX_ENABLED.value()
-                ? CausticaConfig.Rt.Composite.PARALLAX_STRENGTH.value() * 0.125f : 0.0f;
-        return new Float4(depth, 10.0f, 0.0f,
-                CausticaConfig.Rt.Composite.PARALLAX_DISTANCE.value());
     }
 
     // ---- Shader feature flags (WorldPush.featureFlags). Mirrors world_common.slang's FEATURE_*
@@ -651,7 +636,7 @@ public final class RtComposite {
             if (pushRing == null) {
                 pushRing = new PushSlot[PUSH_RING];
                 for (int i = 0; i < PUSH_RING; i++) {
-                    pushRing[i] = new PushSlot(ctx.createBuffer(WORLD_PUSH_BUFFER_SIZE,
+                    pushRing[i] = new PushSlot(ctx.createBuffer(WORLD_PUSH_SIZE,
                             VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, "rt world push " + i));
                 }
             }
@@ -1006,8 +991,6 @@ public final class RtComposite {
             }
 
             boolean rrDone = false;
-            // Optional coarse LOD proxy (Distant Horizons / Voxy). A no-op when neither mod is present.
-            RtDistantHorizonsTerrain.INSTANCE.frame(ctx, terrain.blockX, terrain.blockY, terrain.blockZ);
             // Select the next BDA ring slot; the generated WorldPushData serializer fills it once all
             // frame-derived values (including entity addresses and block-breaking entries) are known.
             pushSlot = (pushSlot + 1) % PUSH_RING;
@@ -1016,13 +999,6 @@ public final class RtComposite {
             selectedPushSlot.graphicsUse.mark(graphicsUse);
             RtBuffer pushBuf = selectedPushSlot.buffer;
             ByteBuffer push = MemoryUtil.memByteBuffer(pushBuf.mapped, WORLD_PUSH_SIZE);
-            // Exact per-section vanilla-readiness hand-off mask for world.rahit's DH/Voxy suppression.
-            ByteBuffer readyMask = MemoryUtil.memByteBuffer(
-                    pushBuf.mapped + READY_MASK_OFFSET, READY_MASK_CAPACITY)
-                    .order(ByteOrder.nativeOrder());
-            int readyMaskBytes = RtTerrain.writeDistantReadyMask(readyMask);
-            long readyMaskAddress = readyMaskBytes == 0
-                    ? 0L : pushBuf.deviceAddress + READY_MASK_OFFSET;
             frameInvViewProj.set(frameProjection).mul(frameViewRotation).invert();
             // flags: camera-in-water (so the path tracer starts in the water medium when the eye is
             // submerged, fixing the air→water first-segment orientation) + W1 wave normals. Bit 1 used to
@@ -1045,9 +1021,6 @@ public final class RtComposite {
             }
             if (waterWaves()) {
                 flags |= 0b10000; // W1: animated water wave normals
-            }
-            if (CausticaConfig.Rt.Composite.PARALLAX_SMOOTHING.value()) {
-                flags |= 0b100000; // bit5: bilinear LabPBR height/normal sampling for POM
             }
 
             // W1/W2 water parameters: camera-biome tint plus wrapped animation time. Per-water-body tint
@@ -1082,9 +1055,7 @@ public final class RtComposite {
             // generations are reclaimed by graphics-timeline completion.
             // Entity BLASes are built inline below and merged into the per-frame TLAS. geomTableAddr
             // feeds the hit shader entity path (per-prim normal/tint) and motion vectors.
-            var staticInstances = RtDistantHorizonsTerrain.INSTANCE.appendInstances(
-                    terrain.staticInstances(), terrain.blockX, terrain.blockY, terrain.blockZ);
-            RtEntities.FrameEntities fe = RtEntities.INSTANCE.beginFrame(ctx, staticInstances,
+            RtEntities.FrameEntities fe = RtEntities.INSTANCE.beginFrame(ctx, terrain.staticInstances(),
                     terrain.blockX, terrain.blockY, terrain.blockZ, camX, camY, camZ, frameProjection, frameViewRotation);
             frameEntities = fe;
             // Block-breaking overlay: resolves each destroy-stage RenderType's texture into the
@@ -1141,12 +1112,10 @@ public final class RtComposite {
                     ambientFog(dimension, weather),
                     clouds.clouds(),
                     clouds.anchor(),
-                    // Shader-only POM: x relief depth (blocks), y fixed layer count, w fade distance.
-                    parallaxParams(),
                     dimension,
                     featureFlags()
             ).write(push);
-            pushBuf.flush(0L, Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes));
+            pushBuf.flush(0L, WORLD_PUSH_SIZE);
             // Upload any entity textures registered this frame into the bindless set before the trace.
             RtEntityTextures.INSTANCE.uploadPending(active, atlasSampler(ctx));
             // Build the entity BLAS, the TLAS that references it and the terrain BLAS, then the trace.
@@ -1176,7 +1145,6 @@ public final class RtComposite {
             // none of them should cost an extra BDA dereference to find.
             ByteBuffer pushConstants = stack.malloc(WorldPushConstantsData.BYTE_SIZE);
             new WorldPushConstantsData(pushBuf.deviceAddress, terrain.tableAddress(), fe.geomTableAddr(),
-                    RtDistantHorizonsTerrain.INSTANCE.tableAddress(), readyMaskAddress,
                     RtMaterialRegistry.INSTANCE.tableAddress(),
                     terrain.lightBufferAddress(), terrain.lightAliasBufferAddress(),
                     terrain.lightLocalAliasBufferAddress(), terrain.lightGridCellBufferAddress(),

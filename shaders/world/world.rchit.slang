@@ -120,138 +120,14 @@ struct Surface {
 };
 
 // Canonical material pages use a compact page index shared by their three dedicated arrays.
-// When height-map smoothing is disabled (WORLD_FLAG_POM_SMOOTHING off), every LabPBR channel snaps to
-// exact mip texel centres, so "off" is genuinely pixel-aligned rather than merely applying nearest
-// filtering to the height while leaving the mapped normals smooth.
-bool pomSmoothingEnabled() {
-    return (ConstPtr<WorldPush>(pc.worldPushAddr)[0].flags & WORLD_FLAG_POM_SMOOTHING) != 0u;
-}
-
-float2 snapUvToTexelCentre(Sampler2D pageTex, float2 uv, inout float lod) {
-    uint w, h;
-    pageTex.GetDimensions(w, h);
-    float mip = floor(lod);
-    float2 size = max(float2(1.0, 1.0), floor(float2(w, h) / exp2(mip)));
-    lod = mip;
-    return (floor(uv * size) + 0.5) / size;
-}
-
 float4 samplePageSurface0(uint page, float2 uv, float lod) {
-    Sampler2D pageTex = materialSurface0Tex[NonUniformResourceIndex(page)];
-    if (!pomSmoothingEnabled()) uv = snapUvToTexelCentre(pageTex, uv, lod);
-    return pageTex.SampleLevel(uv, lod);
+    return materialSurface0Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
 }
 float4 samplePageSurface1(uint page, float2 uv, float lod) {
-    Sampler2D pageTex = materialSurface1Tex[NonUniformResourceIndex(page)];
-    if (!pomSmoothingEnabled()) uv = snapUvToTexelCentre(pageTex, uv, lod);
-    return pageTex.SampleLevel(uv, lod);
+    return materialSurface1Tex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
 }
 float4 samplePageNormalAo(uint page, float2 uv, float lod) {
-    Sampler2D pageTex = materialNormalAoTex[NonUniformResourceIndex(page)];
-    if (!pomSmoothingEnabled()) uv = snapUvToTexelCentre(pageTex, uv, lod);
-    return pageTex.SampleLevel(uv, lod);
-}
-
-// LabPBR stores height in the alpha channel of the _n texture; it shares the normalAo page.
-float samplePageHeight(uint page, float2 uv, float lod) {
-    Sampler2D pageTex = materialNormalAoTex[NonUniformResourceIndex(page)];
-    if (!pomSmoothingEnabled()) uv = snapUvToTexelCentre(pageTex, uv, lod);
-    return pageTex.SampleLevel(uv, lod).a;
-}
-
-// Parallax Occlusion Mapping: trace a short view-space ray through the LabPBR height field and return
-// a displaced albedo UV. The configured camera distance keeps full relief through 80% of its range,
-// then fades continuously so the cutoff cannot visibly pop. Fade before the sprite boundary and reject
-// rays that leave it: clamping a marching ray to the edge stretches the last texel column into long
-// spikes and makes it pop as the camera moves.
-float2 parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geometricNormal,
-        float3 p0, float3 p1, float3 p2, float2 uv0, float2 uv1, float2 uv2, float3 vdir) {
-    if ((header.features & MATERIAL_FEATURE_NORMAL) == 0u) {
-        return atlasUv;
-    }
-
-    float2 g1 = uv1 - uv0;
-    float2 g2 = uv2 - uv0;
-    float det = g1.x * g2.y - g1.y * g2.x;
-    if (abs(det) <= 1.0e-12) {
-        return atlasUv;
-    }
-
-    float3 n = geometricNormal;
-    float r = 1.0 / det;
-    float3 traw = ((p1 - p0) * g2.y - (p2 - p0) * g1.y) * r;
-    float3 T = normalize(traw - n * dot(n, traw));
-    float3 B = cross(n, T) * (det < 0.0 ? -1.0 : 1.0);
-    float rawNoV = max(dot(vdir, n), 0.0);
-    float3 viewTs = float3(dot(vdir, T), dot(vdir, B), max(rawNoV, 0.08));
-
-    float2 localUv = clamp((atlasUv - header.albedoUv.xy) * header.albedoUv.zw,
-            float2(0.0, 0.0), float2(1.0, 1.0));
-    WorldPush worldPush = ConstPtr<WorldPush>(pc.worldPushAddr)[0];
-    float4 parallaxParams = worldPush.parallaxParams;
-    float maxDistance = max(parallaxParams.w, 1.0);
-    float3 hitPosition = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    float cameraDistance = length(hitPosition - worldPush.camOffset);
-    float distanceFade = 1.0 - smoothstep(maxDistance * 0.8, maxDistance, cameraDistance);
-    float maxMaterialLod = float((header.features >> MATERIAL_MAX_LOD_SHIFT) & MATERIAL_MAX_LOD_MASK);
-    // Only suppress the singular near-horizontal case; a wider fade would override the distance slider.
-    float grazingFade = smoothstep(0.002, 0.006, rawNoV);
-    float edgeDistance = min(min(localUv.x, 1.0 - localUv.x), min(localUv.y, 1.0 - localUv.y));
-    float edgeFade = smoothstep(0.015, 0.09, edgeDistance);
-    float heightScale = parallaxParams.x * distanceFade * grazingFade * edgeFade;
-    if (heightScale <= 1.0e-5) {
-        return atlasUv;
-    }
-
-    uint page = header.texturePage;
-    bool smoothing = (worldPush.flags & WORLD_FLAG_POM_SMOOTHING) != 0u;
-    float materialLod = min(smoothing ? lod + PARALLAX_SMOOTH_LOD_BIAS : floor(lod), maxMaterialLod);
-    // A view-dependent rounded layer count changes abruptly during tiny camera rotations and makes
-    // high-contrast height fields shimmer. A fixed configured count is temporally stable.
-    int layerCount = clamp(int(round(parallaxParams.y)), 4, 32);
-    float layerDepth = 1.0 / float(layerCount);
-    float2 deltaUv = (viewTs.xy / viewTs.z) * (heightScale / float(layerCount));
-    float2 currentUv = localUv;
-    float currentDepth = 0.0;
-    float sampledDepth = 1.0 - samplePageHeight(page,
-            header.materialUv.xy + currentUv * header.materialUv.zw, materialLod);
-
-    [loop]
-    for (int stepIndex = 0; stepIndex < 32 && currentDepth < sampledDepth; ++stepIndex) {
-        float2 nextUv = currentUv - deltaUv;
-        if (any(nextUv < float2(0.0, 0.0)) || any(nextUv > float2(1.0, 1.0))) {
-            return atlasUv;
-        }
-        currentUv = nextUv;
-        currentDepth += layerDepth;
-        sampledDepth = 1.0 - samplePageHeight(page,
-                header.materialUv.xy + currentUv * header.materialUv.zw, materialLod);
-    }
-
-    // Smooth mode refines the crossing. Pixel mode intentionally keeps the discrete layer hit so it
-    // cannot reintroduce interpolated/rounded relief after the user disabled smoothing.
-    float2 frontUv = currentUv + deltaUv;
-    float frontDepth = max(0.0, currentDepth - layerDepth);
-    float2 backUv = currentUv;
-    float backDepth = currentDepth;
-    if (smoothing) {
-        [unroll]
-        for (int refine = 0; refine < 4; ++refine) {
-            float2 midUv = (frontUv + backUv) * 0.5;
-            float midDepth = (frontDepth + backDepth) * 0.5;
-            float mapDepth = 1.0 - samplePageHeight(page,
-                    header.materialUv.xy + midUv * header.materialUv.zw, materialLod);
-            if (midDepth < mapDepth) {
-                frontUv = midUv;
-                frontDepth = midDepth;
-            } else {
-                backUv = midUv;
-                backDepth = midDepth;
-            }
-        }
-    }
-    float2 displacedLocalUv = smoothing ? (frontUv + backUv) * 0.5 : currentUv;
-    return header.albedoUv.xy + displacedLocalUv / header.albedoUv.zw;
+    return materialNormalAoTex[NonUniformResourceIndex(page)].SampleLevel(uv, lod);
 }
 
 // The sole terrain/entity material evaluation path. LabPBR categorical bytes have already been
@@ -339,111 +215,10 @@ float3 applyBreaking(float3 albedo, uint rayCone, float3 rayOrigin, float3 rayDi
     return albedo;
 }
 
-// Distant Horizons / Voxy mini-material shading defaults. The coarse VBO retains only a one-byte
-// material class, so these map that class onto plausible PBR parameters.
-float dhMaterialRoughness(uint material, float fallbackRoughness) {
-    if (material == DH_MATERIAL_METAL) return 0.28;
-    if (material == DH_MATERIAL_SNOW) return 0.38;
-    if (material == DH_MATERIAL_WOOD) return 0.72;
-    if (material == DH_MATERIAL_STONE) return 0.78;
-    if (material == DH_MATERIAL_DEEPSLATE) return 0.84;
-    if (material == DH_MATERIAL_TERRACOTTA) return 0.76;
-    if (material == DH_MATERIAL_LEAVES) return 0.84;
-    if (material == DH_MATERIAL_GRASS) return 0.92;
-    if (material == DH_MATERIAL_DIRT) return 0.96;
-    if (material == DH_MATERIAL_SAND) return 0.98;
-    if (material == DH_MATERIAL_NETHER_STONE) return 0.88;
-    if (material == DH_MATERIAL_LAVA) return 0.68;
-    if (material == DH_MATERIAL_ILLUMINATED) return clamp(fallbackRoughness, 0.18, 0.90);
-    return clamp(fallbackRoughness, 0.25, 1.0);
-}
-
-float dhMaterialMetalness(uint material, float fallbackMetalness) {
-    if (material == DH_MATERIAL_METAL) return 1.0;
-    if (material == DH_MATERIAL_ILLUMINATED) return clamp(fallbackMetalness, 0.0, 1.0);
-    return 0.0;
-}
-
-float dhMaterialSss(uint material) {
-    if (material == DH_MATERIAL_LEAVES) return 0.18;
-    if (material == DH_MATERIAL_GRASS) return 0.055;
-    if (material == DH_MATERIAL_SNOW) return 0.08;
-    return 0.0;
-}
-
 [shader("closesthit")]
 void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) {
     float2 attribs = attr.barycentrics;
     uint rayCone = payload.rayCone;
-
-    // Native DH/Voxy LOD triangles participate in camera, GI, reflection and shadow rays through the
-    // same TLAS. They carry no sprite: shading comes from vertex colour + the mini-material class.
-    if ((InstanceID() & DH_INSTANCE_KIND) == DH_INSTANCE_KIND) {
-        Section sec = ConstPtr<Section>(pc.dhTableAddr)[InstanceID() & IDX_MASK];
-        uint dpid = PrimitiveIndex() + sec.triBase[GeometryIndex()];
-        TerrainPrim dpr = ConstPtr<TerrainPrim>(sec.primAddr)[dpid];
-        float3 sourceNormal = normalize(dpr.normal.xyz);
-        float3 dn = sourceNormal;
-        if (dot(dn, -WorldRayDirection()) < 0.0) dn = -dn;
-        uint dhSurface = uint(dpr.tint.w + 0.5);
-        uint dhMaterial = dpr.flags;
-        bool dhWater = dhSurface == DH_SURFACE_WATER;
-        bool dhGlass = dhSurface == DH_SURFACE_GLASS;
-        bool dhEmissive = dhSurface == DH_SURFACE_EMISSIVE;
-        bool dhEmissiveGlass = dhSurface == DH_SURFACE_EMISSIVE_GLASS;
-        float dhEmission = (dhEmissive || dhEmissiveGlass) ? clamp(asfloat(dpr.aux0), 0.0, 4.0) : 0.0;
-        MaterialHeader dhHeader = ConstPtr<MaterialHeader>(pc.materialTableAddr)[dpr.materialId];
-
-        if (dhGlass || dhEmissiveGlass) {
-            float opticalAlpha = clamp(asfloat(dhEmissiveGlass ? dpr.aux1 : dpr.aux0), 0.04, 0.80);
-            float3 glassTint = glassTransmissionFilter(dpr.tint.rgb, opticalAlpha);
-            float ior = max(dhHeader.params.z, 1.45);
-            float f0Base = (ior - 1.0) / (ior + 1.0);
-            float f0Scalar = f0Base * f0Base;
-            payload.albedo = half3(glassTint);
-            payload.normal = half3(dn);
-            payload.hitT = RayTCurrent();
-            payload.motionPrev = half3(0.0h, 0.0h, 0.0h);
-            payload.f0 = half3(float3(f0Scalar, f0Scalar, f0Scalar));
-            payloadSetPacked(payload, MATERIAL_DIELECTRIC,
-                    clamp(dhHeader.params.x, 0.025, 0.16), 0.0, dhEmission, 0.0,
-                    ior, max(dhHeader.params.w, 0.97),
-                    dhEmissiveGlass ? EMISSION_SOURCE_UNIFORM : EMISSION_SOURCE_NONE);
-            payloadSetDielectric(payload, MATERIAL_DIELECTRIC,
-                    dot(WorldRayDirection(), sourceNormal) < 0.0);
-            return;
-        }
-
-        if (dhWater) {
-            // A coarse LOD voxel is a sparse surface approximation, not a watertight column: pushing a
-            // real water medium here would accumulate Beer-Lambert absorption through generated
-            // bottom/side faces and turn distant lakes into black sheets (the fork's voxy-compat bug).
-            // Our unified dielectric raygen derives the medium from the payload, so the safe adaptation
-            // is a glossy opaque water-tinted surface: correct colour and a plausible sun highlight at
-            // horizon distances, with zero medium-stack interaction.
-            payload.albedo = half3(dpr.tint.rgb);
-            payload.normal = half3(dn);
-            payload.hitT = RayTCurrent();
-            payload.motionPrev = half3(0.0h, 0.0h, 0.0h);
-            payload.f0 = half3(0.02h, 0.02h, 0.02h);
-            payloadSetPacked(payload, MATERIAL_OPAQUE, 0.075, 0.0, 0.0, 0.0,
-                    1.333, 0.0, EMISSION_SOURCE_NONE);
-            return;
-        }
-
-        payload.albedo = half3(dpr.tint.rgb);
-        payload.normal = half3(dn);
-        payload.hitT = RayTCurrent();
-        payload.motionPrev = half3(0.0h, 0.0h, 0.0h);
-        float dhRoughness = dhMaterialRoughness(dhMaterial, dhHeader.params.x);
-        float dhMetalness = dhMaterialMetalness(dhMaterial, dhHeader.params.y);
-        float dhSss = dhMaterialSss(dhMaterial);
-        payload.f0 = half3(lerp(float3(0.04, 0.04, 0.04), dpr.tint.rgb, dhMetalness));
-        payloadSetPacked(payload, MATERIAL_OPAQUE, dhRoughness, dhMetalness, dhEmission, dhSss,
-                max(dhHeader.params.z, 1.0), 0.0,
-                dhEmissive ? EMISSION_SOURCE_UNIFORM : EMISSION_SOURCE_NONE);
-        return;
-    }
 
     // Particle billboard: same geom-table/UV/bindless-atlas path as entities. Albedo is atlas texel *
     // per-particle colour; raygen treats material 2 as a primary-visible diffuse receiver with no
@@ -523,15 +298,9 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
         float3 ep2 = mul(entityO2w, HitTriangleVertexPosition(2));
         float entityLod = rayConeTextureLod(rayCone, texSizePx(entityAlbedoTex[NonUniformResourceIndex(texSlot)]),
                 ep0, ep1, ep2, euv[e0], euv[e1], euv[e2]);
+        float4 entityTexel = entityAlbedoTex[NonUniformResourceIndex(texSlot)].SampleLevel(euvCoord, entityLod);
         MaterialHeader header = ConstPtr<MaterialHeader>(pc.materialTableAddr)[pr.materialId];
         uint material = header.model;
-        // POM on the opaque entity BLAS geometry only; cutout/translucent entities keep the exact UV
-        // whose alpha the any-hit shader already validated (block-entity models like chests are opaque).
-        if (GeometryIndex() == 0u && material == MATERIAL_OPAQUE) {
-            euvCoord = parallaxUv(header, euvCoord, entityLod, n, ep0, ep1, ep2,
-                    euv[e0], euv[e1], euv[e2], vdir);
-        }
-        float4 entityTexel = entityAlbedoTex[NonUniformResourceIndex(texSlot)].SampleLevel(euvCoord, entityLod);
         float3 baseAlbedo = srgbToLinear(entityTexel.rgb) * pr.tint.rgb;
         float3 albedo = material == MATERIAL_DIELECTRIC
                 ? lerp(float3(1.0, 1.0, 1.0), baseAlbedo, entityTexel.a) : baseAlbedo;
@@ -604,13 +373,6 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     float3 vdir = -WorldRayDirection(); // toward the viewer
     if (dot(n, vdir) < 0.0) {
         n = -n;
-    }
-
-    // Parallax Occlusion Mapping: restrict relief to the opaque geometry bucket so leaves, plants,
-    // grass overlays and translucent blocks cannot shade a different texel than the one that
-    // established their any-hit coverage.
-    if (GeometryIndex() == BUCKET_SOLID && materialHeader.model == MATERIAL_OPAQUE) {
-        uv = parallaxUv(materialHeader, uv, blockLod, n, tp0, tp1, tp2, uv0, uv1, uv2, vdir);
     }
 
     // Stained glass / ice: a thin colored filter resolved in raygen

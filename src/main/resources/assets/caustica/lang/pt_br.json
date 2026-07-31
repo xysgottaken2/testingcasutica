@@ -92,29 +92,5 @@
 	"caustica.options.rt.tonemapSaturation": "Saturação do tonemap",
 	"caustica.options.rt.tonemapSaturation.tooltip": "Multiplicador final de saturação aplicado após o tonemapping. 1,00 é neutro; 0,00 é tons de cinza.",
 	"caustica.options.rt.tonemapContrast": "Contraste do tonemap",
-	"caustica.options.rt.tonemapContrast.tooltip": "Multiplicador final de contraste em torno do cinza médio aplicado após o tonemapping. 1,00 é neutro.",
-	"caustica.options.rt.parallax": "POM / Parallax",
-	"caustica.options.rt.parallax.tooltip": "Ativa Parallax Occlusion Mapping apenas em shader a partir do canal alfa LabPBR _n. Geometria e BLAS nunca são reconstruídos.",
-	"caustica.options.rt.parallaxStrength": "Profundidade do POM",
-	"caustica.options.rt.parallaxStrength.tooltip": "Profundidade virtual do relevo do POM. Não cria triângulos extras.",
-	"caustica.options.rt.parallaxSmoothing": "Suavização do Mapa de Altura",
-	"caustica.options.rt.parallaxSmoothing.tooltip": "Alterna a amostragem de altura, normal e superfície LabPBR entre bilinear suave e alinhada ao pixel.",
-	"caustica.options.rt.parallaxDistance": "Distância do Parallax",
-	"caustica.options.rt.parallaxDistance.tooltip": "Distância em blocos na qual o parallax desaparece suavemente. O relevo permanece completo em 80% do alcance selecionado.",
-
-	"caustica.options.rt.dhRefresh": "Recarregar Chunks do Distant Horizons",
-	"caustica.options.rt.dhRefresh.queued": "Recarga do Distant Horizons na fila",
-	"caustica.options.rt.dhRefresh.rtOnly": "Recarga do proxy RT do Caustica na fila",
-
-	"caustica.options.voxy.header": "LODs do Voxy",
-	"caustica.options.voxy.enabled": "LODs do Voxy",
-	"caustica.options.voxy.enabled.tooltip": "Ativa o terreno distante do Voxy no path tracer do Caustica. Tem efeito imediato.",
-	"caustica.options.voxy.ingest": "Carregar Novos Chunks",
-	"caustica.options.voxy.ingest.tooltip": "Permite que o Voxy processe e salve chunks recém-carregados. LODs já em cache continuam disponíveis quando desativado.",
-	"caustica.options.voxy.distance": "Distância de LOD",
-	"caustica.options.voxy.distance.tooltip": "Distância horizontal máxima do terreno Voxy. Aumentá-la usa mais memória e demora mais para preencher.",
-	"caustica.options.voxy.chunks": "%s chunks",
-	"caustica.options.voxy.refresh": "Reconstruir LODs do Voxy",
-	"caustica.options.voxy.refresh.queued": "Reconstrução do Voxy na fila",
-	"caustica.options.voxy.refresh.unavailable": "Voxy indisponível"
+	"caustica.options.rt.tonemapContrast.tooltip": "Multiplicador final de contraste em torno do cinza médio aplicado após o tonemapping. 1,00 é neutro."
 }

@@ -376,11 +376,7 @@ public final class RtPipeline {
             int rayType = relativeHitGroup / RtAccel.TERRAIN_BUCKETS;
             int bucket = relativeHitGroup % RtAccel.TERRAIN_BUCKETS;
             if (rayType == RtAccel.SBT_RAY_RADIANCE) {
-                return bucket == RtAccel.BUCKET_CUTOUT
-                        // Voxy/DH water must run any-hit on radiance rays as well: that shader owns the
-                        // exact per-section hand-off mask which removes the LOD proxy once real RT
-                        // terrain is published. Loaded-chunk water simply falls through unchanged.
-                        || bucket == RtAccel.BUCKET_WATER;
+                return bucket == RtAccel.BUCKET_CUTOUT;
             }
             return bucket != RtAccel.BUCKET_SOLID;
         }

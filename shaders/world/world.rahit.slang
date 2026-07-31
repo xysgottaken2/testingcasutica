@@ -48,31 +48,6 @@ float alphaDitherThreshold(uint salt) {
     return frac(base + float((pc.frameIndex + salt) & 255u) * 0.61803398875);
 }
 
-// Exact per-section vanilla-terrain readiness test for the DH/Voxy hand-off. The mask is serialized
-// per frame by RtTerrain.writeDistantReadyMask into the WorldPush BDA ring; a zero address (or a
-// stale magic) suppresses nothing, so the LOD proxy stays visible until real terrain is published.
-bool vanillaRtSectionReady(float3 hitPos) {
-    uint64_t maskAddr = pc.dhReadyMaskAddr;
-    if (maskAddr == 0) {
-        return false;
-    }
-    ConstPtr<uint> mask = ConstPtr<uint>(maskAddr);
-    if (mask[7] != 0x43535452u) { // "CSTR"
-        return false;
-    }
-    int3 minBlock = int3(asint(mask[0]), asint(mask[1]), asint(mask[2]));
-    uint3 size = uint3(mask[3], mask[4], mask[5]);
-    // Probe just inside the surface along the ray. At a section boundary this selects the section
-    // containing the solid represented by the LOD face rather than the empty section in front of it.
-    int3 cell = int3(floor((hitPos + WorldRayDirection() * 0.01 - float3(minBlock)) / 16.0));
-    if (any(cell < int3(0, 0, 0)) || any(cell >= int3(size))) {
-        return false;
-    }
-    uint bit = (uint(cell.y) * size.z + uint(cell.z)) * size.x + uint(cell.x);
-    uint word = bit >> 5;
-    return word < mask[6] && (mask[8 + word] & (1u << (bit & 31u))) != 0u;
-}
-
 [shader("anyhit")]
 void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) {
     uint pid = PrimitiveIndex();
@@ -80,35 +55,6 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     float3 bary = float3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
     uint instanceKind = InstanceID() & (ENTITY_BIT | PARTICLE_BIT);
-    if (instanceKind == DH_INSTANCE_KIND) {
-        float3 hitPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-        if (vanillaRtSectionReady(hitPos)) {
-            // Suppress this exact LOD section only after its real RT replacement is published, so the
-            // transition ring never shows a hole or double geometry.
-            IgnoreHit();
-            return;
-        }
-
-        Section sec = ConstPtr<Section>(pc.dhTableAddr)[InstanceID() & IDX_MASK];
-        uint tri = pid + sec.triBase[GeometryIndex()];
-        TerrainPrim pr = ConstPtr<TerrainPrim>(sec.primAddr)[tri];
-        bool shadowRay = (RayFlags() & RAY_FLAG_SKIP_CLOSEST_HIT_SHADER) != 0u;
-        uint dhSurface = uint(pr.tint.w + 0.5);
-        if (dhSurface == DH_SURFACE_WATER && shadowRay) {
-            payload.albedo *= half3(lerp(float3(1.0, 1.0, 1.0), pr.tint.rgb, WATER_SHADOW_TINT));
-            payload.hitT = payload.hitT < 0.0 ? RayTCurrent() : min(payload.hitT, RayTCurrent());
-            IgnoreHit();
-            return;
-        }
-        if ((dhSurface == DH_SURFACE_GLASS || dhSurface == DH_SURFACE_EMISSIVE_GLASS) && shadowRay) {
-            float opticalAlpha = clamp(asfloat(dhSurface == DH_SURFACE_EMISSIVE_GLASS
-                    ? pr.aux1 : pr.aux0), 0.04, 0.80);
-            payload.albedo *= half3(glassTransmissionFilter(pr.tint.rgb, opticalAlpha) * 0.94);
-            IgnoreHit();
-            return;
-        }
-        return;
-    }
     if (instanceKind != 0u) {
         EntityGeom g = ConstPtr<EntityGeom>(pc.entityTableAddr)[InstanceID() & IDX_MASK];
         pid += g.triBase[GeometryIndex()];
@@ -169,11 +115,6 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     // Water radiance rays use a closest-hit-only SBT record. Shadow rays run this record: tint sunlight by
     // the biome water color, then keep walking so submerged terrain is lit by colored transmission.
     if (bucket == BUCKET_WATER) {
-        // Loaded-chunk water radiance rays now reach any-hit too (the SBT enables it so the DH/Voxy
-        // branch above can run its hand-off mask); accept them unchanged for closest-hit shading.
-        if ((RayFlags() & RAY_FLAG_SKIP_CLOSEST_HIT_SHADER) == 0u) {
-            return;
-        }
         TerrainPrim pr = ConstPtr<TerrainPrim>(sec.primAddr)[tri];
         payload.albedo *= half3(lerp(float3(1.0, 1.0, 1.0), pr.tint.rgb, WATER_SHADOW_TINT));
         // Record the NEAREST water crossing (any-hit order is arbitrary) in the shadow payload's hitT
