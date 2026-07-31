@@ -126,6 +126,14 @@ public final class RtDistantHorizonsTerrain {
     // (which lost RT shadows/materials) without recreating the old full-proxy VRAM doubling spike.
     private BuildSession buildSession;
 
+    // Used for timeout-based unstick of the DH pipeline.
+    // If any busy flag or session is stuck (common after epoch++, error, quality change, world switch),
+    // and the player keeps moving, we force-clear so that new DH data can be consumed and new plans started.
+    // This is the main fix for the "DH completely stopped generating and updating new distant chunks"
+    // deadlock (DH workers themselves were running, but Caustica stopped calling startCpuBuild).
+    private static final long DH_STUCK_UNSTICK_NANOS = 1_500_000_000L; // 1.5s
+    private long lastDhPlanAttemptNanos = 0;
+
     private RtDistantHorizonsTerrain() {
     }
 
@@ -154,6 +162,7 @@ public final class RtDistantHorizonsTerrain {
             cpuPending = false;
             packPending = false;
             pending = false;
+            lastDhPlanAttemptNanos = 0L;
             anchorX = anchorZ = Integer.MIN_VALUE;
             capturedLodRevision = -1L;
             nextRefresh = 0L;
@@ -198,6 +207,7 @@ public final class RtDistantHorizonsTerrain {
                     cpuPending = false;
                     packPending = false;
                     pending = false;
+                    lastDhPlanAttemptNanos = 0L;
                 }
                 lodQuality = updatedQuality;
                 qualitySettleUntilNanos = now + QUALITY_SETTLE_NANOS;
@@ -221,9 +231,51 @@ public final class RtDistantHorizonsTerrain {
         // Never withdraw the published RT proxy while a replacement is prepared. DH uploads can arrive in
         // bursts for many seconds; wait for a quiet window, then rebuild only changed source meshes.
         boolean replacementBusy = buildSession != null || packPending;
-        if (!pending && !cpuPending && !replacementBusy && now >= earliestBuildNanos
-                && RtMaterialRegistry.INSTANCE.isReady()
-                && (current == null || cameraCellChanged || refreshUploadedLods)) {
+
+        // EXPLICIT TIMEOUT UNSTICK (per root cause analysis):
+        // If any busy flag or buildSession left true after epoch++ (manual/quality/world/error),
+        // and DH_STUCK_UNSTICK_NANOS elapsed since last plan attempt, and (camera moved to new cell or
+        // lodRevision changed or no current proxy), then force epoch++ + clearAllBusyFlags() so that
+        // the shouldStartNew guard can fire again and we resume calling startCpuBuild / consuming
+        // new DH captures → lodMeshesSnapshot → plan → BLAS. This fixes the complete stop of
+        // generating/rendering new distant chunks (tiny vanilla square + void at RD=2).
+        if ((pending || cpuPending || packPending || buildSession != null)
+                && lastDhPlanAttemptNanos != 0
+                && (now - lastDhPlanAttemptNanos) >= DH_STUCK_UNSTICK_NANOS
+                && (cameraCellChanged || lodDataChanged || current == null || refreshUploadedLods)) {
+            CausticaMod.LOGGER.info(
+                    "DH RT unstick timeout: busy flags (p={},cpuP={},packP={},sess={}) stuck for {}ms (epoch={}) after last plan attempt. cameraCell={}, lodChanged={}, forcing epoch++ + clearAllBusyFlags to re-enable continuous DH→RT data flow.",
+                    pending, cpuPending, packPending, (buildSession != null),
+                    (now - lastDhPlanAttemptNanos) / 1_000_000, epoch,
+                    cameraCellChanged, lodDataChanged);
+            epoch++;
+            abortBuildSession();
+            cpuPending = false;
+            packPending = false;
+            pending = false;
+            earliestBuildNanos = 0L;
+            capturedLodRevision = -1L;
+            lastDhPlanAttemptNanos = 0L;
+        }
+
+        boolean shouldStartNew = (current == null || cameraCellChanged || refreshUploadedLods)
+                && now >= earliestBuildNanos
+                && RtMaterialRegistry.INSTANCE.isReady();
+
+        if (shouldStartNew) {
+            // CRITICAL: If any busy flag or session is stuck from a previous epoch/failure/quality change,
+            // we MUST abort it and clear the flags. Otherwise the guard below would permanently prevent
+            // new DH work, freezing distant terrain updates (the exact symptom: only vanilla near chunks
+            // visible, DH "stopped generating").
+            if (pending || cpuPending || packPending || buildSession != null) {
+                CausticaMod.LOGGER.info("DH RT forcing fresh plan (camera/lod changed) — aborting any stuck previous work");
+                epoch++; // ensure any in-flight completions are treated as stale
+                abortBuildSession();
+                cpuPending = false;
+                packPending = false;
+                pending = false;
+            }
+
             anchorX = ax;
             anchorZ = az;
             capturedLodRevision = lodRevision;
@@ -238,8 +290,18 @@ public final class RtDistantHorizonsTerrain {
             nextRevision += 2L;
             Proxy reuseBase = forceSourceRebuild ? null : current;
             forceSourceRebuild = false;
+            lastDhPlanAttemptNanos = now;
             startCpuBuild(ax, az, proxyRadius, epoch, revision, reuseBase,
                     RtMaterialRegistry.INSTANCE.requireSnapshot(), lodQuality);
+        }
+
+        // Busy flag + epoch logging on every frame decision (for diagnosing remaining DH freeze)
+        if (DistantHorizonsCompat.enabled() && newWorld != null) {
+            CausticaMod.LOGGER.info(
+                    "DH frame decision [epoch={}]: pending={}, cpuPending={}, packPending={}, buildSession={}, cameraCellChanged={}, lodDataChanged={}, refreshUploadedLods={}, replacementBusy={}, shouldStartNew={}, lastAttemptAgeMs={}",
+                    epoch, pending, cpuPending, packPending, (buildSession != null),
+                    cameraCellChanged, lodDataChanged, refreshUploadedLods, replacementBusy, shouldStartNew,
+                    lastDhPlanAttemptNanos == 0 ? -1 : (now - lastDhPlanAttemptNanos) / 1_000_000);
         }
     }
 
@@ -1115,6 +1177,12 @@ public final class RtDistantHorizonsTerrain {
             session.workingEntries.clear();
             session.remaining.clear();
         }
+        // Always clear the three busy flags when aborting a session.
+        // This is essential to unblock future frame() decisions after errors,
+        // quality changes, manual refreshes, or world switches.
+        pending = false;
+        cpuPending = false;
+        packPending = false;
     }
 
     private void requestRetry() {
