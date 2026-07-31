@@ -146,8 +146,14 @@ public final class RtDistantHorizonsTerrain {
             // Invalidate unpublished work before draining completions, so an old result cannot publish or
             // schedule another batch between the button click and the epoch change.
             epoch++;
+            // Force-clear all busy flags on epoch change. Leaving any *Pending=true after epoch++
+            // (manual refresh, quality change, world switch, error path) causes frame() to stop
+            // starting new DH work forever — the root cause of "DH completely stopped generating
+            // and updating distant chunks".
             abortBuildSession();
             cpuPending = false;
+            packPending = false;
+            pending = false;
             anchorX = anchorZ = Integer.MIN_VALUE;
             capturedLodRevision = -1L;
             nextRefresh = 0L;
@@ -186,8 +192,12 @@ public final class RtDistantHorizonsTerrain {
                     // Do not finish a minutes-long plan made for the previous DH quality. Keep the currently
                     // published proxy, cancel only unpublished work, and re-plan from the new active LOD tree.
                     epoch++;
+                    // Force clear all busy flags — stale *Pending after epoch++ is the classic cause of
+                    // "DH completely stopped loading new distant chunks".
                     abortBuildSession();
                     cpuPending = false;
+                    packPending = false;
+                    pending = false;
                 }
                 lodQuality = updatedQuality;
                 qualitySettleUntilNanos = now + QUALITY_SETTLE_NANOS;
@@ -723,7 +733,17 @@ public final class RtDistantHorizonsTerrain {
     private void drainCpuCompleted(RtContext ctx) {
         CpuCompleted done;
         while ((done = cpuCompleted.poll()) != null) {
-            if (done.epoch != epoch) continue;
+            if (done.epoch != epoch) {
+                // Stale completion from a previous epoch (e.g. quality change, world switch, manual refresh,
+                // or transient failure that caused epoch++). We MUST still clear the busy flag for finalBatch
+                // completions, otherwise cpuPending stays true forever and we stop starting new DH plans
+                // even when nextRefresh is due or camera moves. This was the root of the "DH completely
+                // stopped generating/ updating new distant chunks" deadlock.
+                if (done.finalBatch) {
+                    cpuPending = false;
+                }
+                continue;
+            }
             if (done.finalBatch) {
                 cpuPending = false;
                 if (done.failure != null || done.plan == null || done.plan.isEmpty()) {
@@ -809,9 +829,14 @@ public final class RtDistantHorizonsTerrain {
     private void drainPackCompleted(RtContext ctx) {
         PackCompleted done;
         while ((done = packCompleted.poll()) != null) {
+            // Always clear the busy flag. If this completion is for a stale epoch, we must unblock
+            // so that future frames can start new DH work. Leaving packPending=true after an
+            // epoch++ (quality change, manual refresh, world change, error) causes the entire
+            // DH pipeline to freeze — no new plans, no new BLAS, DH appears to stop loading.
             packPending = false;
             BuildSession session = buildSession;
             if (done.epoch != epoch || session == null || done.revision != session.revision) {
+                // Stale — we already cleared the flag above. Do not touch the (possibly new) buildSession.
                 continue;
             }
             if (done.failure != null || done.mesh == null) {
@@ -938,6 +963,10 @@ public final class RtDistantHorizonsTerrain {
     private void drainCompleted(RtContext ctx) {
         Completed done;
         while ((done = completed.poll()) != null) {
+            // Always clear the GPU pending flag. Stale completions (after epoch++) must not leave
+            // "pending=true" forever, otherwise the frame() condition "!pending && !cpuPending && !replacementBusy"
+            // will never be true again and no new DH work will ever be started. This is a classic
+            // source of the "DH completely stopped" deadlock.
             pending = false;
             PreparedSection prepared = done.prepared;
             if (done.epoch != epoch) {
@@ -1104,7 +1133,11 @@ public final class RtDistantHorizonsTerrain {
         nextQualityPollNanos = 0L;
         qualitySettleUntilNanos = 0L;
         lodQuality = new DistantHorizonsCompat.LodQuality(0L, 16, 2, "UNKNOWN", "UNKNOWN");
+        // Clear *all* busy flags on reset (world change). Leaving any of them true
+        // is a common cause of the DH pipeline freezing after a level switch.
         cpuPending = false;
+        packPending = false;
+        pending = false;
         bootstrapComplete = false;
         manualRefreshRequested.set(false);
         forceSourceRebuild = false;
