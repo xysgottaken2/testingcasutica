@@ -142,5 +142,7 @@
 	"caustica.options.voxy.chunks": "%s chunks",
 	"caustica.options.voxy.refresh": "Rebuild Voxy LODs",
 	"caustica.options.voxy.refresh.queued": "Voxy rebuild queued",
-	"caustica.options.voxy.refresh.unavailable": "Voxy is unavailable"
+	"caustica.options.voxy.refresh.unavailable": "Voxy is unavailable",
+	"caustica.options.rt.button": "Ray Tracing Settings...",
+	"caustica.options.rt.screenTitle": "Caustica RT Settings"
 }

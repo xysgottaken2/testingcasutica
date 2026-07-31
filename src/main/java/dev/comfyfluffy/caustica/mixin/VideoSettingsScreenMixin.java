@@ -1,13 +1,17 @@
 package dev.comfyfluffy.caustica.mixin;
 
 import dev.comfyfluffy.caustica.CausticaConfig;
+import dev.comfyfluffy.caustica.client.CausticaRtScreen;
 import dev.comfyfluffy.caustica.client.RtVideoOptions;
 import dev.comfyfluffy.caustica.compat.VoxyCompat;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.OptionsList;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.VideoSettingsScreen;
 import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
@@ -63,8 +67,10 @@ public abstract class VideoSettingsScreenMixin {
         return kept.toArray(OptionInstance<?>[]::new);
     }
 
-    @Inject(method = "addOptions", at = @At("HEAD"))
-    private void caustica$addRtOptions(CallbackInfo ci) {
+    private static final Component CAUSTICA$RT_BUTTON = Component.translatable("caustica.options.rt.button");
+
+    @Inject(method = "addOptions", at = @At("TAIL"))
+    private void caustica$addRtButton(CallbackInfo ci) {
         if (!CausticaConfig.Rt.ENABLED.value()) {
             return;
         }
@@ -72,18 +78,11 @@ public abstract class VideoSettingsScreenMixin {
         if (list == null) {
             return;
         }
-        list.addHeader(CAUSTICA$RT_HEADER);
-        list.addSmall(RtVideoOptions.runtimeOptions());
-        list.addBig(RtVideoOptions.distantHorizonsRefreshButton());
-        if (VoxyCompat.enabled()) {
-            list.addHeader(CAUSTICA$VOXY_HEADER);
-            list.addSmall(RtVideoOptions.voxyOptions());
-            list.addBig(RtVideoOptions.voxyRefreshButton());
-        }
-        list.addHeader(CAUSTICA$RT_LIGHTS_HEADER);
-        list.addSmall(RtVideoOptions.lightOptions());
-        list.addHeader(CAUSTICA$RT_TONEMAP_HEADER);
-        list.addSmall(RtVideoOptions.tonemapOptions());
+        Button rtButton = Button.builder(CAUSTICA$RT_BUTTON, clicked -> {
+            Screen parent = (Screen) (Object) this;
+            Minecraft.getInstance().setScreen(new CausticaRtScreen(parent, Minecraft.getInstance().options));
+        }).width(310).build();
+        list.addBig(rtButton);
     }
 
     @Inject(method = "removed", at = @At("TAIL"))
