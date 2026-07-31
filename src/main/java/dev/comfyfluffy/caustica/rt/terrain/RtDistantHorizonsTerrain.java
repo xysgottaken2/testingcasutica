@@ -237,8 +237,7 @@ public final class RtDistantHorizonsTerrain {
         // and DH_STUCK_UNSTICK_NANOS elapsed since last plan attempt, and (camera moved to new cell or
         // lodRevision changed or no current proxy), then force epoch++ + clearAllBusyFlags() so that
         // the shouldStartNew guard can fire again and we resume calling startCpuBuild / consuming
-        // new DH captures → lodMeshesSnapshot → plan → BLAS. This fixes the complete stop of
-        // generating/rendering new distant chunks (tiny vanilla square + void at RD=2).
+        // new DH captures → lodMeshesSnapshot → plan → BLAS.
         if ((pending || cpuPending || packPending || buildSession != null)
                 && lastDhPlanAttemptNanos != 0
                 && (now - lastDhPlanAttemptNanos) >= DH_STUCK_UNSTICK_NANOS
@@ -258,16 +257,35 @@ public final class RtDistantHorizonsTerrain {
             lastDhPlanAttemptNanos = 0L;
         }
 
+        // CRITICAL FIX for rapid invalidation loop ("replacementBusy + forcing fresh plan" every frame):
+        // The Render thread was aborting the DH CPU worker's in-flight plan/buildSession before it could
+        // finish (even for 144+ batches). This happened because:
+        // - shouldStartNew could stay true (current==null during long build, or minor lodRevision tick)
+        // - the "if (any busy) { epoch++; abort... }" was unconditional inside shouldStartNew
+        // - cpuPending/buildSession set by startCpuBuild made the *next* frame immediately treat the
+        //   just-launched work as "stuck" and abort it.
+        //
+        // Solution:
+        // 1. Do NOT consider shouldStartNew true while any DH work is actively in flight for the
+        //    current target (cpuPending / packPending / buildSession / pending). Let the worker
+        //    finish the current buildSession.
+        // 2. Only force-abort previous work inside shouldStartNew if it has been running "too long"
+        //    without progress (cooldown guard).
+        // 3. The 1.5s unstick timeout above remains as safety net for real deadlocks.
+        // This lets the CPU worker complete planCapturedLods + all pack/schedule/publish steps
+        // for the 64-145 batches without being cancelled every frame.
+        boolean hasActiveDhWork = cpuPending || packPending || (buildSession != null) || pending;
+
         boolean shouldStartNew = (current == null || cameraCellChanged || refreshUploadedLods)
                 && now >= earliestBuildNanos
+                && !hasActiveDhWork
                 && RtMaterialRegistry.INSTANCE.isReady();
 
         if (shouldStartNew) {
-            // CRITICAL: If any busy flag or session is stuck from a previous epoch/failure/quality change,
-            // we MUST abort it and clear the flags. Otherwise the guard below would permanently prevent
-            // new DH work, freezing distant terrain updates (the exact symptom: only vanilla near chunks
-            // visible, DH "stopped generating").
-            if (pending || cpuPending || packPending || buildSession != null) {
+            // Only abort a previous build if it looks stale (we already cleared via unstick, or
+            // enough time passed since last attempt). Never abort a just-launched active batch.
+            if ((pending || cpuPending || packPending || buildSession != null)
+                    && (lastDhPlanAttemptNanos == 0 || (now - lastDhPlanAttemptNanos) >= 1_000_000_000L)) {
                 CausticaMod.LOGGER.info("DH RT forcing fresh plan (camera/lod changed) — aborting any stuck previous work");
                 epoch++; // ensure any in-flight completions are treated as stale
                 abortBuildSession();
