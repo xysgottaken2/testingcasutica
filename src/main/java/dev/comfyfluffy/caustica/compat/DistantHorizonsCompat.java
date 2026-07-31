@@ -123,27 +123,39 @@ public final class DistantHorizonsCompat {
                 return new ArrayList<>(LOD_MESHES.values());
             }
 
-            // Captures used to accumulate forever while the player travelled. Keep a generous grace
-            // budget before pruning: DH can transiently omit a section while swapping LOD levels, and deleting
-            // it immediately would create a hole until that VBO happened to be uploaded again.
-            long retainedBudget = Math.min(Integer.MAX_VALUE, (long) active.size() * 2L + 128L);
-            if (LOD_MESHES.size() > retainedBudget) {
-                for (var entry : LOD_MESHES.entrySet()) {
-                    long pos = entry.getKey();
-                    if (!active.contains(pos)) LOD_MESHES.remove(pos, entry.getValue());
-                }
-            }
-
-            ArrayList<LodMesh> result = new ArrayList<>(Math.min(active.size(), LOD_MESHES.size()));
+            // CRITICAL FIX for "DH stopped loading distant chunks" regression:
+            // DH's activeLodPositions() returns *only* the sections it currently wants to raster this frame
+            // (near camera + current quality band / culling).
+            // As the player moves, DH continuously generates + uploads new distant LOD VBOs via the
+            // LodBufferContainer hook. Those new meshes often are *not* yet (or never) in the "active"
+            // list for the current frame.
+            //
+            // The previous retainedBudget prune + "only return active" logic caused newly captured
+            // distant chunks to be dropped from the snapshot seen by RtDistantHorizonsTerrain.
+            // Result: worker stopped seeing new data → no more BLAS rebuilds for horizon → cuts/abysses.
+            //
+            // Solution: NEVER prune based on active list for RT purposes.
+            // Always return the *union* of (a) what DH says is active now + (b) *every* VBO we have
+            // captured for the current world. This guarantees the RT bridge keeps receiving and
+            // processing every new distant chunk batch DH sends, continuously.
+            ArrayList<LodMesh> result = new ArrayList<>(Math.max(active.size(), LOD_MESHES.size()) + 128);
+            Set<Long> seen = new HashSet<>();
             for (long pos : active) {
                 LodMesh mesh = LOD_MESHES.get(pos);
-                if (mesh != null) result.add(mesh);
+                if (mesh != null && seen.add(pos)) {
+                    result.add(mesh);
+                }
             }
-            // A non-empty active list can still use section identities from a different remote-level
-            // wrapper generation. Prefer the captured current-world set over suppressing DH completely.
-            return result.isEmpty() && !LOD_MESHES.isEmpty()
-                    ? new ArrayList<>(LOD_MESHES.values())
-                    : result;
+            // Union *all* captured meshes (this is what keeps distant terrain flowing).
+            for (var entry : LOD_MESHES.entrySet()) {
+                if (seen.add(entry.getKey())) {
+                    result.add(entry.getValue());
+                }
+            }
+            if (result.isEmpty() && !LOD_MESHES.isEmpty()) {
+                result.addAll(LOD_MESHES.values());
+            }
+            return result;
         } catch (Throwable ignored) {
             // Renderer-internal active-section reflection is less stable on multiplayer DH paths. The
             // upload hook is independent and already gave us valid current-world VBOs, so retain them.
