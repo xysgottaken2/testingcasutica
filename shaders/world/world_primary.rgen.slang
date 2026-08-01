@@ -82,6 +82,21 @@ public PathSegment tracePrimary(PathSegment seg,
                                               float3(0.0, 0.0, 0.0));
                 } else {
                     float3 v = -rd;
+                    // Dynamic Puddles feature
+                    bool hasPuddles = (worldPush.featureFlags & FEATURE_PUDDLES) != 0u;
+                    if (hasPuddles && n.y > 0.8 && material == MATERIAL_OPAQUE) {
+                        float wetness = worldPush.weather.y;
+                        if (wetness > 0.0) {
+                            float2 p = hitPos.xz * 1.5;
+                            float noise = puddleNoise(p) * 0.6 + puddleNoise(p * 2.0 + 11.0) * 0.3 + puddleNoise(p * 4.0 + 29.0) * 0.1;
+                            float puddleMask = smoothstep(0.95 - wetness * 0.8, 1.0 - wetness * 0.8, noise * wetness);
+                            if (puddleMask > 0.0) {
+                                rough = lerp(rough, 0.02, puddleMask);
+                                diffAlb = lerp(diffAlb, diffAlb * 0.4, puddleMask);
+                                payload.f0 = half3(lerp(float3(payload.f0), float3(0.02), puddleMask));
+                            }
+                        }
+                    }
                     gv_albedo = diffAlb;
                     gv_rough = rough;
                     gv_spec = makeSpecSurface(gv_hitCamRel, n, float3(payload.motionPrev), rough,

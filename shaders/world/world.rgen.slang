@@ -53,10 +53,15 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     float3 toStart = ro - worldPush.camOffset;
     float prefixDist = length(toStart);
     if (prefixDist > 1.0e-4) {
+        float2 jndc = ((float2(pix) + 0.5) / float2(dimensions) + worldPush.jitter / float2(dimensions)) * 2.0 - 1.0;
+        float4 farH = mul(worldPush.invViewProj, float4(jndc.x, jndc.y, 0.0, 1.0));
+        float4 nearH = mul(worldPush.invViewProj, float4(jndc.x, jndc.y, 1.0, 1.0));
+        float3 primaryDir = normalize(farH.xyz / farH.w - nearH.xyz / nearH.w);
+
         AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist);
         L += throughput * preFog.inScatter;
         throughput *= preFog.transmittance;
-        CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
+        CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), primaryDir,
                                        prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
         L += throughput * pre.scatter;
         throughput *= pre.transmittance;

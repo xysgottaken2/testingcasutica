@@ -615,6 +615,9 @@ public final class CausticaConfig {
              */
             public static final BooleanSetting DENOISER =
                     bool("caustica.rt.denoiser", "composite.denoiser", true);
+            public static final BooleanSetting PUDDLES =
+                    bool("caustica.rt.puddles", "composite.puddles", true);
+
             /**
              * Flat, vanilla-style cloud deck drawn by the sky shader.
              *

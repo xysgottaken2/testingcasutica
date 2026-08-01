@@ -425,7 +425,7 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     //   * erosion is concentrated at the extreme top and bottom, leaving the middle solid, which is
     //     what gives a cloud a dense core with a cauliflower crown rather than uniform fluff.
     float base = cloudCoverageField(samplePos * CLOUD_VOLUMETRIC_SCALE);
-    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0) * (1.0 + CLOUD_EDGE_SOFTNESS);
     float coverage = smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, base);
     if (coverage <= 0.0) {
         return 0.0;

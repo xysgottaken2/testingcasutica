@@ -128,6 +128,7 @@ public static const uint FEATURE_DENOISER = 4u;          // temporal/spatial den
 public static const uint FEATURE_CLOUDS = 8u;            // cloud deck in the sky + its sun shadow
 public static const uint FEATURE_CLOUDS_VOLUMETRIC = 16u; // clouds are ray-marched, not a flat deck
 public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial emitter-reservoir reuse
+public static const uint FEATURE_PUDDLES = 64u;           // dynamic rain puddles
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume
@@ -366,6 +367,18 @@ public uint packHalf2(float2 v) {
 
 public float2 unpackHalf2(uint p) {
     return float2(f16tof32(p & 0xFFFFu), f16tof32(p >> 16));
+}
+
+public float puddleHash(float2 p) {
+    return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+public float puddleNoise(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(puddleHash(i), puddleHash(i + float2(1.0, 0.0)), u.x),
+                lerp(puddleHash(i + float2(0.0, 1.0)), puddleHash(i + float2(1.0, 1.0)), u.x), u.y);
 }
 
 // Turn DH's baked transparent vertex colour into a stable optical filter. Saturation keeps stained

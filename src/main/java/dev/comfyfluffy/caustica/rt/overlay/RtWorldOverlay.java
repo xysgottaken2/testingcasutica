@@ -76,6 +76,9 @@ public final class RtWorldOverlay {
      * target. Called after the RT world composite and before the vanilla hand/screen-effects/GUI path can draw
      * more UI layers into that same target.
      */
+    private RtOverlayPipelines.Pipeline depthMapPipeline;
+    private RtOverlayPipelines.SampledImageSet depthMapSet;
+
     public void compositeIntoUiOverlay(RenderTarget main, RtGpuExecutor.GraphicsUse graphicsUse) {
         if (graphicsUse == null || failed || main == null || main.getColorTexture() == null || !RtUiOverlay.enabled()) {
             return;
@@ -122,6 +125,16 @@ public final class RtWorldOverlay {
                     .descriptorSetLayout(uiCompositeSet.layout)
                     .build(ctx, "world overlay UI composite");
         }
+        if (depthMapPipeline == null) {
+            depthMapSet = RtOverlayPipelines.sampledImageSet(ctx, 1, VK10.VK_SHADER_STAGE_FRAGMENT_BIT, "depth map set");
+            depthMapPipeline = new RtOverlayPipelines.Spec("overlay_fullscreen_triangle.vert.spv", "depth_map.frag.spv")
+                    .blend(RtOverlayPipelines.Blend.NONE)
+                    .attachment(0) // No color attachment
+                    .depthWrite(VK10.VK_FORMAT_D32_SFLOAT) // OpenGL depth attachment is typically D32 or similar. 
+                    .descriptorSetLayout(depthMapSet.layout)
+                    .push(8, VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
+                    .build(ctx, "depth map pipeline");
+        }
         if (overlayImage == null || overlayImage.width != width || overlayImage.height != height) {
             if (overlayImage != null) {
                 overlayImage.destroy();
@@ -157,6 +170,25 @@ public final class RtWorldOverlay {
                 endRendering(cmd);
             }
             VulkanCommandEncoder.memoryBarrier(cmd, stack); // this composite's writes visible to whatever presents next
+
+            // Depth Map: Copy RT linear depth to vanilla hardware depth
+            long depthView = vkImageView(main.getDepthTexture());
+            if (depthView != 0L && RtComposite.INSTANCE.depthBufferView() != null) {
+                try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world overlay depth map")) {
+                    depthMapSet.bind(ctx, 0, RtComposite.INSTANCE.depthBufferView().view, RtOverlayPipelines.createNearestClampSampler(ctx, "depth map sampler"));
+                    beginDepthRendering(cmd, stack, depthView, width, height);
+                    VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, depthMapPipeline.handle);
+                    VK10.vkCmdBindDescriptorSets(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, depthMapPipeline.layout, 0,
+                            stack.longs(depthMapSet.set), null);
+                    // Push near/far planes
+                    float nearPlane = 0.05f; // Vanilla near plane is typically 0.05
+                    float farPlane = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0f;
+                    VK10.vkCmdPushConstants(cmd, depthMapPipeline.layout, VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, stack.floats(nearPlane, farPlane));
+                    VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
+                    endRendering(cmd);
+                }
+                VulkanCommandEncoder.memoryBarrier(cmd, stack);
+            }
         }
         if (VK10.vkEndCommandBuffer(cmd) != VK10.VK_SUCCESS) {
             throw new IllegalStateException("vkEndCommandBuffer(world overlay) failed");
@@ -190,6 +222,31 @@ public final class RtWorldOverlay {
      * viewport/scissor. {@code clear} = start from transparent black (mask passes); otherwise the existing
      * content is loaded (composite passes). Balance with {@link #endRendering}.
      */
+    static void beginDepthRendering(VkCommandBuffer cmd, MemoryStack stack, long depthView, int width, int height) {
+        VkRenderingAttachmentInfo.Buffer depthAttach = VkRenderingAttachmentInfo.calloc(1, stack).sType$Default()
+                .imageView(depthView).imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+                .loadOp(VK10.VK_ATTACHMENT_LOAD_OP_CLEAR)
+                .storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
+        VkClearValue.Buffer clearValue = VkClearValue.calloc(1, stack);
+        clearValue.get(0).depthStencil().depth(0.0f);
+        depthAttach.get(0).clearValue(clearValue.get(0));
+
+        VkRect2D renderArea = VkRect2D.calloc(stack);
+        renderArea.offset(VkOffset2D.calloc(stack).set(0, 0));
+        renderArea.extent().set(width, height);
+        VkRenderingInfo renderingInfo = VkRenderingInfo.calloc(stack).sType$Default()
+                .renderArea(renderArea).layerCount(1).pDepthAttachment(depthAttach.get(0));
+        KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, renderingInfo);
+
+        VkViewport.Buffer viewport = VkViewport.calloc(1, stack);
+        viewport.get(0).x(0).y(0).width(width).height(height).minDepth(0f).maxDepth(1f);
+        VK10.vkCmdSetViewport(cmd, 0, viewport);
+        VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
+        scissor.get(0).offset(VkOffset2D.calloc(stack).set(0, 0));
+        scissor.get(0).extent().set(width, height);
+        VK10.vkCmdSetScissor(cmd, 0, scissor);
+    }
+
     static void beginColorRendering(VkCommandBuffer cmd, MemoryStack stack, long view, int width, int height, boolean clear) {
         VkRenderingAttachmentInfo.Buffer colorAttach = VkRenderingAttachmentInfo.calloc(1, stack).sType$Default()
                 .imageView(view).imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)

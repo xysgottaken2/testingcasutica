@@ -131,6 +131,8 @@ public final class RtOverlayPipelines {
         private Blend blend = Blend.NONE;
         private int attachmentFormat;
         private int samples = VK10.VK_SAMPLE_COUNT_1_BIT;
+        private boolean depthWrite;
+        private int depthAttachmentFormat;
         private int pushBytes;
         private int pushStages;
         private long descriptorSetLayout;
@@ -172,6 +174,12 @@ public final class RtOverlayPipelines {
         public Spec push(int bytes, int stageFlags) {
             this.pushBytes = bytes;
             this.pushStages = stageFlags;
+            return this;
+        }
+
+        public Spec depthWrite(int depthFormat) {
+            this.depthWrite = true;
+            this.depthAttachmentFormat = depthFormat;
             return this;
         }
 
@@ -233,6 +241,12 @@ public final class RtOverlayPipelines {
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
                     .sType$Default().rasterizationSamples(spec.samples);
 
+            VkPipelineDepthStencilStateCreateInfo depthStencil = null;
+            if (spec.depthWrite) {
+                depthStencil = VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default()
+                        .depthTestEnable(true).depthWriteEnable(true).depthCompareOp(VK10.VK_COMPARE_OP_ALWAYS);
+            }
+
             VkPipelineColorBlendAttachmentState.Buffer blendAttach = VkPipelineColorBlendAttachmentState.calloc(1, stack);
             blendAttach.get(0).colorWriteMask(
                     VK10.VK_COLOR_COMPONENT_R_BIT | VK10.VK_COLOR_COMPONENT_G_BIT
@@ -279,13 +293,21 @@ public final class RtOverlayPipelines {
             VkPipelineDynamicStateCreateInfo dynamicState = VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
                     .pDynamicStates(stack.ints(dynamicStates));
 
-            VkPipelineRenderingCreateInfo renderingInfo = VkPipelineRenderingCreateInfo.calloc(stack).sType$Default()
-                    .colorAttachmentCount(1).pColorAttachmentFormats(stack.ints(spec.attachmentFormat));
+            VkPipelineRenderingCreateInfo renderingInfo = VkPipelineRenderingCreateInfo.calloc(stack).sType$Default();
+            if (spec.attachmentFormat != 0) {
+                renderingInfo.colorAttachmentCount(1).pColorAttachmentFormats(stack.ints(spec.attachmentFormat));
+            } else {
+                renderingInfo.colorAttachmentCount(0);
+            }
+            if (spec.depthWrite) {
+                renderingInfo.depthAttachmentFormat(spec.depthAttachmentFormat);
+            }
 
             VkGraphicsPipelineCreateInfo.Buffer gpci = VkGraphicsPipelineCreateInfo.calloc(1, stack);
             gpci.get(0).sType$Default().pNext(renderingInfo.address())
                     .pStages(stages).pVertexInputState(vertexInput).pInputAssemblyState(inputAssembly)
                     .pViewportState(viewportState).pRasterizationState(raster).pMultisampleState(multisample)
+                    .pDepthStencilState(depthStencil)
                     .pColorBlendState(colorBlend).pDynamicState(dynamicState).layout(layout)
                     .renderPass(VK10.VK_NULL_HANDLE).subpass(0);
             LongBuffer pPipeline = stack.mallocLong(1);

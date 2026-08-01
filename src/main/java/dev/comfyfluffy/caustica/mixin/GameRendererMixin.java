@@ -168,6 +168,30 @@ public abstract class GameRendererMixin {
 		try {
 			RtWorldOverlay.INSTANCE.compositeIntoUiOverlay(
 					this.mainRenderTarget, RtComposite.INSTANCE.currentGraphicsUse());
+			
+			// Inject weather pass over RT world composite with mapped depth buffer
+			Minecraft mc = Minecraft.getInstance();
+			if (mc.levelRenderer != null && mc.level != null && mc.gameRenderer != null) {
+				try {
+					Object cameraState = mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+					for (java.lang.reflect.Method m : mc.levelRenderer.getClass().getDeclaredMethods()) {
+						String name = m.getName().toLowerCase();
+						if (name.contains("weather") || name.contains("snowandrain") || name.contains("rain")) {
+							m.setAccessible(true);
+							if (m.getParameterCount() == 1) {
+								m.invoke(mc.levelRenderer, cameraState);
+							} else if (m.getParameterCount() == 2) {
+								m.invoke(mc.levelRenderer, cameraState, deltaTracker);
+							} else if (m.getParameterCount() == 5) {
+								m.invoke(mc.levelRenderer, mc.gameRenderer.lightTexture(), deltaTracker.getGameTimeDeltaPartialTick(false), mc.gameRenderer.mainCamera().getPosition().x, mc.gameRenderer.mainCamera().getPosition().y, mc.gameRenderer.mainCamera().getPosition().z);
+							}
+							break;
+						}
+					}
+				} catch (Exception e) {
+					// Fallback silently if method invocation fails
+				}
+			}
 		} finally {
 			// The block-outline ray query consumes this frame's TLAS. Signal the shared RT frame token only
 			// after its transient command buffer has been placed later in the same graphics submission.

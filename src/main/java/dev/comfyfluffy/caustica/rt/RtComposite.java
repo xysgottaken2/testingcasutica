@@ -142,6 +142,7 @@ public final class RtComposite {
     private static final int FEATURE_CLOUDS = 8;
     private static final int FEATURE_CLOUDS_VOLUMETRIC = 16;
     private static final int FEATURE_RESTIR = 32;
+    private static final int FEATURE_PUDDLES = 64;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -180,6 +181,9 @@ public final class RtComposite {
         // will be denoised rather than whether the player would like it to be.
         if (RtDlssRr.enabled() && debugView() == 0) {
             flags |= FEATURE_DENOISER;
+        }
+        if (CausticaConfig.Rt.Composite.PUDDLES.value()) {
+            flags |= FEATURE_PUDDLES;
         }
         return flags;
     }
@@ -1136,7 +1140,7 @@ public final class RtComposite {
                     new Float4(CausticaConfig.Rt.Lights.BLOCK_INTENSITY.value(),
                             CausticaConfig.Rt.Lights.DYNAMIC_INTENSITY.value(),
                             0.0f, 0.0f),
-                    new Float4(weather.rain(), weather.thunder(), weather.skyDarken(),
+                    new Float4(weather.rain(), weather.puddleWetness(), weather.skyDarken(),
                             weather.lightAttenuation()),
                     ambientFog(dimension, weather),
                     clouds.clouds(),
@@ -1318,8 +1322,8 @@ public final class RtComposite {
      * @param skyDarken        multiplier on the sky's own radiance
      * @param lightAttenuation multiplier on the direct sun/moon radiance
      */
-    private record WeatherState(float rain, float thunder, float skyDarken, float lightAttenuation) {
-        static final WeatherState CLEAR = new WeatherState(0f, 0f, 1f, 1f);
+    private record WeatherState(float rain, float thunder, float skyDarken, float lightAttenuation, float puddleWetness) {
+        static final WeatherState CLEAR = new WeatherState(0f, 0f, 1f, 1f, 0f);
     }
 
     /**
@@ -1352,24 +1356,41 @@ public final class RtComposite {
      * <p>Dimensions without weather (Nether, End) always report clear — {@code getRainLevel} is already
      * zero there, but returning the shared constant keeps the fast path allocation-free.
      */
+    private static float puddleWetness = 0f;
+
     private static WeatherState weatherState(ClientLevel level, float partial) {
-        if (level == null || !CausticaConfig.Rt.Composite.WEATHER_LIGHTING.value()) {
+        if (level == null) {
             return WeatherState.CLEAR;
         }
         float rain = Math.clamp(level.getRainLevel(partial), 0f, 1f);
+        
+        // Puddles dry out when it stops raining, and form gradually when it rains.
+        // Approx 0.001 per frame at 60fps = ~16 seconds to dry fully.
+        if (rain > 0.05f) {
+            puddleWetness = Math.min(1.0f, puddleWetness + 0.002f);
+        } else {
+            puddleWetness = Math.max(0.0f, puddleWetness - 0.001f);
+        }
+        
+        if (!CausticaConfig.Rt.Composite.WEATHER_LIGHTING.value()) {
+            // Keep tracking wetness, but do not darken the world.
+            return new WeatherState(0f, 0f, 1f, 1f, puddleWetness);
+        }
+
         if (rain <= 0f) {
-            return WeatherState.CLEAR;
+            return new WeatherState(0f, 0f, 1f, 1f, puddleWetness);
         }
         // getThunderLevel already includes the rain level as a factor in vanilla; clamp defensively so a
         // datapack or mod that drives it independently cannot push the multipliers negative.
         float thunder = Math.clamp(level.getThunderLevel(partial), 0f, 1f);
         // Written out rather than via a lerp helper so each ramp's endpoints are readable inline:
-        // at full rain the direct light drops to near 0 and the sky to 45%; a full thunderstorm dims sky further.
-        float rainLight = 1.0f - 0.98f * rain;
+        // at full rain the direct light is heavily muffled to prevent blown-out clouds, while the sky keeps
+        // enough ambient brightness so the world doesn't go pitch black during storms.
+        float rainLight = 1.0f - 0.90f * rain;
         float stormLight = 1.0f - 0.50f * thunder;
-        float rainSky = 1.0f - 0.55f * rain;
+        float rainSky = 1.0f - 0.40f * rain;
         float stormSky = 1.0f - 0.45f * thunder;
-        return new WeatherState(rain, thunder, rainSky * stormSky, rainLight * stormLight);
+        return new WeatherState(rain, thunder, rainSky * stormSky, rainLight * stormLight, puddleWetness);
     }
 
     /**
@@ -1843,6 +1864,10 @@ public final class RtComposite {
 
     public long hdrBackbufferImage() {
         return hdrDisplayImage != null ? hdrDisplayImage.image : 0L;
+    }
+
+    public dev.comfyfluffy.caustica.rt.accel.RtImage depthBufferView() {
+        return gDepth;
     }
 
     /**
