@@ -1364,9 +1364,8 @@ public final class RtComposite {
         // datapack or mod that drives it independently cannot push the multipliers negative.
         float thunder = Math.clamp(level.getThunderLevel(partial), 0f, 1f);
         // Written out rather than via a lerp helper so each ramp's endpoints are readable inline:
-        // at full rain the direct light keeps 35% and the sky 45%; a full thunderstorm then halves
-        // each again (to ~18% and ~25% of clear).
-        float rainLight = 1.0f - 0.65f * rain;
+        // at full rain the direct light drops to near 0 and the sky to 45%; a full thunderstorm dims sky further.
+        float rainLight = 1.0f - 0.98f * rain;
         float stormLight = 1.0f - 0.50f * thunder;
         float rainSky = 1.0f - 0.55f * rain;
         float stormSky = 1.0f - 0.45f * thunder;
@@ -1454,8 +1453,8 @@ public final class RtComposite {
             // Neither the Nether nor the End has a sky to put clouds in; both draw a closed skybox.
             return CloudPush.NONE;
         }
-        // Overcast ramp: rain closes most of the remaining gap toward full cover, thunder the rest.
-        float overcast = Math.min(1f, weather.rain() * 0.85f + weather.thunder() * 0.15f);
+        // Overcast ramp: rain closes the gap toward full cover.
+        float overcast = weather.rain();
         coverage = coverage + (1f - coverage) * overcast;
         float height = CausticaConfig.Rt.Composite.CLOUD_HEIGHT.value();
         // Wind drift, in blocks, from world time. Wrapped with the anchor below.

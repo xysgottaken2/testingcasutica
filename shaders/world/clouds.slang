@@ -190,7 +190,10 @@ public float cloudCoverageField(float2 samplePos) {
  * looks low-resolution.
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
-    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    // Scale the slider so 1.0 genuinely means 100% covered. A field of summed [0,1] noises drops to near
+    // zero in the deepest valleys, so a threshold of 0.0 still leaves holes there. Pushing the threshold
+    // below zero guarantees a solid sky at 100% coverage.
+    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0) * (1.0 + CLOUD_EDGE_SOFTNESS);
     if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
         // Snap to the cell centre so every point inside one cell gets the identical answer -> hard,
         // axis-aligned edges exactly on the 12-block grid.

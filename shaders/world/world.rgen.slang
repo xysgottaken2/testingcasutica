@@ -48,20 +48,18 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     // reported bug: looking down at an ocean from above the clouds, the water was drawn at full
     // brightness with no cloud in front of it, while the terrain beside it was correctly dimmed.
     //
-    // Recover it here by integrating the cloud over camera -> seg.ro for any segment that does not
-    // start at the camera. Applying it to BOTH split branches is exact rather than a double count: the
-    // two branches carry throughputs F and (1 - F), so their prefix contributions sum to exactly one
-    // crossing (F*S + (1-F)*S = S), and each branch's own throughput picks up the same transmittance
-    // the real prefix would have applied.
-    if (seg.bounce > 0) {
-        float3 toStart = ro - worldPush.camOffset;
-        float prefixDist = length(toStart);
-        if (prefixDist > 1.0e-4) {
-            CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
-                                           prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
-            L += throughput * pre.scatter;
-            throughput *= pre.transmittance;
-        }
+    // Recover it here by integrating the fog and cloud over camera -> seg.ro for any segment.
+    // Applying it to BOTH split branches is exact rather than a double count.
+    float3 toStart = ro - worldPush.camOffset;
+    float prefixDist = length(toStart);
+    if (prefixDist > 1.0e-4) {
+        AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist);
+        L += throughput * preFog.inScatter;
+        throughput *= preFog.transmittance;
+        CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
+                                       prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
+        L += throughput * pre.scatter;
+        throughput *= pre.transmittance;
     }
     // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
     // produces independent lighting/BSDF paths from the shared terminal continuation.
