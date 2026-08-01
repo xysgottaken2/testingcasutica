@@ -67,10 +67,15 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             L += throughput * preFog.inScatter;
             throughput *= preFog.transmittance;
 
-            CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
-                                           prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
-            L += throughput * pre.scatter;
-            throughput *= pre.transmittance;
+            float closedStorm = closedStormCloudAmount(worldPush);
+            if (closedStorm < 0.999) {
+                CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
+                                               prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
+                pre.scatter *= 1.0 - closedStorm;
+                pre.transmittance = lerp(pre.transmittance, 1.0, closedStorm);
+                L += throughput * pre.scatter;
+                throughput *= pre.transmittance;
+            }
         }
     }
     // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
@@ -173,13 +178,23 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // the same kind of thing: a participating medium along this segment. Being in the path integral
         // rather than at a display seam is what makes it correct in reflections and refractions too.
         {
-            // showCelestial marks the rays whose clouds are seen directly (camera + specular bounces),
-            // so it selects the full march; diffuse continuations take the cheap one — see cloudSegment.
-            CloudVolume segCloud = cloudSegment(worldPush, ro - worldPush.camOffset, rd,
-                                                payload.hitT, cloudSkyAmbient(worldPush),
-                                                showCelestial);
-            L += throughput * segCloud.scatter;
-            throughput *= segCloud.transmittance;
+            // In a closed rain ceiling, do not composite the cloud slab over finite scene geometry. The
+            // storm already darkens direct light and adds ambient rain fog; drawing the deck as a hard
+            // volumetric wall where a camera ray first crosses cloud altitude creates the global
+            // horizontal cut line reported in mountains and open terrain alike. Keep ordinary/patchy cloud
+            // occlusion, and keep sky misses drawing the deck in world.rmiss.
+            float closedStorm = closedStormCloudAmount(worldPush);
+            if (closedStorm < 0.999) {
+                // showCelestial marks the rays whose clouds are seen directly (camera + specular bounces),
+                // so it selects the full march; diffuse continuations take the cheap one — see cloudSegment.
+                CloudVolume segCloud = cloudSegment(worldPush, ro - worldPush.camOffset, rd,
+                                                    payload.hitT, cloudSkyAmbient(worldPush),
+                                                    showCelestial);
+                segCloud.scatter *= 1.0 - closedStorm;
+                segCloud.transmittance = lerp(segCloud.transmittance, 1.0, closedStorm);
+                L += throughput * segCloud.scatter;
+                throughput *= segCloud.transmittance;
+            }
         }
 
         float3 n = payload.normal; // oriented toward the incoming ray by the closest-hit

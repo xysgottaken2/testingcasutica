@@ -11,7 +11,6 @@ import dev.comfyfluffy.caustica.client.WorldRenderScaler;
 import dev.comfyfluffy.caustica.rt.RtComposite;
 import dev.comfyfluffy.caustica.rt.RtReflex;
 import dev.comfyfluffy.caustica.rt.RtUiOverlay;
-import dev.comfyfluffy.caustica.rt.RtVanillaWeather;
 import dev.comfyfluffy.caustica.rt.overlay.RtWorldOverlay;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -164,9 +163,6 @@ public abstract class GameRendererMixin {
 					shift = At.Shift.AFTER))
 	private void caustica$endWorldScaleBeforeHand(DeltaTracker deltaTracker, CallbackInfo ci) {
 		WorldRenderScaler.INSTANCE.end(this.mainRenderTarget);
-		// LevelRenderer is cancelled for RT, so its weather frame pass never runs. Replay vanilla's extracted
-		// WeatherEffectRenderer now, after RT has replaced the world color and before hand/HUD rendering.
-		RtVanillaWeather.renderAfterRt(this.gameRenderState().levelRenderState);
 		// Fold RT world overlays into the shared transparent UI image before hand/screen effects and the GUI
 		// add their own layers. RtUiOverlay then performs the single final blend to SDR/HDR.
 		try {

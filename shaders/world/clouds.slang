@@ -156,6 +156,17 @@ public float3 cloudAlbedo(WorldPush push) {
     return lerp(CLOUD_ALBEDO, CLOUD_STORM_ALBEDO, cloudStormAmount(push));
 }
 
+/**
+ * How much rain has turned the cloud layer into a closed overcast ceiling. At that point terrain should
+ * be darkened by weather/fog/direct-light attenuation, not by compositing the cloud volume as a hard slab
+ * in front of scene geometry — that creates the player-following horizontal cut line.
+ */
+public float closedStormCloudAmount(WorldPush push) {
+    return cloudStormAmount(push)
+            * smoothstep(0.80, CLOUD_SOLID_COVERAGE, clamp(push.clouds.x, 0.0, 1.0))
+            * clamp(push.clouds.y, 0.0, 1.0);
+}
+
 // Integer cell hash. Integer mixing rather than the sky's float hash13: the sample coordinate here is
 // a world position that can be thousands of blocks from the anchor, where a float hash starts losing
 // mantissa bits and the pattern degenerates into stripes. The mask is what makes the field periodic.

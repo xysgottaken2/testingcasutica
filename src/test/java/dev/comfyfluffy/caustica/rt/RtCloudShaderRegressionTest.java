@@ -19,8 +19,6 @@ final class RtCloudShaderRegressionTest {
             "src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
     private static final Path RT_ENTITIES = REPO_ROOT.resolve(
             "src/main/java/dev/comfyfluffy/caustica/rt/entity/RtEntities.java");
-    private static final Path RT_VANILLA_WEATHER = REPO_ROOT.resolve(
-            "src/main/java/dev/comfyfluffy/caustica/rt/RtVanillaWeather.java");
 
     @Test
     void cloudSunShadowDoesNotReuseVisibleCloudTrace() throws IOException {
@@ -71,33 +69,41 @@ final class RtCloudShaderRegressionTest {
     }
 
     @Test
-    void stormCloudShadowDoesNotCreateDeckAltitudeCutLine() throws IOException {
-        String source = Files.readString(CLOUDS);
-        String body = slice(source, "public float cloudSunShadow", "// ---- Classic");
+    void stormCloudsDoNotCreateDeckAltitudeCutLine() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String shadow = slice(clouds, "public float cloudSunShadow", "// ---- Classic");
+        String raygen = Files.readString(WORLD_RGEN);
+        String hitCloudBlock = slice(raygen, "// Cloud crossed on the way to this hit", "float3 n = payload.normal");
 
-        assertTrue(body.contains("globalStormAlpha"),
+        assertTrue(clouds.contains("closedStormCloudAmount"),
+                "closed storms need a shared suppression factor for hard cloud-slab intersections");
+        assertTrue(shadow.contains("globalStormAlpha"),
                 "storm overcast must have a camera-independent/global attenuation term");
-        assertInOrder(body,
+        assertInOrder(shadow,
                 "float globalStormAlpha",
                 "if (t <= 0.0) {",
                 "return 1.0 - strength * globalStormAlpha;");
-        assertTrue(body.contains("alpha = max(alpha, globalStormAlpha);"),
+        assertTrue(shadow.contains("alpha = max(alpha, globalStormAlpha);"),
                 "analytic cloud shadows must blend with global storm attenuation instead of making a hard deck line");
+        assertTrue(hitCloudBlock.contains("closedStormCloudAmount(worldPush)"),
+                "closed storm clouds must not be composited as a hard slab in front of terrain hits");
+        assertTrue(hitCloudBlock.contains("segCloud.transmittance = lerp(segCloud.transmittance, 1.0, closedStorm);"),
+                "cloud volume over geometry must fade out continuously as overcast closes");
     }
 
     @Test
-    void rainUsesVanillaWeatherRendererNotProceduralEntityMesh() throws IOException {
+    void rainIsRtSpatialGeometryNotScreenWeatherOverlay() throws IOException {
         String entities = Files.readString(RT_ENTITIES);
-        String weather = Files.readString(RT_VANILLA_WEATHER);
+        String raygen = Files.readString(WORLD_RGEN);
 
-        assertFalse(entities.contains("RAIN_STREAK"),
-                "falling rain must not be a duplicated procedural entity mesh");
-        assertFalse(entities.contains("appendProceduralRainStreaks"),
-                "RtEntities should only capture real ParticleEngine particles, not fake rain columns");
-        assertTrue(weather.contains("weatherRenderState"),
-                "vanilla extracted WeatherRenderState must drive falling rain/snow");
-        assertTrue(weather.contains("WeatherEffectRenderer.render"),
-                "falling rain/snow should be replayed through vanilla's renderer");
+        assertTrue(entities.contains("RAIN_STREAK_RADIUS_BLOCKS"),
+                "falling rain columns must be emitted into the RT particle TLAS as world-space geometry");
+        assertTrue(entities.contains("appendRtRainStreaks"),
+                "RT rain should be captured with particles so ray tracing depth can occlude it");
+        assertTrue(entities.contains("appendCapture(ctx, build, new Motion(dispAddr, 0f, 0f, 0f),"),
+                "rain streaks must share the particle acceleration-structure path, not a post-process overlay");
+        assertTrue(raygen.contains("if (material == MATERIAL_PARTICLE)"),
+                "rain geometry should shade through the existing particle material path");
     }
 
     @Test
