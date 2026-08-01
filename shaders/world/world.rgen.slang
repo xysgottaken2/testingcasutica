@@ -57,6 +57,16 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         float3 toStart = ro - worldPush.camOffset;
         float prefixDist = length(toStart);
         if (prefixDist > 1.0e-4) {
+            // Pass A consumes the camera -> first dielectric segment for water/glass, then queues the
+            // post-interface branches. This pass owns a radiance accumulator, so it can now apply BOTH
+            // halves of the rain/ambient fog over that skipped prefix before marching clouds. Without
+            // this, water surfaces reflected/refracted the storm scene while their own camera-distance
+            // segment stayed perfectly clear. Split branches are exact: their Fresnel throughputs sum to
+            // one, so the prefix fog/scatter is not double-counted.
+            AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist);
+            L += throughput * preFog.inScatter;
+            throughput *= preFog.transmittance;
+
             CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
                                            prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
             L += throughput * pre.scatter;
@@ -257,6 +267,15 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // path continuation into the scene, but never appear in shadows/reflections/GI or emit radiance.
         if (material == MATERIAL_PARTICLE) {
             float3 albedo = payload.albedo;
+
+            // Very thin rain/splash particles cannot rely solely on a nearly-extinguished storm sun;
+            // give all particle billboards a modest sky/fog fill so falling rain remains visible while
+            // still inheriting the overcast colour and per-segment fog already applied above.
+            float particleStorm = worldFeature(worldPush, FEATURE_WEATHER_LIGHTING)
+                    ? clamp(worldPush.weather.x + worldPush.weather.y * 0.5, 0.0, 1.0) : 0.0;
+            float3 particleFill = cloudSkyAmbient(worldPush) * lerp(0.12, 0.36, particleStorm)
+                    + worldPush.ambientFog.xyz * lerp(0.25, 0.85, particleStorm);
+            L += throughput * albedo * particleFill;
 
             float3 lightDir = worldPush.lightDir.xyz;
             float lightHalfAngle = worldPush.lightDir.w;

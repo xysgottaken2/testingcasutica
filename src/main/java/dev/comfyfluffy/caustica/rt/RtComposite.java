@@ -1363,12 +1363,14 @@ public final class RtComposite {
         // getThunderLevel already includes the rain level as a factor in vanilla; clamp defensively so a
         // datapack or mod that drives it independently cannot push the multipliers negative.
         float thunder = Math.clamp(level.getThunderLevel(partial), 0f, 1f);
-        // Written out rather than via a lerp helper so each ramp's endpoints are readable inline:
-        // at full rain the direct light keeps 35% and the sky 45%; a full thunderstorm then halves
-        // each again (to ~18% and ~25% of clear).
-        float rainLight = 1.0f - 0.65f * rain;
-        float stormLight = 1.0f - 0.50f * thunder;
-        float rainSky = 1.0f - 0.55f * rain;
+        // Written out rather than via a lerp helper so each ramp's endpoints are readable inline.
+        // Directional celestial light must almost disappear in rain: if it merely drops to ~35%, any
+        // tiny cloud-coverage hole (or high mountain point above the deck) still receives a visible sun
+        // beam, which reads as a camera-following clear dome in storms. The overcast sky/fog carry the
+        // remaining daytime illumination; the sun/moon NEE becomes only a faint directional bias.
+        float rainLight = 1.0f - 0.96f * rain;
+        float stormLight = 1.0f - 0.75f * thunder;
+        float rainSky = 1.0f - 0.68f * rain;
         float stormSky = 1.0f - 0.45f * thunder;
         return new WeatherState(rain, thunder, rainSky * stormSky, rainLight * stormLight);
     }
@@ -1415,10 +1417,11 @@ public final class RtComposite {
                     yield new Float4(0f, 0f, 0f, 0f); // clear Overworld: the shader skips fog entirely
                 }
                 // Rain haze: neutral grey-blue, scaled by the same darkening the sky uses so it never
-                // out-glows the overcast it is supposed to be part of.
+                // out-glows the overcast it is supposed to be part of. Dense enough to affect reflective
+                // water at ordinary gameplay distances, not only far terrain silhouettes.
                 float scale = weather.rain() * weather.skyDarken();
-                yield new Float4(0.055f * scale, 0.060f * scale, 0.070f * scale,
-                        0.0035f * weather.rain());
+                yield new Float4(0.062f * scale, 0.067f * scale, 0.076f * scale,
+                        0.0065f * weather.rain());
             }
         };
     }
@@ -1454,9 +1457,14 @@ public final class RtComposite {
             // Neither the Nether nor the End has a sky to put clouds in; both draw a closed skybox.
             return CloudPush.NONE;
         }
-        // Overcast ramp: rain closes most of the remaining gap toward full cover, thunder the rest.
-        float overcast = Math.min(1f, weather.rain() * 0.85f + weather.thunder() * 0.15f);
+        // Overcast ramp: once it is raining the deck must become a closed ceiling. Leaving even a
+        // few percent of procedural coverage holes lets the sun punch random bright shafts onto the
+        // terrain; full rain therefore drives both coverage and opacity to 100%, with thunder only
+        // making the transition happen earlier.
+        float overcast = Math.min(1f, weather.rain() + weather.thunder() * 0.25f);
         coverage = coverage + (1f - coverage) * overcast;
+        opacity = opacity + (1f - opacity) * overcast;
+        shadow = Math.max(shadow, overcast * 0.95f);
         float height = CausticaConfig.Rt.Composite.CLOUD_HEIGHT.value();
         // Wind drift, in blocks, from world time. Wrapped with the anchor below.
         double gameTime = 0.0;

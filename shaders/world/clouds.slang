@@ -44,6 +44,8 @@ public static const int   CLOUD_CELL_MASK = CLOUD_PERIOD_CELLS - 1;
 // Width of the coverage ramp for the volumetric style. Classic quantises instead (see cloudCoverage).
 public static const float CLOUD_EDGE_SOFTNESS = 0.22;
 public static const float3 CLOUD_ALBEDO = float3(0.94, 0.95, 0.98);
+public static const float3 CLOUD_STORM_ALBEDO = float3(0.48, 0.51, 0.57);
+public static const float CLOUD_SOLID_COVERAGE = 0.999;
 public static const float CLOUD_INV_PI = 0.31830988618;
 
 // Below this the deck is treated as a flat sheet: the thickness slider at 0 must reproduce the old
@@ -143,6 +145,17 @@ public float cloudShadowStrength(WorldPush push) {
     return clamp(push.clouds.z, 0.0, 1.0);
 }
 
+/** Weather amount that should push clouds toward a dark storm colour. */
+public float cloudStormAmount(WorldPush push) {
+    return worldFeature(push, FEATURE_WEATHER_LIGHTING)
+            ? clamp(push.weather.x + push.weather.y * 0.5, 0.0, 1.0) : 0.0;
+}
+
+/** Cloud droplet albedo after rain/thunder has greyed the deck. */
+public float3 cloudAlbedo(WorldPush push) {
+    return lerp(CLOUD_ALBEDO, CLOUD_STORM_ALBEDO, cloudStormAmount(push));
+}
+
 // Integer cell hash. Integer mixing rather than the sky's float hash13: the sample coordinate here is
 // a world position that can be thousands of blocks from the anchor, where a float hash starts losing
 // mantissa bits and the pattern degenerates into stripes. The mask is what makes the field periodic.
@@ -190,7 +203,11 @@ public float cloudCoverageField(float2 samplePos) {
  * looks low-resolution.
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
-    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    float requestedCoverage = clamp(push.clouds.x, 0.0, 1.0);
+    if (requestedCoverage >= CLOUD_SOLID_COVERAGE) {
+        return 1.0;
+    }
+    float threshold = 1.0 - requestedCoverage;
     if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
         // Snap to the cell centre so every point inside one cell gets the identical answer -> hard,
         // axis-aligned edges exactly on the 12-block grid.
@@ -339,7 +356,7 @@ float3 cloudRadianceClassic(WorldPush push, CloudHit h, float3 dir, float3 skyBe
     float grazing = 1.0 - abs(dir.y);            // 1 looking along the deck, 0 straight up/down
     float faceLight = h.fromBelow ? 0.52 : 1.0;  // vanilla's bottom face is markedly darker
     faceLight = lerp(faceLight, 0.78, grazing);  // side faces sit between the two
-    float3 lit = CLOUD_ALBEDO * CLOUD_INV_PI * sunRadiance * faceLight;
+    float3 lit = cloudAlbedo(push) * CLOUD_INV_PI * sunRadiance * faceLight;
     // The classic deck is opaque, so it admits only a little sky fill — enough to keep it from going
     // black at night, when sunRadiance is near zero.
     return lit + skyBehind * 0.45;
@@ -421,9 +438,11 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     //     of small and busy — width and height grow together, so it reads as heaped, not stretched;
     //   * erosion is concentrated at the extreme top and bottom, leaving the middle solid, which is
     //     what gives a cloud a dense core with a cauliflower crown rather than uniform fluff.
+    float requestedCoverage = clamp(push.clouds.x, 0.0, 1.0);
     float base = cloudCoverageField(samplePos * CLOUD_VOLUMETRIC_SCALE);
-    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
-    float coverage = smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, base);
+    float threshold = 1.0 - requestedCoverage;
+    float coverage = requestedCoverage >= CLOUD_SOLID_COVERAGE
+            ? 1.0 : smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, base);
     if (coverage <= 0.0) {
         return 0.0;
     }
@@ -560,6 +579,7 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     }
 
     float3 sunRadiance = push.lightRadiance.xyz;
+    float3 dropletAlbedo = cloudAlbedo(push);
     float cosT = dot(dir, push.lightDir.xyz);
     float phase = cloudPhase(cosT);
     float opacity = clamp(push.clouds.y, 0.0, 1.0);
@@ -605,13 +625,13 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
             // Flat, vanilla-style face tone. Self-shadowing is deliberately damped (mixed only 40% in)
             // so cloud boxes keep the poster-flat look instead of developing soft volumetric gradients.
             float shade = lerp(1.0, lightT, 0.4);
-            inScatter = CLOUD_ALBEDO * CLOUD_INV_PI
+            inScatter = dropletAlbedo * CLOUD_INV_PI
                     * (sunRadiance * classicFace * shade * 3.0 + skyBehind * 1.4);
         } else {
             // Direct sun scattering + an ambient sky term so the shadowed interior is grey rather than
             // black. Powder brightens dense interiors (multiple-scattering approximation).
             float powder = lerp(1.0, cloudPowder(density), CLOUD_POWDER_STRENGTH);
-            inScatter = CLOUD_ALBEDO
+            inScatter = dropletAlbedo
                     * (sunRadiance * lightT * phase * powder * 4.0 + skyBehind * 0.35);
         }
         // Energy-conserving accumulation: integrate in-scatter over the step's absorbed fraction.

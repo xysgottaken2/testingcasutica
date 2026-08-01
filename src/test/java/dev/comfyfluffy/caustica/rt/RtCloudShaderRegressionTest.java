@@ -14,6 +14,9 @@ final class RtCloudShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path CLOUDS = REPO_ROOT.resolve("shaders/world/clouds.slang");
     private static final Path WORLD_RGEN = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
+    private static final Path WORLD_RMISS = REPO_ROOT.resolve("shaders/world/world.rmiss.slang");
+    private static final Path RTCOMPOSITE = REPO_ROOT.resolve(
+            "src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
 
     @Test
     void cloudSunShadowDoesNotReuseVisibleCloudTrace() throws IOException {
@@ -28,6 +31,39 @@ final class RtCloudShaderRegressionTest {
                 "cloud shadows must intersect the light ray from the receiver");
         assertTrue(body.contains("push.cloudAnchor.xy + pointRel.xz + lightDir.xz * t"),
                 "cloud shadows must sample at the receiver/light intersection, not at the camera");
+    }
+
+
+    @Test
+    void rainyOvercastIsSolidAndKillsCelestialLeaks() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String miss = Files.readString(WORLD_RMISS);
+        String composite = Files.readString(RTCOMPOSITE);
+
+        assertTrue(clouds.contains("CLOUD_SOLID_COVERAGE"),
+                "full rain coverage must bypass procedural cloud holes");
+        assertTrue(clouds.contains("requestedCoverage >= CLOUD_SOLID_COVERAGE"),
+                "both cloud styles must become a closed ceiling at full overcast");
+        assertFalse(miss.contains("cloudsEnabled(worldPush) ? 1.0 : 1.0 - rainStrength"),
+                "rain must hide the sun/moon disc even when cloud rendering is enabled");
+        assertTrue(miss.contains("smoothstep(0.02, 0.65, stormStrength)"),
+                "celestial discs must fade out aggressively in real rain");
+        assertTrue(composite.contains("float rainLight = 1.0f - 0.96f * rain;"),
+                "storm direct light must be nearly gone so cloud pinholes cannot project beams");
+        assertTrue(composite.contains("opacity = opacity + (1f - opacity) * overcast;"),
+                "rain should push cloud opacity closed along with coverage");
+    }
+
+    @Test
+    void dielectricPrefixCarriesRainFogBeforeWaterContinuations() throws IOException {
+        String source = Files.readString(WORLD_RGEN);
+        String prefix = slice(source, "if (seg.bounce > 0)", "// Pass A is fixed");
+
+        assertInOrder(prefix,
+                "AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist);",
+                "L += throughput * preFog.inScatter;",
+                "throughput *= preFog.transmittance;",
+                "CloudVolume pre = cloudSegment");
     }
 
     @Test
