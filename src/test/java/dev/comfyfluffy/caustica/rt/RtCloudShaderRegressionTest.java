@@ -17,6 +17,10 @@ final class RtCloudShaderRegressionTest {
     private static final Path WORLD_RMISS = REPO_ROOT.resolve("shaders/world/world.rmiss.slang");
     private static final Path RTCOMPOSITE = REPO_ROOT.resolve(
             "src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
+    private static final Path RT_ENTITIES = REPO_ROOT.resolve(
+            "src/main/java/dev/comfyfluffy/caustica/rt/entity/RtEntities.java");
+    private static final Path RT_VANILLA_WEATHER = REPO_ROOT.resolve(
+            "src/main/java/dev/comfyfluffy/caustica/rt/RtVanillaWeather.java");
 
     @Test
     void cloudSunShadowDoesNotReuseVisibleCloudTrace() throws IOException {
@@ -64,6 +68,36 @@ final class RtCloudShaderRegressionTest {
                 "L += throughput * preFog.inScatter;",
                 "throughput *= preFog.transmittance;",
                 "CloudVolume pre = cloudSegment");
+    }
+
+    @Test
+    void stormCloudShadowDoesNotCreateDeckAltitudeCutLine() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String body = slice(source, "public float cloudSunShadow", "// ---- Classic");
+
+        assertTrue(body.contains("globalStormAlpha"),
+                "storm overcast must have a camera-independent/global attenuation term");
+        assertInOrder(body,
+                "float globalStormAlpha",
+                "if (t <= 0.0) {",
+                "return 1.0 - strength * globalStormAlpha;");
+        assertTrue(body.contains("alpha = max(alpha, globalStormAlpha);"),
+                "analytic cloud shadows must blend with global storm attenuation instead of making a hard deck line");
+    }
+
+    @Test
+    void rainUsesVanillaWeatherRendererNotProceduralEntityMesh() throws IOException {
+        String entities = Files.readString(RT_ENTITIES);
+        String weather = Files.readString(RT_VANILLA_WEATHER);
+
+        assertFalse(entities.contains("RAIN_STREAK"),
+                "falling rain must not be a duplicated procedural entity mesh");
+        assertFalse(entities.contains("appendProceduralRainStreaks"),
+                "RtEntities should only capture real ParticleEngine particles, not fake rain columns");
+        assertTrue(weather.contains("weatherRenderState"),
+                "vanilla extracted WeatherRenderState must drive falling rain/snow");
+        assertTrue(weather.contains("WeatherEffectRenderer.render"),
+                "falling rain/snow should be replayed through vanilla's renderer");
     }
 
     @Test

@@ -327,14 +327,26 @@ public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
         return 1.0;
     }
 
+    // In real rain the overcast is an atmospheric condition, not a hard geometric shadow cast only on
+    // receivers below the cloud slab. Keeping the old "point above deck => unshadowed" branch under a
+    // closed storm ceiling drew a razor-straight brightness boundary wherever terrain crossed the deck
+    // altitude; because the deck height is evaluated relative to the camera, that boundary felt like it
+    // travelled with the player. When weather has closed the deck, apply the storm attenuation globally
+    // and use the analytic cloud lookup only as extra detail in clear/patchy weather.
+    float storm = cloudStormAmount(push);
+    float resolvedCoverage = clamp(push.clouds.x, 0.0, 1.0);
+    float opacity = clamp(push.clouds.y, 0.0, 1.0);
+    float globalStormAlpha = opacity * storm * smoothstep(0.80, CLOUD_SOLID_COVERAGE, resolvedCoverage);
+
     float deckRel = push.clouds.w - pointRel.y;
     float t = deckRel / lightDir.y;
     if (t <= 0.0) {
-        return 1.0;
+        return 1.0 - strength * globalStormAlpha;
     }
 
     float2 samplePos = push.cloudAnchor.xy + pointRel.xz + lightDir.xz * t;
-    float alpha = clamp(cloudCoverage(push, samplePos) * clamp(push.clouds.y, 0.0, 1.0), 0.0, 1.0);
+    float alpha = clamp(cloudCoverage(push, samplePos) * opacity, 0.0, 1.0);
+    alpha = max(alpha, globalStormAlpha);
     return 1.0 - strength * alpha;
 }
 
