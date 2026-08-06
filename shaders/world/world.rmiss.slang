@@ -291,8 +291,13 @@ void main(inout Payload payload) {
 
     float3 skyAmbient = col;
 
-    // Sun/Moon discs - keep original logic, sun size unchanged as requested
-    float discVisible = cloudsEnabled(worldPush) ? 1.0 : 1.0 - rainStrength;
+    // Sun/Moon discs. Rain hides the body itself, not just the cloud layer in front of it: otherwise
+    // any hole in the deck (the authored texture keeps ~20 % of cells empty, and vanilla's sky is grey
+    // enough behind them to read as closed) exposes a full-strength solar sprite and paints sharp
+    // light leaks on the terrain. The transition is intentionally faster than the sky darkening, so
+    // light drizzle keeps a hint of the disc while real rain/storms remove it.
+    float stormStrength = weatherOn ? clamp(worldPush.weather.x + worldPush.weather.y * 0.5, 0.0, 1.0) : 0.0;
+    float discVisible = 1.0 - smoothstep(0.02, 0.65, stormStrength);
     if (showCelestial && discVisible > 0.0) {
         float2 local;
         squareBody(dir, sd, SUN_DISC_HALF_ANGLE, worldPush.celestial.xyz, local);
