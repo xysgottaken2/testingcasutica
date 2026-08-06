@@ -48,7 +48,7 @@ import world_common;
 // hazard at all. The CPU packs one byte per cell (mirroring CloudRenderer.packCellData) plus a second
 // byte per cell for the coverage-filtered "shown" flag; see RtCloudCells.
 public static const float CLOUD_CELL_BLOCKS = 12.0; // vanilla's cloud cell size
-public static const int   CLOUD_CELLS_DIM = 256;
+public static const int   CLOUD_CELLS_DIM = 256;   // must match the vanilla texture — RtCloudCells bails otherwise
 public static const int   CLOUD_CELLS_MASK = CLOUD_CELLS_DIM - 1;
 public static const int   CLOUD_CELLS_TOTAL = CLOUD_CELLS_DIM * CLOUD_CELLS_DIM;
 // Byte layout of the cell map behind cloudCellsAddr: 8-byte header (u32 magic "CLDC", u32 version),
