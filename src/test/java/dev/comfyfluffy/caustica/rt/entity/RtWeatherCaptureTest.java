@@ -80,25 +80,29 @@ final class RtWeatherCaptureTest {
 
     /**
      * The table's exact centre is the column the camera stands in, where vanilla's {@code -deltaZ/dist}
-     * is 0/0.
+     * is 0/0 = NaN. Vanilla tolerates it because its rasteriser silently drops a NaN vertex — the
+     * column under the camera is simply never drawn there.
      *
-     * <p>Vanilla tolerates the resulting NaN because the rasteriser silently drops a NaN vertex. Caustica
-     * feeds these quads to a BLAS build instead, where a NaN corner poisons the acceleration structure
-     * node and every ray tested against it degenerates — which is what produced the thin vertical sliver
-     * that appeared after standing still long enough for the camera to settle into one cell. Assert the
-     * capture substitutes a finite direction rather than inheriting vanilla's NaN.
+     * <p>Caustica cannot feed that quad to a BLAS build: a NaN corner poisons the acceleration
+     * structure node and every ray tested against it degenerates — the thin vertical sliver that
+     * appeared after standing still long enough for the camera to settle into one cell. The capture
+     * therefore reproduces vanilla's outcome explicitly: the NaN stays in the table as the marker, and
+     * {@code captureColumns} skips the column before any vertex is emitted.
      */
     @Test
-    void tableCentreIsFiniteRatherThanVanillasNaN() throws IOException {
+    void tableCentreColumnIsSkippedLikeVanilla() throws IOException {
         // The raw vanilla expression really is NaN at the centre — this is the hazard being guarded.
         float degenerate = -0.0f / 0.0f;
         assertTrue(Float.isNaN(degenerate), "0/0 must be NaN, or this test is not testing anything");
 
         String src = Files.readString(source());
-        assertTrue(src.contains("distance < 1.0e-4f"),
-                "the degenerate centre cell must be detected before dividing");
-        // A NaN reaching the BLAS is the actual failure mode, so make the reason unmissable in-source.
-        assertTrue(src.contains("NaN"), "the centre-cell guard must explain the NaN/BLAS hazard");
+        // The centre must keep vanilla's raw NaN formula (it is the marker), not a substitute direction.
+        assertTrue(src.contains("-deltaZ / distance"),
+                "the orientation table must reproduce vanilla's raw formula, NaN centre included");
+        // ...and the capture must skip that column before any vertex reaches the BLAS.
+        assertTrue(src.contains("Float.isNaN(halfSizeX + halfSizeZ)"),
+                "the camera's own column must be skipped in captureColumns, like vanilla drops the NaN quad");
+        assertTrue(src.contains("NaN"), "the centre-cell skip must explain the NaN/BLAS hazard");
     }
 
     /**
