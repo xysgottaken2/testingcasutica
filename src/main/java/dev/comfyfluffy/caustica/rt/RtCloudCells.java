@@ -230,9 +230,13 @@ public final class RtCloudCells {
         dst.order(ByteOrder.nativeOrder());
         dst.putInt(0, MAGIC);
         dst.putInt(4, 1); // version
-        for (int i = 0; i < MAP_BYTES; i++) {
-            dst.put(HEADER_BYTES + i, bits[i]);
-            dst.put(HEADER_BYTES + MAP_BYTES + i, shown[i]);
+        // Bulk-copy both maps: per-byte absolute put() would be 131072 bounds-checked JNI writes per
+        // frame; absolute array puts are a single native copy per chunk.
+        int chunk = 4096;
+        for (int i = 0; i < MAP_BYTES; i += chunk) {
+            int n = Math.min(chunk, MAP_BYTES - i);
+            dst.put(HEADER_BYTES + i, bits, i, n);
+            dst.put(HEADER_BYTES + MAP_BYTES + i, shown, i, n);
         }
         return true;
     }
