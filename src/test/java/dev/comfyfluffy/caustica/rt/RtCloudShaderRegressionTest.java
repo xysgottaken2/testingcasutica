@@ -14,6 +14,7 @@ final class RtCloudShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path CLOUDS = REPO_ROOT.resolve("shaders/world/clouds.slang");
     private static final Path WORLD_RGEN = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
+    private static final Path WORLD_RMISS = REPO_ROOT.resolve("shaders/world/world.rmiss.slang");
 
     @Test
     void cloudSunShadowDoesNotReuseVisibleCloudTrace() throws IOException {
@@ -28,6 +29,56 @@ final class RtCloudShaderRegressionTest {
                 "cloud shadows must intersect the light ray from the receiver");
         assertTrue(body.contains("push.cloudAnchor.xy + pointRel.xz + lightDir.xz * t"),
                 "cloud shadows must sample at the receiver/light intersection, not at the camera");
+    }
+
+    @Test
+    void classicStyleIsAnalyticBoxesAgainstTheAuthoredCellMap() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String classic = slice(clouds, "// ---- Classic", "// ---- Volumetric");
+
+        assertTrue(clouds.contains("cloudCellShown(push, cell)"),
+                "the deck shape must come from the authored cell map, not a procedural field");
+        assertTrue(classic.contains("cloudTraceBoxes(push, originRel, dir, maxDistance)"),
+                "the classic style must be an analytic box intersection");
+        assertFalse(classic.contains("cloudMarch("),
+                "the classic style must not march a volume — boxes are exact by construction");
+        assertTrue(classic.contains("h.face == 0u ? 1.0 : (h.face == 1u ? 0.7"),
+                "classic shading must reproduce vanilla's face tone table (top 1.0 / bottom 0.7)");
+    }
+
+    @Test
+    void volumetricMarchExcludesTheSlabInTheCrossingRegion() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String march = slice(clouds, "public CloudVolume cloudMarch", "// ---- Unified entry point");
+
+        assertInOrder(march,
+                "crossFade = smoothstep(halfThickness * 0.5, halfThickness * 1.5, abs(deckRel))",
+                "if (crossFade <= 0.0) {",
+                "return result;");
+        assertTrue(march.contains("result.scatter *= opacity * crossFade;"),
+                "the crossing fade must scale the finished in-scatter, not the coverage field");
+    }
+
+    @Test
+    void cloudColourComesFromTheVanillaPushNotAShaderRamp() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+
+        assertTrue(clouds.contains("public float3 cloudTint(WorldPush push)"),
+                "cloud tint must be a single accessor over the pushed lane");
+        assertTrue(clouds.contains("push.cloudColor.xyz"),
+                "the tint must read the vanilla-resolved cloud colour from LevelRenderState");
+        assertFalse(clouds.contains("CLOUD_STORM_ALBEDO"),
+                "the hand-tuned storm albedo ramp must not return (vanilla's own value replaces it)");
+    }
+
+    @Test
+    void rainHidesCelestialDiscsEvenWhenTheDeckHasHoles() throws IOException {
+        String miss = Files.readString(WORLD_RMISS);
+
+        assertFalse(miss.contains("cloudsEnabled(worldPush) ? 1.0 : 1.0 - rainStrength"),
+                "the disc visibility must not depend on the cloud toggle — holes in the deck leak sun");
+        assertTrue(miss.contains("discVisible = 1.0 - smoothstep(0.02, 0.65, stormStrength)"),
+                "rain must fade the sun/moon discs out aggressively");
     }
 
     @Test
