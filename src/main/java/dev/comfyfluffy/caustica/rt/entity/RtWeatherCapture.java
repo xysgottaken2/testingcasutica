@@ -107,20 +107,12 @@ public final class RtWeatherCapture {
                 float deltaX = x - HALF_RAIN_TABLE_SIZE;
                 float deltaZ = z - HALF_RAIN_TABLE_SIZE;
                 float distance = Mth.length(deltaX, deltaZ);
-                if (distance < 1.0e-4f) {
-                    // The exact table centre is the column the camera is standing in: deltaX == deltaZ == 0,
-                    // so vanilla's -deltaZ/distance is 0/0 = NaN. Vanilla gets away with it because a NaN
-                    // vertex is simply dropped by the rasteriser. Here the quad is fed to a BLAS build
-                    // instead, and a NaN-cornered triangle poisons that node's bounding box — every ray
-                    // that tests it degenerates, which is exactly the thin vertical sliver that appeared
-                    // after standing still long enough for the camera to settle inside one cell.
-                    //
-                    // Any unit direction is correct for a column centred on the camera (it is seen from
-                    // every side at once), so pick a fixed one rather than propagating the NaN.
-                    columnSizeX[z * RAIN_TABLE_SIZE + x] = 1.0f;
-                    columnSizeZ[z * RAIN_TABLE_SIZE + x] = 0.0f;
-                    continue;
-                }
+                // The exact table centre is the column the camera is standing in: deltaX == deltaZ == 0,
+                // so vanilla's -deltaZ/distance is 0/0 = NaN and its rasteriser simply DROPS the NaN
+                // vertex — the column under the camera is never drawn. A NaN corner fed to a BLAS build
+                // would instead poison that node's bounding box (every ray testing it degenerates), so
+                // the same "don't draw the camera's own column" is reproduced with an explicit skip in
+                // captureColumns: the NaN stays here as the marker.
                 columnSizeX[z * RAIN_TABLE_SIZE + x] = -deltaZ / distance;
                 columnSizeZ[z * RAIN_TABLE_SIZE + x] = deltaX / distance;
             }
@@ -280,6 +272,14 @@ public final class RtWeatherCapture {
 
             float halfSizeX = columnSizeX[index] / 2.0f;
             float halfSizeZ = columnSizeZ[index] / 2.0f;
+            if (Float.isNaN(halfSizeX + halfSizeZ)) {
+                // The column under the camera: vanilla's 0/0 orientation is NaN and its rasteriser
+                // drops the quad, so the camera's own column is never drawn there either. Drawing it
+                // with any fixed facing makes a thin vertical sliver appear exactly when the player
+                // stands still (the quad is seen edge-on half the time and does not move with the
+                // camera), so reproduce vanilla: skip it.
+                continue;
+            }
             float x0 = relativeX - halfSizeX;
             float x1 = relativeX + halfSizeX;
             float y1 = (float) (column.topY() - camPos.y);

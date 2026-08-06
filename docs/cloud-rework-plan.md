@@ -19,12 +19,18 @@ this file tracks the cloud rework that replaces the procedural deck with vanilla
   classic style = analytic box intersection; thickness slider = box height, minimum 4 blocks
   (vanilla's extrusion height); only "surrounded" cells get tall volumetric towers.
 - [x] Implementation (PR #27, branch arena/019fd4c4-testingcasutica): `RtCloudCells` + WorldPush lanes
-  (`cloudCellsAddr`, `cloudColor`), analytic classic boxes, authored volumetric with surrounded-cell
-  towers, crossing-region exclusion, rain-overcast closure, celestial-disc fade. Hand-validated
-  (box-trace simulation: 22 ray cases; cell-map algorithm replicated against the real PNG; brace/
-  symbol cross-checks) — the compiler verdict still has to come from CI once the artifact quota
-  meter recalculates.
-- [ ] CI validation of the rework (blocked by the GitHub artifact-quota meter; see Status).
+  (`cloudCellsAddr`, `cloudColor`), analytic classic boxes, crossing-region exclusion, rain-overcast
+  closure, celestial-disc fade. Hand-validated (box-trace simulation: 22 ray cases; cell-map
+  algorithm replicated against the real PNG; brace/symbol cross-checks).
+- [x] **CI GREEN on 2026-08-06** (run 31115103146, SHA a8a6d97): all three jobs pass, jar uploaded —
+  after making the repository public (private repos count artifacts/caches against the free 0.5 GB
+  quota; public repos do not). The compile of Java + shaders + regression tests is verified.
+- [x] Post-testing fixes (owner feedback): rain now closes the deck into a solid ceiling
+  (CLOUD_SOLID_COVERAGE absorbed from PR #25); volumetric style restored to the procedural field
+  (owner prefers the old heaped look over the authored map for that style); the rain column under
+  the camera is skipped like vanilla (its 0/0 orientation is NaN and the rasteriser drops the quad —
+  drawing it was the thin vertical sliver while standing still).
+- [ ] Visual pass in-game by the owner.
 
 ## Why the procedural deck kept producing new bugs
 
@@ -110,18 +116,32 @@ cells in rain.
 - Shading reproduces `rendertype_clouds.vsh` exactly: flat face tones (top 1.0 / bottom 0.7 /
   x-sides 0.9 / z-sides 0.8) × `cloudColor` × sun radiance, plus the small sky fill the deck needs
   at night. The vanilla alpha (0xCC ≈ 0.8) is the weather-resolved base opacity, multiplied by the
-  player's opacity slider.
+  player's opacity slider — except in a closed storm ceiling, where the base opacity is dropped so
+  the slab reads fully closed.
 - The old flat-plane path (`cloudTrace`/`cloudAlpha`/`cloudRadianceClassic`) is deleted: thickness
   0 is now a 4-block box, per the owner decision.
 
-### Volumetric style = authored coverage + reserved towers
+### Volumetric style = the procedural field (owner decision after playtesting)
 
-- Density base is the shown cell (one byte lookup, no noise for the 80 % of samples that fall on
-  empty cells); the existing domain warp + billow octaves shape the interior and erode the edges.
-- Tower rule: cells whose whole 4-neighbourhood is occupied (the 28 % of the deck) get the full
-  slab height; cells with empty neighbours stay low (bottom ~30-55 % of the slab). The deck reads as
-  "a few thick towers in the big systems, thin puffs elsewhere" instead of uniform depth.
-- Light march and march budgets unchanged in structure; the density is much cheaper per sample.
+- After testing the all-authored version, the owner asked for the pre-rework look back: the
+  volumetric style again reads `cloudCoverageField` (three octaves of value noise at
+  `CLOUD_VOLUMETRIC_SCALE = 0.5`) with the warp/billow/bulge profile, exactly as shipped before the
+  rework. The authored cell map remains the classic style's shape source — two styles, two shape
+  sources.
+- The shadow query follows the visible style: classic samples the shown cell map (bilinear),
+  volumetric samples the procedural field with the same ramp — the shadow always matches the drawn
+  cloud.
+
+### Rain closes the deck (absorbed from PR #25's CLOUD_SOLID_COVERAGE)
+
+- `cloudState` drives coverage **and** opacity to 1 in rain (rain alone closes; thunder only makes
+  it happen earlier), shadow floored at `overcast * 0.95`.
+- `CLOUD_SOLID_COVERAGE` in clouds.slang: at coverage ≥ 0.999 every authored cell is shown and the
+  volumetric density becomes a uniform slab — a genuinely closed ceiling. The authored map's 20 %
+  holes are weather, not geometry, in a storm.
+- `cloudSunShadow` applies the storm attenuation to every receiver in the closed ceiling
+  (globalStormAlpha), and `world.rmiss` fades the sun/moon discs out in rain — no sun patches
+  through holes.
 
 ### Bug 1 — the camera-following horizontal band
 

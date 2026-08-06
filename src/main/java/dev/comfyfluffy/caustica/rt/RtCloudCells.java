@@ -15,21 +15,21 @@ import java.util.Optional;
 /**
  * The authored vanilla cloud deck: {@code textures/environment/clouds.png} decoded into a 256x256 cell
  * map, mirroring {@code CloudRenderer.prepare} (26.2). One pixel = one 12-block cell; a cell is
- * occupied when its alpha is >= 10 (vanilla's {@code isCellEmpty}), and each occupied cell carries the
- * four "is my neighbour empty" bits vanilla packs ({@code packCellData}) plus a "surrounded" bit (all
- * four neighbours occupied) that reserves tall volumetric towers for the cores of large systems.
+ * occupied when its alpha is >= 10 (vanilla's {@code isCellEmpty}).
  *
- * <p>A second, per-cell "shown" byte applies the coverage slider as a <b>size-ranked component
- * filter</b>: the map's occupied cells form connected components (4-neighbour, wrap-aware — the
- * texture tiles), and a cell is shown iff the cumulative occupied-cell count of all components larger
- * than its own stays below {@code coverage * totalOccupied}. The slider therefore chooses how much of
- * the authored deck is up while every cloud stays whole (a system is never cut into pieces); the
- * mapping is measured in docs/cloud-rework-plan.md.
+ * <p>A per-cell "shown" byte applies the coverage slider as a <b>size-ranked component filter</b>:
+ * the map's occupied cells form connected components (4-neighbour, wrap-aware — the texture tiles),
+ * and a cell is shown iff the cumulative occupied-cell count of all components larger than its own
+ * stays below {@code coverage * totalOccupied}. The slider therefore chooses how much of the authored
+ * deck is up while every cloud stays whole (a system is never cut into pieces); the mapping is
+ * measured in docs/cloud-rework-plan.md.
  *
  * <p>Layout behind {@code cloudCellsAddr} in the WorldPush BDA ring (see {@link RtComposite}):
- * 8-byte header (u32 magic "CLDC", u32 version), 65536 occupancy/neighbour bytes, 65536 shown bytes.
- * The shader wraps both axes with a mask — the texture tiles every 256 * 12 = 3072 blocks by
- * construction, which is exactly vanilla's own wrap.
+ * 8-byte header (u32 magic "CLDC", u32 version), 65536 shown bytes. The shader wraps both axes with a
+ * mask — the texture tiles every 256 * 12 = 3072 blocks by construction, which is exactly vanilla's
+ * own wrap. (The occupancy/neighbour bytes are computed internally for the component filter but are
+ * not uploaded; the volumetric style uses the procedural field, and only the classic style reads the
+ * shown map.)
  */
 public final class RtCloudCells {
     public static final RtCloudCells INSTANCE = new RtCloudCells();
@@ -37,9 +37,8 @@ public final class RtCloudCells {
     public static final int CELLS = 256;
     public static final int CELLS_TOTAL = CELLS * CELLS;
     public static final int HEADER_BYTES = 8;
-    public static final int MAP_BYTES = CELLS_TOTAL;
     public static final int SHOWN_BYTES = CELLS_TOTAL;
-    public static final int TOTAL_BYTES = HEADER_BYTES + MAP_BYTES + SHOWN_BYTES;
+    public static final int TOTAL_BYTES = HEADER_BYTES + SHOWN_BYTES;
     static final int MAGIC = 0x434C4443; // "CLDC"
 
     private static final int BIT_OCCUPIED = 1;
@@ -230,13 +229,12 @@ public final class RtCloudCells {
         dst.order(ByteOrder.nativeOrder());
         dst.putInt(0, MAGIC);
         dst.putInt(4, 1); // version
-        // Bulk-copy both maps: per-byte absolute put() would be 131072 bounds-checked JNI writes per
-        // frame; absolute array puts are a single native copy per chunk.
+        // Bulk-copy the shown map: per-byte absolute put() would be 65536 bounds-checked JNI writes
+        // per frame; absolute array puts are a single native copy per chunk.
         int chunk = 4096;
-        for (int i = 0; i < MAP_BYTES; i += chunk) {
-            int n = Math.min(chunk, MAP_BYTES - i);
-            dst.put(HEADER_BYTES + i, bits, i, n);
-            dst.put(HEADER_BYTES + MAP_BYTES + i, shown, i, n);
+        for (int i = 0; i < SHOWN_BYTES; i += chunk) {
+            int n = Math.min(chunk, SHOWN_BYTES - i);
+            dst.put(HEADER_BYTES + i, shown, i, n);
         }
         return true;
     }

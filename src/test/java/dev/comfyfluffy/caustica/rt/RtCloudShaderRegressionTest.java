@@ -82,6 +82,36 @@ final class RtCloudShaderRegressionTest {
     }
 
     @Test
+    void rainClosesTheDeckIntoASolidCeiling() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String shown = slice(clouds, "public bool cloudCellShown", "// ---- Procedural coverage field");
+        String density = slice(clouds, "float cloudVolumeDensity", "/** Optical depth");
+        String classic = slice(clouds, "CloudVolume cloudSegmentClassic", "// ---- Volumetric shading");
+
+        assertTrue(clouds.contains("CLOUD_SOLID_COVERAGE = 0.999"),
+                "rain-driven full coverage must be recognised as a closed ceiling");
+        assertTrue(shown.contains("cloudClosed(push)"),
+                "a closed ceiling must show every cell — the authored pattern's holes are weather");
+        assertTrue(density.contains("cloudClosed(push)"),
+                "a closed ceiling must march a uniform slab instead of the open pattern");
+        assertTrue(classic.contains("if (!cloudClosed(push)) {\n        alpha *= push.cloudColor.w;"),
+                "the closed ceiling must drop vanilla's ~0.8 base opacity so the slab reads fully closed");
+    }
+
+    @Test
+    void volumetricStyleKeepsTheProceduralField() throws IOException {
+        String clouds = Files.readString(CLOUDS);
+        String density = slice(clouds, "float cloudVolumeDensity", "/** Optical depth");
+
+        assertTrue(density.contains("cloudCoverageField(samplePos * CLOUD_VOLUMETRIC_SCALE)"),
+                "the volumetric shape must come from the procedural field, not the authored cell map");
+        assertTrue(clouds.contains("public float cloudCoverageField(float2 samplePos)"),
+                "the procedural field must exist as the volumetric shape source");
+        assertTrue(clouds.contains("CLOUD_VOLUMETRIC_SCALE = 0.5"),
+                "the volumetric field scale must be restored for the heaped look");
+    }
+
+    @Test
     void directLightingAppliesCloudShadowOnlyAfterSceneVisibilitySurvives() throws IOException {
         String source = Files.readString(WORLD_RGEN);
         String frontNeeBlock = slice(source, "float cloudShadow = 1.0;", "float activeSss");

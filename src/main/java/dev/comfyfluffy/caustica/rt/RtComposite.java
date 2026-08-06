@@ -193,20 +193,21 @@ public final class RtComposite {
     private static final int WATER_ANCHOR_MASK = 4095;
     // ---- Cloud deck. These mirror clouds.slang and must stay in lock-step with it.
     //
-    // The deck's SHAPE is now vanilla's authored cell map (RtCloudCells): 256x256 cells of 12 blocks,
-    // tiling every 3072 blocks with a mask — exactly periodic by construction, no wrap hazard. The
-    // only remaining noise spaces are the volumetric interior octaves (domain warp and the two billow
-    // layers in clouds.slang), and the anchor wrap must be a whole hash period in each of them (the
-    // hash repeats every 512 cells in every sampled space). The binding constraint is the largest
-    // divisor (CLOUD_WARP_DIV = 2.0):
+    // The deck has TWO shape sources (owner decision after testing the all-authored version): the
+    // classic style reads vanilla's authored cell map (RtCloudCells: 256x256 cells of 12 blocks,
+    // tiling every 3072 blocks with a mask — exactly periodic by construction), and the volumetric
+    // style reads the procedural coverage field at CLOUD_VOLUMETRIC_SCALE (0.5). The anchor wrap must
+    // therefore be a whole hash period in EVERY sampled space: the base octaves, the domain warp and
+    // both billow layers (the hash repeats every 512 cells per space). The binding constraint is the
+    // largest divisor (CLOUD_WARP_DIV = 2.0) over the smallest scale (CLOUD_VOLUMETRIC_SCALE = 0.5):
     //
-    //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) = 12288 blocks
+    //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) / scale(0.5) = 24576 blocks
     //
-    // 12288 is also a whole multiple of the cell map's 3072-block tile and of the flat plane's own
-    // wrap, so one anchor wrap stays seamless for every consumer. Every divisor is a power of two, so
-    // all of these multiplies are exact in binary floating point and the wrap identity holds
-    // bit-for-bit rather than approximately.
-    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0;
+    // 24576 is also a whole multiple of the cell map's 3072-block tile, so one anchor wrap stays
+    // seamless for every consumer. Every divisor/scale is a power of two, so all of these multiplies
+    // are exact in binary floating point and the wrap identity holds bit-for-bit rather than
+    // approximately.
+    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0 / 0.5;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
     // Deck thickness at the slider's 100%. Both styles march a real slab now, so this is the depth the

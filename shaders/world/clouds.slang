@@ -1,9 +1,5 @@
-// Cloud deck — two selectable styles over ONE authored cell map.
-//
-// NOTE: this file is the post-rework state (see docs/cloud-rework-plan.md). The procedural noise
-// field was replaced by vanilla's authored textures/environment/clouds.png cell map, transported
-// through the WorldPush BDA ring by RtCloudCells (same mechanism as the DH ready mask, no new
-// binding). Cloud shape is authored data now, exactly like vanilla — see cloudCellShown.
+// Cloud deck — classic boxes over vanilla's authored cell map, volumetric cumulus over the
+// procedural field, and a closed slab in storms.
 //
 // Caustica cancels vanilla's LevelRenderer outright (see LevelRendererMixin), and vanilla's cloud pass
 // lives inside it — so under the ray-traced renderer there were simply no clouds in the world at all.
@@ -11,20 +7,26 @@
 // hid the celestial discs "behind the cloud deck" during rain, but nothing ever drew that deck. This
 // module is that deck.
 //
-// TWO STYLES, ONE MAP. The authored cell grid is the single source of truth for WHERE clouds are;
-// both styles, and the shadow query, are built on that same 256x256 cell map, so a cloud and the
-// shadow it casts are always in the same place.
+// TWO STYLES, TWO SHAPE SOURCES (owner decision after testing the first all-authored version):
 //   * CLOUD_STYLE_CLASSIC — vanilla's blocky clouds, verbatim. Cells are extruded into axis-aligned
 //     boxes and intersected ANALYTICALLY (cloudTraceBoxes): a 2D grid traversal steps the ray through
-//     the cells inside the slab and the first shown cell is slab-tested exactly. No march, no light
-//     loop, no noise — and the silhouette is genuinely square-edged, like vanilla's geometry.
-//     The thickness slider sets the box height (minimum 4 blocks, vanilla's own extrusion height).
-//   * CLOUD_STYLE_VOLUMETRIC — billowy cumulus built on the SAME cells. The authored occupancy
-//     (binary, one byte lookup) replaces the old noise coverage field; the domain-warped fBm is
-//     kept as interior detail and edge erosion, marched with light-marched self-shadowing,
-//     Beer-Lambert extinction, a dual-lobe Henyey-Greenstein phase and a powder (dark-edge) term.
-//     Vertical development is reserved: only cells whose whole 4-neighbourhood is occupied grow
-//     towers through the full slab; isolated cells stay low and flat (see cloudVolumeDensity).
+//     the cells inside the slab and the first shown cell is slab-tested exactly. The cell map is
+//     vanilla's authored textures/environment/clouds.png (256x256 cells of 12 blocks, transported by
+//     RtCloudCells through the WorldPush BDA ring — see cloudCellShown). The thickness slider sets
+//     the box height (minimum 4 blocks, vanilla's own extrusion height).
+//   * CLOUD_STYLE_VOLUMETRIC — billowy cumulus over the procedural coverage field
+//     (cloudCoverageField: three octaves of value noise on the 12-block lattice), domain-warped with
+//     a cauliflower erosion profile, marched with light-marched self-shadowing, Beer-Lambert
+//     extinction, a dual-lobe Henyey-Greenstein phase and a powder (dark-edge) term. This is the
+//     classic cumulus look the mod shipped before the authored-map rework; it is kept because its
+//     heaped, rounded shapes are the look players expect from "volumetric".
+//
+// RAIN CLOSES THE DECK. The authored map only ever covers ~20% of the sky (vanilla's own texture), so
+// showing every cell in a storm would still leave holes. The vanilla game hides this by greying the
+// SKY to match the clouds; Caustica's storm already greys the sky, but the deck itself also closes:
+// when weather drives the coverage slider to 1 (see RtComposite.cloudState), CLOUD_SOLID_COVERAGE
+// turns every cell "shown" and the volumetric density into a uniform slab — a genuine closed ceiling,
+// which is what the storm look needs.
 //
 // COLOUR COMES FROM VANILLA. The weather-resolved EnvironmentAttributes.CLOUD_COLOR (already
 // computed by LevelExtractor into LevelRenderState.cloudColor, which Caustica does not cancel) is
@@ -41,29 +43,29 @@
 
 import world_common;
 
-// ---- Authored cell map. Vanilla's clouds.png is 256x256 pixels; each pixel is one 12-block cell
-// (CLOUD_CELL_BLOCKS, vanilla's CELL_SIZE_IN_BLOCKS), so the pattern tiles every 256 * 12 = 3072
-// blocks in both axes. The mod's wind-scrolled sample anchor already wraps to a whole multiple of
-// 3072, so the lookup below wraps with a mask — exactly periodic by construction, with no anchor-wrap
-// hazard at all. The CPU packs one byte per cell (mirroring CloudRenderer.packCellData) plus a second
-// byte per cell for the coverage-filtered "shown" flag; see RtCloudCells.
+// ---- Authored cell map (classic style). Vanilla's clouds.png is 256x256 pixels; each pixel is one
+// 12-block cell (CLOUD_CELL_BLOCKS, vanilla's CELL_SIZE_IN_BLOCKS), so the pattern tiles every
+// 256 * 12 = 3072 blocks in both axes. The mod's wind-scrolled sample anchor wraps to a whole
+// multiple of 3072, so the lookup below wraps with a mask — exactly periodic by construction, with no
+// anchor-wrap hazard at all. The CPU packs one byte per cell for the coverage-filtered "shown" flag;
+// see RtCloudCells.
 public static const float CLOUD_CELL_BLOCKS = 12.0; // vanilla's cloud cell size
 public static const int   CLOUD_CELLS_DIM = 256;   // must match the vanilla texture — RtCloudCells bails otherwise
 public static const int   CLOUD_CELLS_MASK = CLOUD_CELLS_DIM - 1;
 public static const int   CLOUD_CELLS_TOTAL = CLOUD_CELLS_DIM * CLOUD_CELLS_DIM;
 // Byte layout of the cell map behind cloudCellsAddr: 8-byte header (u32 magic "CLDC", u32 version),
-// then CLOUD_CELLS_TOTAL occupancy/neighbour bytes, then CLOUD_CELLS_TOTAL "shown" bytes.
+// then CLOUD_CELLS_TOTAL "shown" bytes.
 public static const uint  CLOUD_CELLS_HEADER_BYTES = 8u;
-public static const uint  CLOUD_CELL_BIT_OCCUPIED = 1u;        // alpha >= 10 (vanilla isCellEmpty)
-public static const uint  CLOUD_CELL_BIT_NORTH_EMPTY = 2u;     // neighbour-empty bits mirror vanilla's
-public static const uint  CLOUD_CELL_BIT_EAST_EMPTY = 4u;      // packCellData (bit set = neighbour is
-public static const uint  CLOUD_CELL_BIT_SOUTH_EMPTY = 8u;     // empty), kept for parity and for the
-public static const uint  CLOUD_CELL_BIT_WEST_EMPTY = 16u;     // tower rule below.
-public static const uint  CLOUD_CELL_BIT_SURROUNDED = 32u;     // all 4 neighbours occupied -> tower
 public static const float CLOUD_MIN_BOX_HEIGHT = 4.0; // vanilla's extrusion height, in blocks
 
-// Width of the coverage ramp no longer exists: the authored map is binary, so coverage is the CPU-side
-// component filter (RtCloudCells), and "where is there cloud" is a byte test.
+// Above this coverage the deck is a CLOSED storm ceiling: every authored cell is shown and the
+// volumetric density becomes a uniform slab. The ramp lives on the Java side (cloudState drives
+// coverage to 1 in rain), so this constant only has to distinguish "closed" from "open".
+public static const float CLOUD_SOLID_COVERAGE = 0.999;
+
+// Width of the coverage ramp for the VOLUMETRIC field (the classic style quantises the authored map
+// instead; see cloudCoverage).
+public static const float CLOUD_EDGE_SOFTNESS = 0.22;
 
 public static const float CLOUD_INV_PI = 0.31830988618;
 
@@ -109,15 +111,26 @@ public static const float CLOUD_REFERENCE_THICKNESS = 40.0;
 // Longest in-slab path a single ray may integrate, in slab depths. Bounds the grazing/horizon case
 // (see cloudMarch); a few crossings already saturate a real cloud.
 public static const float CLOUD_MAX_SLAB_CROSSINGS = 3.5;
-// Horizontal scales of the volumetric interior detail, relative to the 12-block cell grid. These are
-// the ONLY remaining noise spaces, and every one of them MUST be a power of two: the anchor wrap has to
-// land on a whole hash period in each sampled space (the hash repeats every 512 cells). Non-power-of-two
-// divisors desync the detail at every wrap — visible as a one-frame pop while walking. (The old base
-// field carried the same constraint; it is gone now — the shape comes from the cell map, which wraps
-// with a mask and has no scale constraint at all.)
+// Horizontal scale of the volumetric field, relative to the classic 12-block cell grid. Below 1 the
+// lobes get WIDER (the field is sampled more slowly), which is what lets cloud width grow together with
+// the extra height so the result reads as heaped cumulus rather than a stretched sheet.
+//
+// MUST be a reciprocal power of two, and CLOUD_FIELD_PERIOD_BLOCKS (Java) must be a whole multiple of
+// CLOUD_CELL_BLOCKS * CLOUD_PERIOD_CELLS / this. The volumetric field samples at samplePos * SCALE, so
+// the anchor wrap is only seamless if the wrap distance is an exact multiple of the hash period IN THAT
+// SCALED SPACE. A power of two also makes the multiply exact in binary floating point, so the identity
+// holds bit-for-bit rather than approximately.
+public static const float CLOUD_VOLUMETRIC_SCALE = 0.5;
+// Octave divisors for the warp and the two billow layers. ALL must be powers of two, for the same
+// reason CLOUD_VOLUMETRIC_SCALE must be: each is another space the periodic hash is sampled in, and the
+// anchor wrap has to be a whole hash period in every one of them simultaneously. The largest divisor is
+// the binding constraint on CLOUD_FIELD_PERIOD_BLOCKS (Java).
 public static const float CLOUD_WARP_DIV = 2.0;
 public static const float CLOUD_BILLOW_DIV_COARSE = 1.0;
 public static const float CLOUD_BILLOW_DIV_FINE = 0.25;
+// How much wider a cloud gets around its belly than at its base/crown. Turns a straight-sided extrusion
+// into a rounded, bulging mass — see the note in cloudVolumeDensity.
+public static const float CLOUD_BULGE = 0.30;
 public static const float CLOUD_HG_G = 0.72;        // forward-scattering anisotropy of cloud droplets
 public static const float CLOUD_HG_BACK = -0.28;    // weak backward lobe (see cloudPhase)
 public static const float CLOUD_POWDER_STRENGTH = 0.7; // dark-edge / multiple-scattering approximation
@@ -178,7 +191,12 @@ public float3 cloudTint(WorldPush push) {
     return push.cloudColor.xyz;
 }
 
-// ---- Authored cell map lookups --------------------------------------------------
+/** True when the deck is a closed storm ceiling (rain drove the coverage slider to 1). */
+public bool cloudClosed(WorldPush push) {
+    return push.clouds.x >= CLOUD_SOLID_COVERAGE;
+}
+
+// ---- Authored cell map lookups (classic style + the closed-ceiling gate) -------------------------
 
 /** True when the ring slot carries a valid cell map ("CLDC" magic, RtCloudCells). */
 public bool cloudCellMapPresent(WorldPush push) {
@@ -187,45 +205,89 @@ public bool cloudCellMapPresent(WorldPush push) {
 }
 
 /**
- * The raw cell byte (occupancy + neighbour-empty bits + surrounded flag). `cell` is in cell units;
- * both axes wrap with a mask, which is exactly periodic for any integer coordinate (two's complement
- * makes `& 255` equivalent to floorMod for negative cells too).
+ * The coverage-filtered "shown" flag (RtCloudCells rebuilds it on the CPU when the coverage slider or
+ * the weather changes): the cell is part of a component included by the size-ranked coverage filter.
+ * In a closed storm ceiling every cell is shown — the deck is a continuous slab, and the authored
+ * pattern's 20 % holes are weather, not geometry.
  */
-public int cloudCellBits(WorldPush push, int2 cell) {
+public bool cloudCellShown(WorldPush push, int2 cell) {
+    if (cloudClosed(push)) {
+        return true;
+    }
     uint i = uint((cell.y & CLOUD_CELLS_MASK) * CLOUD_CELLS_DIM + (cell.x & CLOUD_CELLS_MASK));
     ConstPtr<uint> map = ConstPtr<uint>(push.cloudCellsAddr + CLOUD_CELLS_HEADER_BYTES);
-    return int((map[i >> 2u] >> ((i & 3u) << 3u)) & 0xFFu);
+    return ((map[i >> 2u] >> ((i & 3u) << 3u)) & 0xFFu) != 0u;
+}
+
+// ---- Procedural coverage field (volumetric style) -------------------------------------------------
+
+// Integer cell hash for the field and the interior-detail noise. Integer mixing rather than the sky's
+// float hash13: the sample coordinate here is a world position that can be thousands of blocks from the
+// anchor, where a float hash starts losing mantissa bits and the pattern degenerates into stripes. The
+// mask is what makes the detail periodic in every octave's sampled space (see CLOUD_VOLUMETRIC_SCALE).
+float cloudHash(int2 cell) {
+    uint2 c = uint2(uint(cell.x & CLOUD_CELL_MASK), uint(cell.y & CLOUD_CELL_MASK));
+    uint h = c.x * 374761393u + c.y * 668265263u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return float(h & 0x00ffffffu) * (1.0 / 16777216.0);
+}
+
+// Value noise on the cell lattice, smoothstep-interpolated. floor/frac agree for negative coordinates
+// (floor(-0.3) = -1, frac(-0.3) = 0.7), so the field is continuous across the origin.
+float cloudNoise(float2 p) {
+    int2 i = int2(floor(p));
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    float a = cloudHash(i);
+    float b = cloudHash(i + int2(1, 0));
+    float c = cloudHash(i + int2(0, 1));
+    float d = cloudHash(i + int2(1, 1));
+    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
 }
 
 /**
- * The coverage-filtered "shown" flag (RtCloudCells rebuilds it on the CPU when the coverage slider or
- * the weather changes): the cell is part of a component included by the size-ranked coverage filter.
+ * Raw coverage field in [0,1], the volumetric style's shape source. Three octaves at INTEGER scales
+ * with whole-cell offsets, so every octave shares the base period and the sum stays exactly periodic —
+ * see the note on CLOUD_VOLUMETRIC_SCALE. This is the same field the mod shipped before the
+ * authored-map rework; the volumetric style deliberately keeps it (owner decision: the heaped cumulus
+ * look), while the classic style reads the authored cell map.
  */
-public bool cloudCellShown(WorldPush push, int2 cell) {
-    uint i = uint((cell.y & CLOUD_CELLS_MASK) * CLOUD_CELLS_DIM + (cell.x & CLOUD_CELLS_MASK));
-    ConstPtr<uint> map = ConstPtr<uint>(push.cloudCellsAddr
-            + CLOUD_CELLS_HEADER_BYTES + CLOUD_CELLS_TOTAL);
-    return ((map[i >> 2u] >> ((i & 3u) << 3u)) & 0xFFu) != 0u;
+public float cloudCoverageField(float2 samplePos) {
+    float2 p = samplePos / CLOUD_CELL_BLOCKS;
+    return cloudNoise(p) * 0.6
+         + cloudNoise(p * 2.0 + float2(11.0, 11.0)) * 0.3
+         + cloudNoise(p * 4.0 + float2(29.0, 29.0)) * 0.1;
 }
 
 /**
  * Coverage resolved into a 0..1 "how much cloud is here" at a sample position, for the shadow query.
- * The shown map is binary per cell, but the four-tap bilinear keeps the shadow edges soft: a 12-block
- * hard step between lit and shadowed terrain reads as an aliasing band, and vanilla's own silhouette
- * is quantised anyway — the smooth interpolation is free (4 byte lookups, no noise).
+ *
+ * CLASSIC reads the authored shown map (four-tap bilinear keeps the shadow edges soft: a 12-block hard
+ * step between lit and shadowed terrain reads as an aliasing band).
+ *
+ * VOLUMETRIC reads the procedural field with the same ramp the visible deck uses, so the shadow always
+ * matches the cloud that is actually drawn in that style.
+ *
+ * A closed storm ceiling answers 1 everywhere: the deck is a solid slab and shadows are total (see
+ * cloudSunShadow's global branch).
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
-    if (!cloudCellMapPresent(push)) {
-        return 0.0;
+    if (cloudClosed(push)) {
+        return 1.0;
     }
-    float2 cellF = samplePos / CLOUD_CELL_BLOCKS;
-    int2 cell = int2(floor(cellF));
-    float2 f = cellF - float2(cell);
-    float a = cloudCellShown(push, cell) ? 1.0 : 0.0;
-    float b = cloudCellShown(push, cell + int2(1, 0)) ? 1.0 : 0.0;
-    float c = cloudCellShown(push, cell + int2(0, 1)) ? 1.0 : 0.0;
-    float d = cloudCellShown(push, cell + int2(1, 1)) ? 1.0 : 0.0;
-    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
+        float2 cellF = samplePos / CLOUD_CELL_BLOCKS;
+        int2 cell = int2(floor(cellF));
+        float2 f = cellF - float2(cell);
+        float a = cloudCellShown(push, cell) ? 1.0 : 0.0;
+        float b = cloudCellShown(push, cell + int2(1, 0)) ? 1.0 : 0.0;
+        float c = cloudCellShown(push, cell + int2(0, 1)) ? 1.0 : 0.0;
+        float d = cloudCellShown(push, cell + int2(1, 1)) ? 1.0 : 0.0;
+        return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+    }
+    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    return smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, cloudCoverageField(samplePos));
 }
 
 /**
@@ -234,17 +296,16 @@ public float cloudCoverage(WorldPush push, float2 samplePos) {
  * This is the "Cloud Shadows" slider, and it is an analytic plane intersection plus one coverage
  * evaluation — no march, no extra ray, no added variance for the denoiser to chase, for either style.
  *
- * It samples the SHOWN cell map at the deck's mid-plane, not the eroded 3D density, so for the
+ * It samples the SHOWN coverage at the deck's mid-plane, not the eroded 3D density, so for the
  * volumetric style the shadow follows the cloud's overall footprint rather than its individual
  * billows. That is a deliberate trade: matching per-lobe would mean marching the slab for every
  * shading point of every path vertex, and the difference is a slightly softer shadow edge that is
  * indistinguishable in motion from the real thing.
  *
- * In a CLOSED storm ceiling (rain has driven the coverage slider to 1 — see cloudState), the overcast
- * is an atmospheric condition, not a geometric shadow: applying it only under occupied columns would
- * dapple the terrain with sun patches through the texture's 20 % of holes, which is exactly the old
- * "camera-following clear dome" bug. Once weather has closed the deck, the storm attenuation applies
- * to every receiver (globalStormAlpha) and the cell lookup only adds detail in patchy weather.
+ * In a CLOSED storm ceiling the overcast is an atmospheric condition, not a geometric shadow:
+ * applying it only under occupied columns would dapple the terrain with sun patches through the
+ * texture's 20 % of holes. Once weather has closed the deck, the storm attenuation applies to every
+ * receiver (globalStormAlpha) and the cell lookup only adds detail in patchy weather.
  *
  * This deliberately does NOT use the visible-cloud query (cloudSegment/cloudTraceBoxes): that path
  * applies camera-facing cross-fades and the finite view-distance fade stored in cloudAnchor.w. Using
@@ -267,7 +328,8 @@ public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
     float opacity = clamp(push.clouds.y, 0.0, 1.0);
     // Closed-ceiling attenuation: rain has pushed the coverage slider to 1 (cloudState), so the storm
     // dims every receiver regardless of which cells sit over it.
-    float globalStormAlpha = opacity * storm * smoothstep(0.80, 0.999, clamp(push.clouds.x, 0.0, 1.0));
+    float globalStormAlpha = opacity * storm * smoothstep(0.80, CLOUD_SOLID_COVERAGE,
+                                                          clamp(push.clouds.x, 0.0, 1.0));
 
     float deckRel = push.clouds.w - pointRel.y;
     float t = deckRel / lightDir.y;
@@ -301,6 +363,7 @@ public struct CloudBoxHit {
  *
  * When the ray starts INSIDE a shown box (flying through a cloud), the slab test returns the far face
  * — the same interior view vanilla's renderer produces with its camera-adjacent interior faces.
+ * In a closed storm ceiling every cell is shown, so the boxes tile into one continuous slab.
  */
 public CloudBoxHit cloudTraceBoxes(WorldPush push, float3 originRel, float3 dir, float maxDistance) {
     CloudBoxHit h;
@@ -478,9 +541,14 @@ CloudVolume cloudSegmentClassic(WorldPush push, float3 originRel, float3 dir, fl
         return result;
     }
     // The box itself is opaque; alpha is the player's opacity slider × vanilla's weather-resolved
-    // base opacity (cloudColor.w) × the view-limit fade, applied to the finished result so a 20 %
-    // opacity cloud is exactly "20 % of this box", never a translucent-looking volume.
-    float alpha = clamp(push.clouds.y * push.cloudColor.w * h.fade, 0.0, 1.0);
+    // base opacity (cloudColor.w, ~0.8) × the view-limit fade, applied to the finished result so a
+    // 20 % opacity cloud is exactly "20 % of this box", never a translucent-looking volume. In a
+    // CLOSED storm ceiling the base opacity is dropped: the ceiling must read as fully closed, and
+    // vanilla's 0.8 would let 20 % of the dark sky show through the slab.
+    float alpha = clamp(push.clouds.y * h.fade, 0.0, 1.0);
+    if (!cloudClosed(push)) {
+        alpha *= push.cloudColor.w;
+    }
     result.scatter = cloudBoxRadiance(push, h, dir, skyBehind) * alpha;
     result.transmittance = 1.0 - alpha;
     return result;
@@ -515,75 +583,81 @@ float cloudPowder(float density) {
     return 1.0 - exp(-density * 4.0);
 }
 
-// Integer cell hash for the interior-detail noise. Integer mixing rather than the sky's float hash13:
-// the sample coordinate here is a world position that can be thousands of blocks from the anchor, where
-// a float hash starts losing mantissa bits and the pattern degenerates into stripes. The mask is what
-// makes the detail periodic in every octave's sampled space (see CLOUD_WARP_DIV).
-float cloudHash(int2 cell) {
-    uint2 c = uint2(uint(cell.x & CLOUD_CELL_MASK), uint(cell.y & CLOUD_CELL_MASK));
-    uint h = c.x * 374761393u + c.y * 668265263u;
-    h = (h ^ (h >> 13u)) * 1274126177u;
-    h = h ^ (h >> 16u);
-    return float(h & 0x00ffffffu) * (1.0 / 16777216.0);
-}
-
-// Value noise on the cell lattice, smoothstep-interpolated. floor/frac agree for negative coordinates
-// (floor(-0.3) = -1, frac(-0.3) = 0.7), so the field is continuous across the origin.
-float cloudNoise(float2 p) {
-    int2 i = int2(floor(p));
-    float2 f = frac(p);
-    float2 u = f * f * (3.0 - 2.0 * f);
-    float a = cloudHash(i);
-    float b = cloudHash(i + int2(1, 0));
-    float c = cloudHash(i + int2(0, 1));
-    float d = cloudHash(i + int2(1, 1));
-    return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
-}
-
 /**
  * 3D density inside the slab, per style.
  *
  * CLASSIC no longer routes here: the analytic box path (cloudTraceBoxes) is exact and needs no
  * density. The VOLUMETRIC style is the only marcher.
  *
- * VOLUMETRIC is cumulus built on the authored cell map:
- *   * the SHAPE is the cell (binary, one byte lookup) — an empty cell costs exactly one lookup and
- *     returns immediately, which is ~80 % of all samples;
- *   * VERTICAL DEVELOPMENT is reserved: cells whose whole 4-neighbourhood is occupied (the cores of
- *     the big systems) grow towers through the full slab, while cells with any empty neighbour stay
- *     low and flat. That is the "a few thick clouds, not everything uniform" rule — authored shape
- *     decides where the deck is tall, not a global constant;
+ * VOLUMETRIC is cumulus over the procedural coverage field (the same field the mod shipped before the
+ * authored-map rework — owner decision to keep the heaped look):
+ *   * the SHAPE is cloudCoverageField, sampled wider (CLOUD_VOLUMETRIC_SCALE) so lobes are broad;
+ *   * VERTICAL DEVELOPMENT scales with coverage — dense regions billow into towers, thin edges stay
+ *     low and flat;
+ *   * a BULGE widens the cloud around its belly;
  *   * DOMAIN WARPING displaces the sample before the detail octaves are read, which turns straight,
  *     gridded edges into curling, rounded lobes;
  *   * BILLOW detail (inverted noise) erodes the crown into a cauliflower profile and frays the base.
  */
 float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
-    float2 samplePos = push.cloudAnchor.xy + posRel.xz;
     float hf = clamp(heightFrac, 0.0, 1.0);
 
-    int2 cell = int2(floor(samplePos / CLOUD_CELL_BLOCKS));
-    if (!cloudCellShown(push, cell)) {
-        return 0.0; // the authored shape decides; ~80 % of samples leave here
+    // Closed storm ceiling: a uniform slab. The authored pattern's holes are weather, not geometry —
+    // a storm sky is a closed ceiling, and marching the open pattern here would keep the holes.
+    if (cloudClosed(push)) {
+        float faces = smoothstep(0.0, 0.06, hf) * smoothstep(0.0, 0.06, 1.0 - hf);
+        return faces;
     }
-    int bits = cloudCellBits(push, cell);
-    int emptyNeighbours = ((bits & CLOUD_CELL_BIT_NORTH_EMPTY) != 0 ? 1 : 0)
-            + ((bits & CLOUD_CELL_BIT_EAST_EMPTY) != 0 ? 1 : 0)
-            + ((bits & CLOUD_CELL_BIT_SOUTH_EMPTY) != 0 ? 1 : 0)
-            + ((bits & CLOUD_CELL_BIT_WEST_EMPTY) != 0 ? 1 : 0);
+
+    float2 samplePos = push.cloudAnchor.xy + posRel.xz;
+
+    // ---- Volumetric cumulus.
+    //
+    // The goal here is HEAPED cloud — thick, wide, vertically developed, the way real cumulus and
+    // Photon-style shader clouds look. The previous version was flat for a measurable reason: its lobes
+    // were ~24 blocks across but only ~14 blocks of real density tall (a 1.7:1 layer), because the
+    // profile faded out over the top 65% of the slab. Real cumulus is roughly 1:1 to 1:2 width:height.
+    // Three changes fix that, and they are all about the aspect ratio rather than about adding detail:
+    //   * the body now holds full density across most of the slab and only rounds off at the very top,
+    //     so the cloud actually USES the height the thickness slider gives it;
+    //   * the horizontal field is sampled at a larger scale, making lobes broader and puffier instead
+    //     of small and busy — width and height grow together, so it reads as heaped, not stretched;
+    //   * erosion is concentrated at the extreme top and bottom, leaving the middle solid, which is
+    //     what gives a cloud a dense core with a cauliflower crown rather than uniform fluff.
+    float base = cloudCoverageField(samplePos * CLOUD_VOLUMETRIC_SCALE);
+    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    float coverage = smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, base);
+    if (coverage <= 0.0) {
+        return 0.0;
+    }
+
     // Vertical development. A cumulus has a hard flat base (condensation level), a tall body that stays
-    // dense, and a rounded crown; the crown reaches towerTop up the slab. Surrounded cells (the dense
-    // cores of large systems) billow through the whole slab; the more empty neighbours a cell has, the
-    // flatter it stays — isolated puffs are thin sheets, big masses grow towers.
-    float towerTop = (bits & CLOUD_CELL_BIT_SURROUNDED) != 0
-            ? 1.0 : lerp(0.30, 0.55, float(4 - emptyNeighbours) * 0.25);
+    // dense, and a rounded crown. The top fade starts high (0.62) so the body occupies most of the slab
+    // instead of tapering away from the middle — this is the single change that makes the cloud thick.
+    // Taller clouds also get to be taller: coverage scales how far up the crown reaches, so dense
+    // regions billow upward into towers while thin edges stay low and flat, exactly like the real sky.
+    float towerTop = lerp(0.35, 1.0, coverage);
     float bottom = smoothstep(0.0, 0.10, hf);
     float top = 1.0 - smoothstep(towerTop * 0.62, towerTop, hf);
     float profile = clamp(bottom * top, 0.0, 1.0);
 
+    // BULGE. Without this the cloud is a vertical extrusion with straight sides — tall, but reading as a
+    // wall rather than as heaped cloud. Real cumulus is widest around its lower-middle and narrows
+    // toward both the base and the crown, so the coverage THRESHOLD is relaxed there and tightened at
+    // the extremes: the same cloud grows sideways in its belly and pulls in at top and bottom. That
+    // rounded silhouette is most of what makes the Photon-style clouds look voluminous.
+    float belly = 1.0 - abs(hf - 0.42) * 2.0;
+    coverage = clamp(coverage + smoothstep(0.0, 1.0, max(belly, 0.0)) * CLOUD_BULGE - CLOUD_BULGE * 0.35,
+                     0.0, 1.0);
+    if (coverage <= 0.0) {
+        return 0.0;
+    }
+
     // Domain warp, amplitude growing with height: bases stay flat, crowns curl into rounded lobes.
-    float2 warpUv = samplePos / (CLOUD_CELL_BLOCKS * CLOUD_WARP_DIV);
+    float2 warpUv = samplePos * CLOUD_VOLUMETRIC_SCALE / (CLOUD_CELL_BLOCKS * CLOUD_WARP_DIV);
     float2 warp = float2(cloudNoise(warpUv), cloudNoise(warpUv + float2(41.0, 17.0))) - 0.5;
-    float2 warped = samplePos + warp * CLOUD_CELL_BLOCKS * (1.0 + 3.0 * hf);
+    float2 warped = samplePos * CLOUD_VOLUMETRIC_SCALE
+            + warp * CLOUD_CELL_BLOCKS * (1.0 + 3.0 * hf);
 
     // Billow detail: inverted noise (1 - |2n-1|) gives rounded cellular lobes rather than a cloudy blur,
     // which is what reads as cauliflower. Scales chosen so the lobes are a fraction of a cloud's width,
@@ -595,11 +669,12 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     // Erosion concentrated at the extremes: the crown breaks into lobes and the base frays, but the
     // middle of the cloud stays solid. Uniform erosion is what makes procedural clouds look like fog.
     float extremes = smoothstep(0.55, 1.0, hf) * 0.85 + smoothstep(0.18, 0.0, hf) * 0.5;
-    float erosion = billow * (0.55 + extremes * 0.45);
+    float edge = 1.0 - coverage;
+    float erosion = billow * (edge * 0.55 + extremes * 0.45);
 
-    // Dense core: cumulus interiors are optically thick, and an authored cell is fully cloud — the
-    // interior must reach well above 1.0 pre-clamp or the deck reads as haze no matter how deep it is.
-    float density = 1.6 - erosion;
+    // Dense core: cumulus interiors are optically thick, and a field that peaks at ~0.5 can never look
+    // like anything but haze no matter how deep the slab is.
+    float density = coverage * (0.85 + 0.75 * coverage) - erosion;
     return clamp(density, 0.0, 1.0) * profile;
 }
 
