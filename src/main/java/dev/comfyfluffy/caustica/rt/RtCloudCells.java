@@ -118,10 +118,10 @@ public final class RtCloudCells {
                 if (!occupied[i]) {
                     continue;
                 }
-                int north = occupied[(y + CELLS - 1) % CELLS * CELLS + x];
-                int east = occupied[y * CELLS + (x + 1) % CELLS];
-                int south = occupied[(y + 1) % CELLS * CELLS + x];
-                int west = occupied[y * CELLS + (x + CELLS - 1) % CELLS];
+                boolean north = occupied[(y + CELLS - 1) % CELLS * CELLS + x];
+                boolean east = occupied[y * CELLS + (x + 1) % CELLS];
+                boolean south = occupied[(y + 1) % CELLS * CELLS + x];
+                boolean west = occupied[y * CELLS + (x + CELLS - 1) % CELLS];
                 int b = BIT_OCCUPIED;
                 if (!north) {
                     b |= BIT_NORTH_EMPTY;
