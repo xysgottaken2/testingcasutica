@@ -1,5 +1,9 @@
 // Cloud deck — two selectable styles over one shared field.
 //
+// NOTE: this file currently compiles as the post-merge state of the rain/weather work (PR #26).
+// The planned move to vanilla's authored clouds.png cell map is documented in
+// docs/cloud-rework-plan.md; the procedural field below is the pre-rework baseline.
+//
 // Caustica cancels vanilla's LevelRenderer outright (see LevelRendererMixin), and vanilla's cloud pass
 // lives inside it — so under the ray-traced renderer there were simply no clouds in the world at all.
 // The sky shader modelled an atmosphere, a sun, a moon and a starfield, and the weather code even
