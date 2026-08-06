@@ -1130,7 +1130,12 @@ public final class RtComposite {
             ByteBuffer cloudCells = MemoryUtil.memByteBuffer(
                     pushBuf.mapped + CLOUD_CELLS_OFFSET, CLOUD_CELLS_BYTES)
                     .order(ByteOrder.nativeOrder());
-            boolean cloudMapReady = RtCloudCells.INSTANCE.writeFrame(cloudCells, clouds.clouds().x());
+            // Only publish the map when a consumer can actually read it: the shader's cloudsEnabled
+            // short-circuits on dimension/coverage/opacity, so writing 131 KB per ring slot per frame
+            // in the Nether, the End or with the sliders at zero is pure waste.
+            boolean cloudMapReady = dimension == DIMENSION_OVERWORLD
+                    && clouds.clouds().x() > 0f && clouds.clouds().y() > 0f
+                    && RtCloudCells.INSTANCE.writeFrame(cloudCells, clouds.clouds().x());
             long cloudCellsAddress = cloudMapReady ? pushBuf.deviceAddress + CLOUD_CELLS_OFFSET : 0L;
             Float4 cloudColor = cloudColor(level);
             new WorldPushData(
