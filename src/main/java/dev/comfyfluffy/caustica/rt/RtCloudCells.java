@@ -48,7 +48,7 @@ public final class RtCloudCells {
     private static final int BIT_WEST_EMPTY = 16;
     private static final int BIT_SURROUNDED = 32;
 
-    private final byte[] bits = new byte[MAP_BYTES];
+    private final byte[] bits = new byte[CELLS_TOTAL];
     private final byte[] shown = new byte[SHOWN_BYTES];
     // Per-cell prefix of the size-ranked component order: the number of occupied cells in components
     // LARGER than this cell's own (sizes descending). Shown iff prefix < coverage * totalOccupied.
