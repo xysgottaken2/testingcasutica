@@ -1618,6 +1618,11 @@ public final class RtComposite {
      * hand-tuned rain lerp.
      */
     private static Float4 cloudColorRgb() {
+        // When weather lighting is off, keep the classic deck's default white (no grey-out),
+        // matching the vanilla-shader look where rain doesn't affect the clouds' tint.
+        if (!CausticaConfig.Rt.Composite.WEATHER_LIGHTING.value()) {
+            return new Float4(1f, 1f, 1f, 1f);
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.level == null || mc.gameRenderer == null) {
             return new Float4(1f, 1f, 1f, 1f);
