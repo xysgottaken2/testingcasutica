@@ -62,7 +62,6 @@ import java.util.List;
  * tile — and it works here because the bindless entity sampler is created with {@code REPEAT} addressing
  * in all three axes, so the coordinate wraps instead of clamping the whole column to one stretched texel.
  */
-// CI probe: verify build after artifact quota cleared (no functional change)
 public final class RtWeatherCapture {
     public static final RtWeatherCapture INSTANCE = new RtWeatherCapture();
 
@@ -279,8 +278,43 @@ public final class RtWeatherCapture {
             int tableZ = Mth.clamp(column.z() - camFloorZ + HALF_RAIN_TABLE_SIZE, 0, RAIN_TABLE_SIZE - 1);
             int index = tableZ * RAIN_TABLE_SIZE + tableX;
 
-            float halfSizeX = columnSizeX[index] / 2.0f;
-            float halfSizeZ = columnSizeZ[index] / 2.0f;
+            // Skip the column the camera is standing inside. Its quad's plane passes through the camera
+            // (the wall straddles the eye), so the ray origin lies exactly on the wall. With tmin=0 the
+            // primary ray hits it at t=0 for almost every direction, and the hit point (the origin itself)
+            // lies on the diagonal edge between the quad's two triangles. Watertight ray-triangle tests
+            // then become degenerate — one triangle reports a hit, the other a miss, depending on rounding
+            // — which appears as a thin, persistent vertical line that vanishes as soon as the camera
+            // moves to the next cell. Vanilla's rasterizer never shows this: the same wall is clipped by
+            // the near plane (a sheet at the eye is behind it) and the half-block thickness of the
+            // rasterized quad hides the edge, but a ray tracer with tmin=0 exposes it. Skipping the
+            // central cell reproduces the clipped result: rain starts one cell out, exactly where the
+            // rasterizer would first have a fully in-front quad.
+            if (column.x() == camFloorX && column.z() == camFloorZ) {
+                continue;
+            }
+            // Also skip any other column whose wall still straddles the near plane: the plane is close
+            // enough to be clipped (< ~0.07 blocks) and the camera's projection onto the wall lies
+            // within its finite width/height so the wall would still be hit at t≈0. This catches the
+            // case where the camera sits near a cell boundary and the adjacent wall is also nearly
+            // through the eye (e.g. camera at integer X/Z). The thresholds mimic the raster near plane
+            // (~0.05) plus a small epsilon for float error.
+            float sizeX = columnSizeX[index];
+            float sizeZ = columnSizeZ[index];
+            float planeDist = Math.abs(sizeZ * relativeX - sizeX * relativeZ);
+            // planeDist = |n·relative| where n = (-sizeZ, sizeX) is the wall's horizontal normal.
+            if (planeDist < 0.07f) {
+                float along = relativeX * sizeX + relativeZ * sizeZ;
+                if (Math.abs(along) < 0.55f) {
+                    float y1c = (float) (column.topY() - camPos.y);
+                    float y0c = (float) (column.bottomY() - camPos.y);
+                    if (y0c <= 0.0f && 0.0f <= y1c) {
+                        continue;
+                    }
+                }
+            }
+
+            float halfSizeX = sizeX / 2.0f;
+            float halfSizeZ = sizeZ / 2.0f;
             float x0 = relativeX - halfSizeX;
             float x1 = relativeX + halfSizeX;
             float y1 = (float) (column.topY() - camPos.y);
