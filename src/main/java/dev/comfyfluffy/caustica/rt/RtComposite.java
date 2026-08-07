@@ -1417,10 +1417,11 @@ public final class RtComposite {
         // even deserts and savannas where no drop falls. The sun/sky must only dim where precipitation
         // actually happens, or a desert under a distant storm would go dark with no rain to show for
         // it. Vanilla's own precipitation test is per-biome (and per-temperature for snow), so mirror
-        // it for the camera's biome.
+        // it for the camera's biome. getBiomeFabric is the mod's existing accessor (see
+        // RtSectionSnapshots) — the 26.2 ClientLevel API is not a plain getBiome(BlockPos).
         Minecraft mc = Minecraft.getInstance();
         if (mc != null && mc.player != null && mc.player.blockPosition() != null
-                && !level.getBiome(mc.player.blockPosition()).value().hasPrecipitation()) {
+                && !level.getBiomeFabric(mc.player.blockPosition()).value().hasPrecipitation()) {
             // No precipitation here: the storm is elsewhere. The sun softens (diffused, not piercing
             // through the overcast) and the sky carries a thin grey veil, but nothing goes black and no
             // drops fall — see DRY_OVERCAST.
