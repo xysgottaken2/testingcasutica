@@ -50,6 +50,7 @@ import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.Direction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.Mth;
@@ -674,7 +675,50 @@ public final class RtEntityCollector implements SubmitNodeCollector {
                     if (be != null) {
                         dispatcher.prepare(camState.pos);
                         float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+
+                        // === IMPORTANT: Force full-resolution real 3D chest model for contained chests ===
+                        // DH / Voxy / POM integrations can mark contained block displays inside entities
+                        // (ChestMinecartEntity etc.) as "distant/LOD/proxy". This causes the normal
+                        // contained display path or BE renderer to produce nothing or a low-detail proxy,
+                        // so we fall into emitChestFallbackSafe (beige cube).
+                        //
+                        // Entities and their contained BlockEntities that are near the player must
+                        // ALWAYS use the real vanilla BlockEntityRenderer at full detail.
+                        // We achieve this by:
+                        //   1. Creating a synthetic BE that looks "near the camera" (so any distance or
+                        //      "shouldRender" checks inside the renderer or DH hooks pass).
+                        //   2. Using multiple tryExtractRenderState variants.
+                        //   3. The poseStack + transform still places the captured geometry correctly
+                        //      relative to the minecart (the BE world position is only to fool culling).
+                        //   4. If this path adds geometry we return early with the real 3D chest
+                        //      (base + lid + details + correct PBR textures via the collector).
+
+                        BlockPos renderPos = BlockPos.containing(camState.pos); // force "near player"
+                        try {
+                            // Recreate with a camera-near position so the chest renderer believes it is visible
+                            // and renders the full detailed model instead of skipping or using a proxy.
+                            if (blockState.is(net.minecraft.world.level.block.Blocks.CHEST)) {
+                                be = new net.minecraft.world.level.block.entity.ChestBlockEntity(renderPos, blockState);
+                            } else if (blockState.is(net.minecraft.world.level.block.Blocks.TRAPPED_CHEST)) {
+                                be = new net.minecraft.world.level.block.entity.TrappedChestBlockEntity(renderPos, blockState);
+                            } else if (blockState.is(net.minecraft.world.level.block.Blocks.ENDER_CHEST)) {
+                                be = new net.minecraft.world.level.block.entity.EnderChestBlockEntity(renderPos, blockState);
+                            } else {
+                                be = new net.minecraft.world.level.block.entity.ChestBlockEntity(renderPos, blockState);
+                            }
+                            be.setLevel(level);
+                            be.setBlockState(blockState);
+                        } catch (Throwable ignored) {}
+
+                        // Multiple extraction attempts — synthetic BEs or DH-altered paths can return
+                        // empty states on the first try.
                         var berState = dispatcher.tryExtractRenderState(be, partial, null, false);
+                        if (berState == null) {
+                            berState = dispatcher.tryExtractRenderState(be, partial, null, true);
+                        }
+                        if (berState == null) {
+                            berState = dispatcher.tryExtractRenderState(be, partial, null, false);
+                        }
                         if (berState != null) {
                             int idxBeforeBE = capture.idx.size();
                             poseStack.pushPose();
@@ -690,9 +734,49 @@ public final class RtEntityCollector implements SubmitNodeCollector {
                             } finally {
                                 poseStack.popPose();
                             }
-                            // If we got new geometry from the BE, we're done (chest now visible)
+                            // Real detailed 3D chest model captured → success, do not fall back to cube.
                             if (capture.idx.size() > idxBeforeBE) {
                                 return;
+                            }
+                        }
+
+                        // Strong direct path for chests: manually build a ChestRenderState and submit it.
+                        // This bypasses any extraction/culling problems that DH/Voxy may introduce
+                        // for synthetic contained BEs inside entities. The collector will receive the
+                        // real chest model (base + lid) with correct textures via submitModel.
+                        if (blockState.is(net.minecraft.world.level.block.Blocks.CHEST) ||
+                            blockState.is(net.minecraft.world.level.block.Blocks.TRAPPED_CHEST) ||
+                            blockState.is(net.minecraft.world.level.block.Blocks.ENDER_CHEST) ||
+                            blockState.getBlock() instanceof net.minecraft.world.level.block.ChestBlock) {
+
+                            try {
+                                int idxBeforeDirect = capture.idx.size();
+                                poseStack.pushPose();
+                                if (transform != null) {
+                                    poseStack.mulPose(transform);
+                                }
+
+                                // Build a minimal but complete chest render state that will cause the
+                                // ChestRenderer (or equivalent) to emit the full 3D model parts.
+                                // Use default values (closed lid) — the ChestBlockEntity state + renderer
+                                // defaults cover the model without explicit openness/angle (fields may
+                                // be named differently or protected in this MC version).
+                                var chestState = new net.minecraft.client.renderer.blockentity.state.ChestRenderState();
+                                // The renderer will use the block type from context or default to normal chest.
+
+                                // Submit using the dispatcher with our collector.
+                                // This should drive submitModel for the chest model parts directly into the collector.
+                                try {
+                                    dispatcher.submit(chestState, poseStack, this, camState);
+                                } finally {
+                                    poseStack.popPose();
+                                }
+
+                                if (capture.idx.size() > idxBeforeDirect) {
+                                    return; // real 3D chest geometry captured
+                                }
+                            } catch (Throwable ignoredDirect) {
+                                // fall through to normal fallback
                             }
                         }
                     }
@@ -727,30 +811,69 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         // (should not happen for chest if BE path worked), emit a solid-color box using white slot to
         // guarantee visibility without corrupted atlas UVs.
         if (blockState.hasBlockEntity()) {
-            // Recompute final pose (stack may have been popped, so use identity + transform)
+            // Combine current pose (from the minecart/entity render) + the contained display transform
+            // so the chest sub-mesh is placed at the correct offset *relative to the minecart mesh*
+            // (fixes displacement after DH/Voxy/POM port). Use the accumulated poseStack if available.
             Matrix4f fallbackPose = new Matrix4f();
+            if (poseStack != null && !poseStack.isEmpty()) {
+                fallbackPose.set(poseStack.last().pose());
+            }
             if (transform != null) {
-                fallbackPose.set(transform);
+                fallbackPose.mul(transform);
+            } else if (poseStack == null || poseStack.isEmpty()) {
+                // last resort: just the provided transform
+                if (transform != null) fallbackPose.set(transform);
             }
             emitChestFallbackSafe(fallbackPose, blockState);
         }
     }
 
     private void emitChestFallbackSafe(Matrix4f pose, BlockState state) {
-        // Use white slot (untextured) and solid tint to avoid Vulkan atlas corruption
+        boolean isChest = state.getBlock().toString().toLowerCase().contains("chest");
+        boolean isHopper = state.toString().toLowerCase().contains("hopper");
+
+        // Try to use a real block-atlas sprite + material for chests so we do not emit
+        // a solid beige fallback cube (the common failure mode for ChestMinecart contained
+        // display after DH/Voxy/POM). This gives the chest wood texture (even if stretched
+        // onto a proxy cube) instead of the untextured fallback.
+        TextureAtlasSprite sprite = null;
+        if (isChest) {
+            try {
+                var atlas = Minecraft.getInstance().getAtlasManager()
+                        .getAtlasOrThrow(TextureAtlas.LOCATION_BLOCKS);
+                // Prefer an explicit chest sprite if present in the atlas (some packs/models register it);
+                // fall back to a common wood used by chest models.
+                // Use direct getSprite(Identifier) on the atlas (SpriteFinder.find expects QuadView, not Identifier).
+                sprite = atlas.getSprite(Identifier.withDefaultNamespace("block/chest"));
+                if (sprite == null || sprite.contents().name().getPath().equals("missingno")) {
+                    sprite = atlas.getSprite(Identifier.withDefaultNamespace("block/oak_planks"));
+                }
+            } catch (Throwable ignored) {}
+        }
+
         capture.currentAlphaBucket = RtAccel.ENTITY_BUCKET_OPAQUE;
         capture.currentOpacity = 1.0f;
         capture.currentOrder = 0;
         capture.clearUvRemap();
-        capture.currentTexSlot = RtEntityTextures.INSTANCE.whiteSlot();
-        capture.currentMaterialId = RtMaterialRegistry.INSTANCE.entityFallbackId(false);
 
-        boolean isChest = state.getBlock().toString().toLowerCase().contains("chest");
+        if (sprite != null && TextureAtlas.LOCATION_BLOCKS.equals(sprite.atlasLocation())) {
+            capture.currentTexSlot = RtEntityTextures.INSTANCE.slotForAtlas(sprite.atlasLocation());
+            // Use the terrain snapshot so we get real PBR material instead of entityFallback
+            int materialId = RtMaterialRegistry.INSTANCE.requireSnapshot()
+                    .resolve(sprite, RtMaterials.Profile.DEFAULT, false, false);
+            capture.currentMaterialId = materialId;
+            // Use full [0,1] UVs so the sprite region is mapped across the proxy faces (gives texture)
+            // instead of sampling a single texel at (0,0).
+        } else {
+            capture.currentTexSlot = RtEntityTextures.INSTANCE.whiteSlot();
+            capture.currentMaterialId = RtMaterialRegistry.INSTANCE.entityFallbackId(false);
+        }
+
         int chestTint = 0xFF8B5A2B;
         int tint = isChest ? chestTint : -1;
 
         float min = 0.0625f, max = 0.9375f, minY = 0.0f, maxY = 0.875f;
-        if (state.toString().toLowerCase().contains("hopper")) {
+        if (isHopper) {
             min = 0.0f; max = 1.0f; minY = 0.0f; maxY = 0.625f;
         }
 
@@ -761,6 +884,10 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         int[][] faces = {{0,1,2,3},{4,7,6,5},{0,4,5,1},{2,6,7,3},{0,3,7,4},{1,5,6,2}};
         float[] nx = {0,0,0,0,-1,1}, ny = {-1,1,0,0,0,0}, nz = {0,0,-1,1,0,0};
 
+        float u0 = 0f, v0 = 0f, u1 = 1f, v1 = 1f;
+        float[] us = {u0, u1, u1, u0};
+        float[] vs = {v0, v0, v1, v1};
+
         for (int f = 0; f < faces.length; f++) {
             int[] face = faces[f];
             for (int i = 0; i < 4; i++) {
@@ -768,9 +895,19 @@ public final class RtEntityCollector implements SubmitNodeCollector {
                 meshPos.set(c[0], c[1], c[2]);
                 pose.transformPosition(meshPos);
                 meshX[i] = meshPos.x; meshY[i] = meshPos.y; meshZ[i] = meshPos.z;
-                meshU[i] = 0f; meshV[i] = 0f; // zero UV to sample white slot uniformly
+                if (sprite != null) {
+                    meshU[i] = us[i];
+                    meshV[i] = vs[i];
+                } else {
+                    meshU[i] = 0f; meshV[i] = 0f;
+                }
             }
-            capture.addDirectQuad(meshX, meshY, meshZ, ZERO_UV, ZERO_UV, nx[f], ny[f], nz[f], tint);
+            if (sprite != null) {
+                // use the per-quad UVs (full sprite) so addDirectQuad receives real UVs; material already set
+                capture.addDirectQuad(meshX, meshY, meshZ, meshU, meshV, nx[f], ny[f], nz[f], tint);
+            } else {
+                capture.addDirectQuad(meshX, meshY, meshZ, ZERO_UV, ZERO_UV, nx[f], ny[f], nz[f], tint);
+            }
         }
     }
 

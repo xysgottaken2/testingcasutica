@@ -126,6 +126,14 @@ public final class RtDistantHorizonsTerrain {
     // (which lost RT shadows/materials) without recreating the old full-proxy VRAM doubling spike.
     private BuildSession buildSession;
 
+    // Used for timeout-based unstick of the DH pipeline.
+    // If any busy flag or session is stuck (common after epoch++, error, quality change, world switch),
+    // and the player keeps moving, we force-clear so that new DH data can be consumed and new plans started.
+    // This is the main fix for the "DH completely stopped generating and updating new distant chunks"
+    // deadlock (DH workers themselves were running, but Caustica stopped calling startCpuBuild).
+    private static final long DH_STUCK_UNSTICK_NANOS = 1_500_000_000L; // 1.5s
+    private long lastDhPlanAttemptNanos = 0;
+
     private RtDistantHorizonsTerrain() {
     }
 
@@ -146,8 +154,15 @@ public final class RtDistantHorizonsTerrain {
             // Invalidate unpublished work before draining completions, so an old result cannot publish or
             // schedule another batch between the button click and the epoch change.
             epoch++;
+            // Force-clear all busy flags on epoch change. Leaving any *Pending=true after epoch++
+            // (manual refresh, quality change, world switch, error path) causes frame() to stop
+            // starting new DH work forever — the root cause of "DH completely stopped generating
+            // and updating distant chunks".
             abortBuildSession();
             cpuPending = false;
+            packPending = false;
+            pending = false;
+            lastDhPlanAttemptNanos = 0L;
             anchorX = anchorZ = Integer.MIN_VALUE;
             capturedLodRevision = -1L;
             nextRefresh = 0L;
@@ -186,8 +201,13 @@ public final class RtDistantHorizonsTerrain {
                     // Do not finish a minutes-long plan made for the previous DH quality. Keep the currently
                     // published proxy, cancel only unpublished work, and re-plan from the new active LOD tree.
                     epoch++;
+                    // Force clear all busy flags — stale *Pending after epoch++ is the classic cause of
+                    // "DH completely stopped loading new distant chunks".
                     abortBuildSession();
                     cpuPending = false;
+                    packPending = false;
+                    pending = false;
+                    lastDhPlanAttemptNanos = 0L;
                 }
                 lodQuality = updatedQuality;
                 qualitySettleUntilNanos = now + QUALITY_SETTLE_NANOS;
@@ -211,9 +231,69 @@ public final class RtDistantHorizonsTerrain {
         // Never withdraw the published RT proxy while a replacement is prepared. DH uploads can arrive in
         // bursts for many seconds; wait for a quiet window, then rebuild only changed source meshes.
         boolean replacementBusy = buildSession != null || packPending;
-        if (!pending && !cpuPending && !replacementBusy && now >= earliestBuildNanos
-                && RtMaterialRegistry.INSTANCE.isReady()
-                && (current == null || cameraCellChanged || refreshUploadedLods)) {
+
+        // EXPLICIT TIMEOUT UNSTICK (per root cause analysis):
+        // If any busy flag or buildSession left true after epoch++ (manual/quality/world/error),
+        // and DH_STUCK_UNSTICK_NANOS elapsed since last plan attempt, and (camera moved to new cell or
+        // lodRevision changed or no current proxy), then force epoch++ + clearAllBusyFlags() so that
+        // the shouldStartNew guard can fire again and we resume calling startCpuBuild / consuming
+        // new DH captures → lodMeshesSnapshot → plan → BLAS.
+        if ((pending || cpuPending || packPending || buildSession != null)
+                && lastDhPlanAttemptNanos != 0
+                && (now - lastDhPlanAttemptNanos) >= DH_STUCK_UNSTICK_NANOS
+                && (cameraCellChanged || lodDataChanged || current == null || refreshUploadedLods)) {
+            CausticaMod.LOGGER.info(
+                    "DH RT unstick timeout: busy flags (p={},cpuP={},packP={},sess={}) stuck for {}ms (epoch={}) after last plan attempt. cameraCell={}, lodChanged={}, forcing epoch++ + clearAllBusyFlags to re-enable continuous DH→RT data flow.",
+                    pending, cpuPending, packPending, (buildSession != null),
+                    (now - lastDhPlanAttemptNanos) / 1_000_000, epoch,
+                    cameraCellChanged, lodDataChanged);
+            epoch++;
+            abortBuildSession();
+            cpuPending = false;
+            packPending = false;
+            pending = false;
+            earliestBuildNanos = 0L;
+            capturedLodRevision = -1L;
+            lastDhPlanAttemptNanos = 0L;
+        }
+
+        // CRITICAL FIX for rapid invalidation loop ("replacementBusy + forcing fresh plan" every frame):
+        // The Render thread was aborting the DH CPU worker's in-flight plan/buildSession before it could
+        // finish (even for 144+ batches). This happened because:
+        // - shouldStartNew could stay true (current==null during long build, or minor lodRevision tick)
+        // - the "if (any busy) { epoch++; abort... }" was unconditional inside shouldStartNew
+        // - cpuPending/buildSession set by startCpuBuild made the *next* frame immediately treat the
+        //   just-launched work as "stuck" and abort it.
+        //
+        // Solution:
+        // 1. Do NOT consider shouldStartNew true while any DH work is actively in flight for the
+        //    current target (cpuPending / packPending / buildSession / pending). Let the worker
+        //    finish the current buildSession.
+        // 2. Only force-abort previous work inside shouldStartNew if it has been running "too long"
+        //    without progress (cooldown guard).
+        // 3. The 1.5s unstick timeout above remains as safety net for real deadlocks.
+        // This lets the CPU worker complete planCapturedLods + all pack/schedule/publish steps
+        // for the 64-145 batches without being cancelled every frame.
+        boolean hasActiveDhWork = cpuPending || packPending || (buildSession != null) || pending;
+
+        boolean shouldStartNew = (current == null || cameraCellChanged || refreshUploadedLods)
+                && now >= earliestBuildNanos
+                && !hasActiveDhWork
+                && RtMaterialRegistry.INSTANCE.isReady();
+
+        if (shouldStartNew) {
+            // Only abort a previous build if it looks stale (we already cleared via unstick, or
+            // enough time passed since last attempt). Never abort a just-launched active batch.
+            if ((pending || cpuPending || packPending || buildSession != null)
+                    && (lastDhPlanAttemptNanos == 0 || (now - lastDhPlanAttemptNanos) >= 1_000_000_000L)) {
+                CausticaMod.LOGGER.info("DH RT forcing fresh plan (camera/lod changed) — aborting any stuck previous work");
+                epoch++; // ensure any in-flight completions are treated as stale
+                abortBuildSession();
+                cpuPending = false;
+                packPending = false;
+                pending = false;
+            }
+
             anchorX = ax;
             anchorZ = az;
             capturedLodRevision = lodRevision;
@@ -228,8 +308,18 @@ public final class RtDistantHorizonsTerrain {
             nextRevision += 2L;
             Proxy reuseBase = forceSourceRebuild ? null : current;
             forceSourceRebuild = false;
+            lastDhPlanAttemptNanos = now;
             startCpuBuild(ax, az, proxyRadius, epoch, revision, reuseBase,
                     RtMaterialRegistry.INSTANCE.requireSnapshot(), lodQuality);
+        }
+
+        // Busy flag + epoch logging on every frame decision (for diagnosing remaining DH freeze)
+        if (DistantHorizonsCompat.enabled() && newWorld != null) {
+            CausticaMod.LOGGER.info(
+                    "DH frame decision [epoch={}]: pending={}, cpuPending={}, packPending={}, buildSession={}, cameraCellChanged={}, lodDataChanged={}, refreshUploadedLods={}, replacementBusy={}, shouldStartNew={}, lastAttemptAgeMs={}",
+                    epoch, pending, cpuPending, packPending, (buildSession != null),
+                    cameraCellChanged, lodDataChanged, refreshUploadedLods, replacementBusy, shouldStartNew,
+                    lastDhPlanAttemptNanos == 0 ? -1 : (now - lastDhPlanAttemptNanos) / 1_000_000);
         }
     }
 
@@ -723,7 +813,17 @@ public final class RtDistantHorizonsTerrain {
     private void drainCpuCompleted(RtContext ctx) {
         CpuCompleted done;
         while ((done = cpuCompleted.poll()) != null) {
-            if (done.epoch != epoch) continue;
+            if (done.epoch != epoch) {
+                // Stale completion from a previous epoch (e.g. quality change, world switch, manual refresh,
+                // or transient failure that caused epoch++). We MUST still clear the busy flag for finalBatch
+                // completions, otherwise cpuPending stays true forever and we stop starting new DH plans
+                // even when nextRefresh is due or camera moves. This was the root of the "DH completely
+                // stopped generating/ updating new distant chunks" deadlock.
+                if (done.finalBatch) {
+                    cpuPending = false;
+                }
+                continue;
+            }
             if (done.finalBatch) {
                 cpuPending = false;
                 if (done.failure != null || done.plan == null || done.plan.isEmpty()) {
@@ -809,9 +909,14 @@ public final class RtDistantHorizonsTerrain {
     private void drainPackCompleted(RtContext ctx) {
         PackCompleted done;
         while ((done = packCompleted.poll()) != null) {
+            // Always clear the busy flag. If this completion is for a stale epoch, we must unblock
+            // so that future frames can start new DH work. Leaving packPending=true after an
+            // epoch++ (quality change, manual refresh, world change, error) causes the entire
+            // DH pipeline to freeze — no new plans, no new BLAS, DH appears to stop loading.
             packPending = false;
             BuildSession session = buildSession;
             if (done.epoch != epoch || session == null || done.revision != session.revision) {
+                // Stale — we already cleared the flag above. Do not touch the (possibly new) buildSession.
                 continue;
             }
             if (done.failure != null || done.mesh == null) {
@@ -938,6 +1043,10 @@ public final class RtDistantHorizonsTerrain {
     private void drainCompleted(RtContext ctx) {
         Completed done;
         while ((done = completed.poll()) != null) {
+            // Always clear the GPU pending flag. Stale completions (after epoch++) must not leave
+            // "pending=true" forever, otherwise the frame() condition "!pending && !cpuPending && !replacementBusy"
+            // will never be true again and no new DH work will ever be started. This is a classic
+            // source of the "DH completely stopped" deadlock.
             pending = false;
             PreparedSection prepared = done.prepared;
             if (done.epoch != epoch) {
@@ -1086,6 +1195,12 @@ public final class RtDistantHorizonsTerrain {
             session.workingEntries.clear();
             session.remaining.clear();
         }
+        // Always clear the three busy flags when aborting a session.
+        // This is essential to unblock future frame() decisions after errors,
+        // quality changes, manual refreshes, or world switches.
+        pending = false;
+        cpuPending = false;
+        packPending = false;
     }
 
     private void requestRetry() {
@@ -1104,7 +1219,11 @@ public final class RtDistantHorizonsTerrain {
         nextQualityPollNanos = 0L;
         qualitySettleUntilNanos = 0L;
         lodQuality = new DistantHorizonsCompat.LodQuality(0L, 16, 2, "UNKNOWN", "UNKNOWN");
+        // Clear *all* busy flags on reset (world change). Leaving any of them true
+        // is a common cause of the DH pipeline freezing after a level switch.
         cpuPending = false;
+        packPending = false;
+        pending = false;
         bootstrapComplete = false;
         manualRefreshRequested.set(false);
         forceSourceRebuild = false;
