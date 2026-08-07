@@ -77,8 +77,10 @@ final class RtCloudShaderRegressionTest {
 
         assertFalse(miss.contains("cloudsEnabled(worldPush) ? 1.0 : 1.0 - rainStrength"),
                 "the disc visibility must not depend on the cloud toggle — holes in the deck leak sun");
-        assertTrue(miss.contains("discVisible = 1.0 - smoothstep(0.02, 0.65, stormStrength)"),
+        assertTrue(miss.contains("1.0 - smoothstep(0.02, 0.65, stormStrength)"),
                 "rain must fade the sun/moon discs out aggressively");
+        assertTrue(miss.contains("1.0 - smoothstep(0.05, 0.30, veilStrength)"),
+                "the dry-overcast veil must also diffuse the disc so the sun cannot pierce through");
     }
 
     @Test
