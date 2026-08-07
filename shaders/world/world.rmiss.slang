@@ -297,7 +297,12 @@ void main(inout Payload payload) {
     // light leaks on the terrain. The transition is intentionally faster than the sky darkening, so
     // light drizzle keeps a hint of the disc while real rain/storms remove it.
     float stormStrength = weatherOn ? clamp(worldPush.weather.x + worldPush.weather.y * 0.5, 0.0, 1.0) : 0.0;
-    float discVisible = 1.0 - smoothstep(0.02, 0.65, stormStrength);
+    // The disc fades with real rain/storms AND with the dry overcast veil (a biome with no
+    // precipitation under a distant storm: the sun must not pierce through the grey sky, but the
+    // world stays lit by the diffused light — see DRY_OVERCAST, which has rain=0 but skyDarken<1).
+    float veilStrength = weatherOn ? clamp(1.0 - worldPush.weather.z, 0.0, 1.0) : 0.0;
+    float discVisible = (1.0 - smoothstep(0.02, 0.65, stormStrength))
+            * (1.0 - smoothstep(0.05, 0.30, veilStrength));
     if (showCelestial && discVisible > 0.0) {
         float2 local;
         squareBody(dir, sd, SUN_DISC_HALF_ANGLE, worldPush.celestial.xyz, local);

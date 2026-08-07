@@ -1365,6 +1365,14 @@ public final class RtComposite {
      */
     private record WeatherState(float rain, float thunder, float skyDarken, float lightAttenuation) {
         static final WeatherState CLEAR = new WeatherState(0f, 0f, 1f, 1f);
+        /**
+         * Global rain over a biome with no precipitation (desert, savanna): the storm is elsewhere, but
+         * the sky still carries the overcast haze. The sun is dimmed and diffused (not full), the sky
+         * greys a little, and no drops fall — rain stays 0 so the weather columns and the rain-lane
+         * effects stay off. The world must not go black: no precipitation means no storm darkness, only
+         * a thin overcast veil.
+         */
+        static final WeatherState DRY_OVERCAST = new WeatherState(0f, 0f, 0.9f, 0.75f);
     }
 
     /**
@@ -1404,6 +1412,19 @@ public final class RtComposite {
         float rain = Math.clamp(level.getRainLevel(partial), 0f, 1f);
         if (rain <= 0f) {
             return WeatherState.CLEAR;
+        }
+        // Biome gate: the world's rain level is GLOBAL — during a storm every biome reports rain>0,
+        // even deserts and savannas where no drop falls. The sun/sky must only dim where precipitation
+        // actually happens, or a desert under a distant storm would go dark with no rain to show for
+        // it. Vanilla's own precipitation test is per-biome (and per-temperature for snow), so mirror
+        // it for the camera's biome.
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.player != null && mc.player.blockPosition() != null
+                && !level.getBiome(mc.player.blockPosition()).value().hasPrecipitation()) {
+            // No precipitation here: the storm is elsewhere. The sun softens (diffused, not piercing
+            // through the overcast) and the sky carries a thin grey veil, but nothing goes black and no
+            // drops fall — see DRY_OVERCAST.
+            return WeatherState.DRY_OVERCAST;
         }
         // getThunderLevel already includes the rain level as a factor in vanilla; clamp defensively so a
         // datapack or mod that drives it independently cannot push the multipliers negative.

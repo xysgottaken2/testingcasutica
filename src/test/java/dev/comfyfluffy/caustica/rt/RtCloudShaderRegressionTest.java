@@ -84,12 +84,14 @@ final class RtCloudShaderRegressionTest {
     @Test
     void rainClosesTheDeckIntoASolidCeiling() throws IOException {
         String clouds = Files.readString(CLOUDS);
-        String shown = slice(clouds, "public bool cloudCellShown", "// ---- Procedural coverage field");
+        String shown = slice(clouds, "public float cloudCellShown", "// ---- Procedural coverage field");
         String density = slice(clouds, "float cloudVolumeDensity", "/** Optical depth");
         String classic = slice(clouds, "CloudVolume cloudSegmentClassic", "// ---- Volumetric shading");
 
         assertTrue(clouds.contains("CLOUD_SOLID_COVERAGE = 0.999"),
                 "rain-driven full coverage must be recognised as a closed ceiling");
+        assertTrue(clouds.contains("public float cloudClosedAmount"),
+                "the deck must close CONTINUOUSLY as coverage ramps — a hard threshold pops the sky");
         assertTrue(shown.contains("cloudClosed(push)"),
                 "a closed ceiling must show every cell — the authored pattern's holes are weather");
         assertTrue(density.contains("cloudClosed(push)"),

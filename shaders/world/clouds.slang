@@ -191,9 +191,21 @@ public float3 cloudTint(WorldPush push) {
     return push.cloudColor.xyz;
 }
 
-/** True when the deck is a closed storm ceiling (rain drove the coverage slider to 1). */
+/**
+ * How far the deck has closed into a solid storm ceiling, 0..1. The Java side drives coverage to 1 as
+ * rain ramps up (RtComposite.cloudState), and the shader must turn the pattern into a closed slab
+ * CONTINUOUSLY as that happens — a hard threshold made the sky "pop" from patchy clouds to solid grey
+ * the moment coverage crossed it. The ramp starts once the coverage slider is near its top (0.85) and
+ * completes at the solid threshold, so the last stretch of rain gradually fills the holes instead of
+ * snapping.
+ */
+public float cloudClosedAmount(WorldPush push) {
+    return smoothstep(0.85, CLOUD_SOLID_COVERAGE, clamp(push.clouds.x, 0.0, 1.0));
+}
+
+/** True when the deck is fully closed (the storm ceiling is complete). */
 public bool cloudClosed(WorldPush push) {
-    return push.clouds.x >= CLOUD_SOLID_COVERAGE;
+    return cloudClosedAmount(push) >= 1.0;
 }
 
 // ---- Authored cell map lookups (classic style + the closed-ceiling gate) -------------------------
@@ -205,18 +217,20 @@ public bool cloudCellMapPresent(WorldPush push) {
 }
 
 /**
- * The coverage-filtered "shown" flag (RtCloudCells rebuilds it on the CPU when the coverage slider or
- * the weather changes): the cell is part of a component included by the size-ranked coverage filter.
- * In a closed storm ceiling every cell is shown — the deck is a continuous slab, and the authored
- * pattern's 20 % holes are weather, not geometry.
+ * The coverage-filtered "shown" flag as a 0..1 amount (RtCloudCells rebuilds the binary map on the CPU
+ * when the coverage slider or the weather changes; a cell is part of a component included by the
+ * size-ranked coverage filter). As the deck closes into a storm ceiling, every cell fades in — the
+ * authored pattern's 20 % holes are weather, not geometry, so the ceiling fills them gradually
+ * instead of popping.
  */
-public bool cloudCellShown(WorldPush push, int2 cell) {
+public float cloudCellShown(WorldPush push, int2 cell) {
     if (cloudClosed(push)) {
-        return true;
+        return 1.0;
     }
     uint i = uint((cell.y & CLOUD_CELLS_MASK) * CLOUD_CELLS_DIM + (cell.x & CLOUD_CELLS_MASK));
     ConstPtr<uint> map = ConstPtr<uint>(push.cloudCellsAddr + CLOUD_CELLS_HEADER_BYTES);
-    return ((map[i >> 2u] >> ((i & 3u) << 3u)) & 0xFFu) != 0u;
+    float shown = ((map[i >> 2u] >> ((i & 3u) << 3u)) & 0xFFu) != 0u ? 1.0 : 0.0;
+    return lerp(shown, 1.0, cloudClosedAmount(push));
 }
 
 // ---- Procedural coverage field (volumetric style) -------------------------------------------------
@@ -273,17 +287,14 @@ public float cloudCoverageField(float2 samplePos) {
  * cloudSunShadow's global branch).
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
-    if (cloudClosed(push)) {
-        return 1.0;
-    }
     if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
         float2 cellF = samplePos / CLOUD_CELL_BLOCKS;
         int2 cell = int2(floor(cellF));
         float2 f = cellF - float2(cell);
-        float a = cloudCellShown(push, cell) ? 1.0 : 0.0;
-        float b = cloudCellShown(push, cell + int2(1, 0)) ? 1.0 : 0.0;
-        float c = cloudCellShown(push, cell + int2(0, 1)) ? 1.0 : 0.0;
-        float d = cloudCellShown(push, cell + int2(1, 1)) ? 1.0 : 0.0;
+        float a = cloudCellShown(push, cell);
+        float b = cloudCellShown(push, cell + int2(1, 0));
+        float c = cloudCellShown(push, cell + int2(0, 1));
+        float d = cloudCellShown(push, cell + int2(1, 1));
         return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
     }
     float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
@@ -429,7 +440,10 @@ public CloudBoxHit cloudTraceBoxes(WorldPush push, float3 originRel, float3 dir,
 
     float tEntry = t0;
     for (int guard = 0; guard < CLOUD_BOX_WALK_MAX; guard++) {
-        if (cloudCellShown(push, cell)) {
+        // The cell is "present" once its fade-in has passed half; the box alpha carries the exact
+        // value (see cloudSegmentClassic), so the geometry exists as soon as the cell is more shown
+        // than not and fades in with it.
+        if (cloudCellShown(push, cell) > 0.5) {
             // Exact slab test for this cell's box, in camera-relative space (the anchor is subtracted
             // back out of the cell corners). The box's Y range must live in the SAME space as the XZ
             // corners — push.clouds.w is already camera-relative, so the box spans it directly. Using
@@ -540,12 +554,15 @@ CloudVolume cloudSegmentClassic(WorldPush push, float3 originRel, float3 dir, fl
     if (!h.hit) {
         return result;
     }
-    // The box itself is opaque; alpha is the player's opacity slider × vanilla's weather-resolved
-    // base opacity (cloudColor.w, ~0.8) × the view-limit fade, applied to the finished result so a
-    // 20 % opacity cloud is exactly "20 % of this box", never a translucent-looking volume. In a
-    // CLOSED storm ceiling the base opacity is dropped: the ceiling must read as fully closed, and
-    // vanilla's 0.8 would let 20 % of the dark sky show through the slab.
-    float alpha = clamp(push.clouds.y * h.fade, 0.0, 1.0);
+    // The box itself is opaque; alpha is the player's opacity slider × the cell's fade-in amount
+    // (cloudCellShown is continuous 0..1, so boxes fade in as the storm ceiling forms) × vanilla's
+    // weather-resolved base opacity (cloudColor.w, ~0.8) × the view-limit fade, applied to the
+    // finished result so a 20 % opacity cloud is exactly "20 % of this box", never a translucent-
+    // looking volume. In a CLOSED storm ceiling the base opacity is dropped: the ceiling must read as
+    // fully closed, and vanilla's 0.8 would let 20 % of the dark sky show through the slab.
+    float cellShown = cloudCellShown(push, int2(floor((push.cloudAnchor.xy + originRel.xz)
+            / CLOUD_CELL_BLOCKS)));
+    float alpha = clamp(push.clouds.y * h.fade * cellShown, 0.0, 1.0);
     if (!cloudClosed(push)) {
         alpha *= push.cloudColor.w;
     }
@@ -601,10 +618,12 @@ float cloudPowder(float density) {
  */
 float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     float hf = clamp(heightFrac, 0.0, 1.0);
-
-    // Closed storm ceiling: a uniform slab. The authored pattern's holes are weather, not geometry —
-    // a storm sky is a closed ceiling, and marching the open pattern here would keep the holes.
-    if (cloudClosed(push)) {
+    // Storm-ceiling blend: how far the deck has closed into a uniform slab (see cloudClosedAmount).
+    // The density below is the OPEN pattern; the closed ceiling is a flat slab with the same vertical
+    // face profile. Blending the two continuously is what makes the sky fill in gradually as rain
+    // ramps instead of popping from patchy to solid.
+    float closed = cloudClosedAmount(push);
+    if (closed >= 1.0) {
         float faces = smoothstep(0.0, 0.06, hf) * smoothstep(0.0, 0.06, 1.0 - hf);
         return faces;
     }
@@ -675,7 +694,10 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     // Dense core: cumulus interiors are optically thick, and a field that peaks at ~0.5 can never look
     // like anything but haze no matter how deep the slab is.
     float density = coverage * (0.85 + 0.75 * coverage) - erosion;
-    return clamp(density, 0.0, 1.0) * profile;
+    float openDensity = clamp(density, 0.0, 1.0) * profile;
+    // Blend toward the closed slab as the storm ceiling forms, so the deck fills in gradually.
+    float slabDensity = smoothstep(0.0, 0.06, hf) * smoothstep(0.0, 0.06, 1.0 - hf);
+    return lerp(openDensity, slabDensity, closed);
 }
 
 /** Optical depth from a point toward the light, for self-shadowing inside the slab. */

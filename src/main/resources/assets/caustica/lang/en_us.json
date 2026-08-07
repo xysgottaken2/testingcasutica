@@ -38,6 +38,8 @@
 	"caustica.options.rt.particles.tooltip": "Draw particles as camera-ray billboards inside the traced scene.",
 	"caustica.options.rt.weatherParticles": "Ray-Traced Weather",
 	"caustica.options.rt.weatherParticles.tooltip": "Draw rain and snow as real geometry inside the traced scene. The columns come from Minecraft's own weather system, so they stop correctly at the ground, at leaves and under roofs, and fall as usual. Requires Ray-Traced Particles.",
+	"caustica.options.rt.rainDensity": "Rain Density",
+	"caustica.options.rt.rainDensity.tooltip": "How much rain and snow is drawn, as a percentage of vanilla's density. 100% is exactly Minecraft's rain; lower values thin the drops out so fewer fall. Does not change the weather itself — only how much of it you see.",
 
 	"caustica.options.rt.glow": "Entity Glow Outline",
 	"caustica.options.rt.glow.tooltip": "Draw the vanilla Glowing-effect outline (through walls) around glowing entities.",

@@ -145,15 +145,18 @@ final class RtWeatherCaptureTest {
      * <p>An earlier version also scaled the vertex RGB by the fade to reproduce vanilla's falloff. But
      * tint is not opacity: {@code world.rchit} multiplies it straight into the albedo, so far columns
      * were rendered *darker* rather than thinner, and the step between two adjacent fade values showed up
-     * as a visible seam — one patch of rain brighter than the rest. Pin the white RGB so this cannot
-     * regress.
+     * as a visible seam — one patch of rain brighter than the rest. The RGB is now the storm-grey tint
+     * (from the weather-resolved cloud colour) so the drops match the grey sky instead of reading blue;
+     * the distance fade stays purely in the alpha/coverage lane.
      */
     @Test
     void distanceFadeUsesCoverageNotTint() throws IOException {
         String src = Files.readString(source());
 
-        assertTrue(src.contains("ARGB.white(alpha)"),
-                "column colour must stay white: the fade belongs in alpha/coverage, not in the tint");
+        assertTrue(src.contains("ARGB.color((int) (alpha * 255f), tint[0], tint[1], tint[2])"),
+                "column colour must be the storm-grey tint (not white, not fade-scaled RGB)");
+        assertFalse(src.contains("ARGB.white(alpha)"),
+                "white rain against a grey sky reads blue — the tint must come from the weather");
         assertFalse(src.contains("ARGB.color(level, level, level, level)"),
                 "scaling RGB by the fade darkens distant rain instead of thinning it");
     }

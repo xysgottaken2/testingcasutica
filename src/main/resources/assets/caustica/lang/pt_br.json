@@ -37,6 +37,8 @@
 	"caustica.options.rt.particles.tooltip": "Desenha partículas como billboards de raio da câmera dentro da cena traçada.",
 	"caustica.options.rt.weatherParticles": "Clima com traçado de raios",
 	"caustica.options.rt.weatherParticles.tooltip": "Desenha chuva e neve como geometria real dentro da cena traçada. As colunas vêm do próprio sistema de clima do Minecraft, então param corretamente no chão, nas folhas e sob telhados, e caem normalmente. Requer Partículas com traçado de raios.",
+	"caustica.options.rt.rainDensity": "Densidade da Chuva",
+	"caustica.options.rt.rainDensity.tooltip": "Quanta chuva e neve é desenhada, como porcentagem da densidade da vanilla. 100% é exatamente a chuva do Minecraft; valores menores afinam as gotas para caírem menos. Não muda o clima em si — só quanto dele você vê.",
 
 	"caustica.options.rt.glow": "Contorno brilhante de entidades",
 	"caustica.options.rt.glow.tooltip": "Desenha o contorno vanilla do efeito Brilhante (através de paredes) ao redor de entidades brilhantes.",
