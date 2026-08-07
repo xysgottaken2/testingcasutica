@@ -1164,6 +1164,7 @@ public final class RtComposite {
                     ambientFog(dimension, weather, sky.sunDir().w()),
                     clouds.clouds(),
                     clouds.anchor(),
+                    cloudColorRgb(),
                     // Shader-only POM: x relief depth (blocks), y fixed layer count, w fade distance.
                     parallaxParams(),
                     dimension,
@@ -1534,8 +1535,8 @@ public final class RtComposite {
             // Neither the Nether nor the End has a sky to put clouds in; both draw a closed skybox.
             return CloudPush.NONE;
         }
-        // Overcast ramp: rain closes most of the remaining gap toward full cover, thunder the rest.
-        float overcast = Math.min(1f, weather.rain() * 0.85f + weather.thunder() * 0.15f);
+        // Overcast: rain alone can now close the sky fully; thunder adds a little faster.
+        float overcast = Math.clamp(weather.rain() + weather.thunder() * 0.15f, 0f, 1f);
         coverage = coverage + (1f - coverage) * overcast;
         float height = CausticaConfig.Rt.Composite.CLOUD_HEIGHT.value();
         // Wind drift, in blocks, from world time. Wrapped with the anchor below.
@@ -1588,6 +1589,34 @@ public final class RtComposite {
             wrapped += period;
         }
         return (float) wrapped;
+    }
+
+    /**
+     * Cloud tint for the classic deck, sourced from vanilla's own
+     * {@code EnvironmentAttributes.CLOUD_COLOR}. That attribute is already resolved per dimension
+     * and per weather (rain turns it grey), so the RT deck's colour follows vanilla's without a
+     * hand-tuned rain lerp.
+     */
+    private static Float4 cloudColorRgb() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null || mc.gameRenderer == null) {
+            return new Float4(1f, 1f, 1f, 1f);
+        }
+        try {
+            float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+            var probe = mc.gameRenderer.mainCamera().attributeProbe();
+            int argb = probe.getValue(EnvironmentAttributes.CLOUD_COLOR, partial);
+            float a = ((argb >>> 24) & 0xFF) / 255f;
+            float r = ((argb >>> 16) & 0xFF) / 255f;
+            float g = ((argb >>> 8) & 0xFF) / 255f;
+            float b = (argb & 0xFF) / 255f;
+            r = (float) Math.pow(r, 2.2);
+            g = (float) Math.pow(g, 2.2);
+            b = (float) Math.pow(b, 2.2);
+            return new Float4(r, g, b, a);
+        } catch (Throwable e) {
+            return new Float4(1f, 1f, 1f, 1f);
+        }
     }
 
     /**

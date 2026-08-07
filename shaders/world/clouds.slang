@@ -190,7 +190,13 @@ public float cloudCoverageField(float2 samplePos) {
  * looks low-resolution.
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
-    float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    float cov = clamp(push.clouds.x, 0.0, 1.0);
+    // Solid overcast (bug 3): when coverage has been pushed to 1 by heavy rain, the sky must be
+    // fully closed even where the procedural field has holes. Without this, rain*0.85 left holes.
+    if (cov >= 0.999) {
+        return 1.0;
+    }
+    float threshold = 1.0 - cov;
     if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
         // Snap to the cell centre so every point inside one cell gets the identical answer -> hard,
         // axis-aligned edges exactly on the 12-block grid.
@@ -339,7 +345,9 @@ float3 cloudRadianceClassic(WorldPush push, CloudHit h, float3 dir, float3 skyBe
     float grazing = 1.0 - abs(dir.y);            // 1 looking along the deck, 0 straight up/down
     float faceLight = h.fromBelow ? 0.52 : 1.0;  // vanilla's bottom face is markedly darker
     faceLight = lerp(faceLight, 0.78, grazing);  // side faces sit between the two
-    float3 lit = CLOUD_ALBEDO * CLOUD_INV_PI * sunRadiance * faceLight;
+    float3 albedo = push.cloudColor.xyz;
+    if (dot(albedo, albedo) < 1.0e-6) albedo = CLOUD_ALBEDO;
+    float3 lit = albedo * CLOUD_INV_PI * sunRadiance * faceLight;
     // The classic deck is opaque, so it admits only a little sky fill — enough to keep it from going
     // black at night, when sunRadiance is near zero.
     return lit + skyBehind * 0.45;
@@ -521,6 +529,17 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     float thickness = max(push.cloudAnchor.z, 1.0);
     float slabBottom = push.clouds.w - thickness * 0.5 - originRel.y;
     float slabTop = push.clouds.w + thickness * 0.5 - originRel.y;
+    // Bug 1: the old code only faded the flat plane (cloudTrace); the march kept accumulating
+    // in-scatter even when the deck was at the near plane, producing the bright ~12-block
+    // horizontal band that followed the camera.
+    {
+        float halfThick = max(thickness, 0.5) * 0.5;
+        float deckRel = push.clouds.w - originRel.y;
+        float cross = smoothstep(halfThick * 0.5, halfThick * 1.5, abs(deckRel));
+        if (cross <= 0.0) {
+            return result;
+        }
+    }
 
     // Slab entry/exit along the ray. A near-horizontal ray inside the slab would march forever, so it
     // is bounded by the view limit like every other ray.
