@@ -3,7 +3,6 @@
 	"caustica.options.rt.title": "Ray Tracing Settings",
 	"caustica.options.rt.settingsButton": "Ray Tracing Settings...",
 	"caustica.options.rt.settings": "Ray Tracing Settings",
-
 	"caustica.options.rt.qualityHeader": "Quality & Performance",
 	"caustica.options.rt.generalHeader": "General",
 	"caustica.options.rt.effectsHeader": "Effects",
@@ -13,84 +12,60 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-
 	"caustica.options.rt.exposureMode": "Exposure",
 	"caustica.options.rt.exposureMode.tooltip": "How the ray-traced image is mapped to display brightness. Auto adapts to scene luminance; Manual uses the exposure value directly.",
 	"caustica.options.rt.exposureMode.auto": "Auto",
 	"caustica.options.rt.exposureMode.manual": "Manual",
-
 	"caustica.options.rt.manualEv": "Exposure EV",
 	"caustica.options.rt.manualEv.tooltip": "Exposure compensation in stops. In Manual, this is the fixed exposure. In Auto, this biases the auto exposure brighter or darker.",
-
 	"caustica.options.rt.spp": "Samples Per Pixel",
 	"caustica.options.rt.spp.tooltip": "Path-tracing samples taken per pixel each frame. Higher is cleaner but more demanding.",
-
 	"caustica.options.rt.maxBounces": "Path Bounces",
 	"caustica.options.rt.maxBounces.tooltip": "Maximum number of secondary path-tracing bounces after the primary hit. Higher captures more indirect light but costs more.",
-
 	"caustica.options.rt.sunSize": "Sun Size",
 	"caustica.options.rt.sunSize.tooltip": "Angular radius of the sun and moon disk. Larger discs cast softer shadow penumbrae.",
-
 	"caustica.options.rt.entities": "Ray-Traced Entities",
 	"caustica.options.rt.entities.tooltip": "Include entities and block entities in the ray-traced scene.",
-
 	"caustica.options.rt.particles": "Ray-Traced Particles",
 	"caustica.options.rt.particles.tooltip": "Draw particles as camera-ray billboards inside the traced scene.",
 	"caustica.options.rt.weatherParticles": "Ray-Traced Weather",
 	"caustica.options.rt.weatherParticles.tooltip": "Draw rain and snow as real geometry inside the traced scene. The columns come from Minecraft's own weather system, so they stop correctly at the ground, at leaves and under roofs, and fall as usual. Requires Ray-Traced Particles.",
-
 	"caustica.options.rt.glow": "Entity Glow Outline",
 	"caustica.options.rt.glow.tooltip": "Draw the vanilla Glowing-effect outline (through walls) around glowing entities.",
-
 	"caustica.options.rt.waterWaves": "Animated Water",
 	"caustica.options.rt.waterWaves.tooltip": "Animate water-surface normals for moving wave highlights.",
-
 	"caustica.options.rt.sss": "Subsurface Scattering",
 	"caustica.options.rt.sss.tooltip": "Let light scatter through thin surfaces such as leaves and grass, so foliage glows when you look through it toward the sun. Only affects materials that provide subsurface data; costs an extra shadow ray where it applies.",
-
 	"caustica.options.rt.weatherLighting": "Weather Lighting",
 	"caustica.options.rt.weatherLighting.tooltip": "Dim sunlight and moonlight and darken the sky during rain and thunderstorms, and hide the sun, moon and stars behind the clouds. Off keeps clear-sky lighting in all weather.",
-
 	"caustica.options.rt.clouds": "Ray-Traced Clouds",
 	"caustica.options.rt.clouds.tooltip": "Draw a cloud deck in the ray-traced sky. Caustica replaces the vanilla world renderer, which is where vanilla's own clouds are drawn, so this is what puts clouds back in the sky. The deck is visible in reflections and can shadow the world below.",
-
 	"caustica.options.rt.cloudStyle": "Cloud Style",
 	"caustica.options.rt.cloudStyle.tooltip": "How clouds are drawn. Classic reproduces Minecraft's flat, blocky cloud layer. Volumetric ray-marches the clouds as real 3D shapes with depth, self-shadowing and light scattering, like heavy shaderpacks - much better looking, but noticeably more demanding. Both use the same cloud shapes, so switching does not move the clouds.",
 	"caustica.options.rt.cloudStyle.classic": "Classic",
 	"caustica.options.rt.cloudStyle.volumetric": "Volumetric",
-
 	"caustica.options.rt.skyStyle": "Sky Style",
 	"caustica.options.rt.skyStyle.tooltip": "Choose between the improved vivid pastel sky and the original vanilla-like sky.",
 	"caustica.options.rt.skyStyle.modified": "Modified Sky",
 	"caustica.options.rt.skyStyle.vanilla": "Vanilla Sky",
-
 	"caustica.options.rt.cloudHeight": "Cloud Height",
 	"caustica.options.rt.cloudHeight.tooltip": "World height the bottom of the clouds sits at. Vanilla's clouds sit at Y 192; the default here is higher because these clouds have real thickness, which makes a low deck feel much closer than vanilla's flat sheet. Raise it if the clouds feel too close to the ground. Measures the cloud base, so changing thickness does not move it.",
-
 	"caustica.options.rt.cloudThickness": "Cloud Thickness",
 	"caustica.options.rt.cloudThickness.tooltip": "How tall the clouds are. 0% makes them a flat sheet; higher values give them real 3D depth you can fly into. Classic clouds become solid boxes with bright tops and darker sides like vanilla's, and volumetric clouds become tall, billowing cumulus. This changes their shape only, not how see-through they are - use Cloud Opacity for that. Thicker clouds cost more performance.",
-
 	"caustica.options.rt.cloudShadowStrength": "Cloud Shadows",
 	"caustica.options.rt.cloudShadowStrength.tooltip": "How much the cloud deck dims the sunlight and moonlight reaching the ground under it. 0% draws clouds that cast no shadow at all; 100% lets a solid cloud block the sun completely. Costs no extra rays.",
-
 	"caustica.options.rt.cloudOpacity": "Cloud Opacity",
 	"caustica.options.rt.cloudOpacity.tooltip": "How solid the clouds are. 0% is fully transparent (clouds are skipped entirely); 100% is as solid as the cloud shape gets. This is a hard ceiling: at 20% a cloud is never more than 20% opaque, no matter how thick it is or how far away it is, so it never fills in toward the horizon.",
-
 	"caustica.options.rt.denoiser": "Denoising Filter",
 	"caustica.options.rt.denoiser.tooltip": "Apply the DLSS Ray Reconstruction denoising filter to the path-traced image. Off shows the raw, noisy trace at full resolution — useful as a reference view, but far grainier at low sample counts. Requires DLSS Ray Reconstruction support.",
-
 	"caustica.options.rt.handFov": "Hand FOV",
 	"caustica.options.rt.handFov.tooltip": "Make the first-person hand and held item follow the game's FOV setting. On, a higher FOV pushes the arm further away and a lower FOV brings it closer. Off restores vanilla's fixed hand FOV.",
-
 	"caustica.options.rt.hdr": "HDR Output",
 	"caustica.options.rt.hdr.tooltip": "Present in HDR (ST.2084/PQ) instead of SDR, when the display supports it. Takes effect after restarting the game.",
-
 	"caustica.options.rt.hdrPaperWhite": "HDR Paper White",
 	"caustica.options.rt.hdrPaperWhite.tooltip": "Absolute brightness (in nits) that SDR-equivalent scene brightness maps to on an HDR display.",
-
 	"caustica.options.rt.hdrPeak": "HDR Peak Brightness",
 	"caustica.options.rt.hdrPeak.tooltip": "Absolute brightness (in nits) highlights roll off toward. Set to your display's peak HDR brightness.",
-
 	"caustica.options.rt.dlssQuality": "DLSS Quality",
 	"caustica.options.rt.dlssQuality.tooltip": "DLSS Ray Reconstruction quality mode. Lower-quality modes render fewer pixels and upscale more aggressively for higher framerates; higher-quality modes render more pixels for a sharper image. Only affects the image when DLSS Ray Reconstruction is enabled.",
 	"caustica.options.rt.dlssQuality.3": "Ultra Performance",
@@ -98,7 +73,6 @@
 	"caustica.options.rt.dlssQuality.1": "Balanced",
 	"caustica.options.rt.dlssQuality.2": "Quality",
 	"caustica.options.rt.dlssQuality.5": "DLAA",
-
 	"caustica.options.rt.debugView": "Debug View",
 	"caustica.options.rt.debugView.tooltip": "Visualize an intermediate ray-tracing buffer instead of the final image.",
 	"caustica.options.rt.debugView.0": "Off",
@@ -111,7 +85,6 @@
 	"caustica.options.rt.debugView.7": "Specular Motion",
 	"caustica.options.rt.debugView.8": "Emission Mask",
 	"caustica.options.rt.debugView.9": "Emission Source",
-
 	"caustica.options.rt.lightsHeader": "RT Lighting",
 	"caustica.options.rt.tonemapHeader": "RT Tonemapping",
 	"caustica.options.rt.blockEmissiveIntensity": "Emissive Block Intensity",
@@ -142,11 +115,9 @@
 	"caustica.options.rt.parallaxSmoothing.tooltip": "Switch LabPBR height, normal and surface sampling between smooth bilinear and crisp pixel-aligned sampling.",
 	"caustica.options.rt.parallaxDistance": "Parallax Distance",
 	"caustica.options.rt.parallaxDistance.tooltip": "Distance in blocks at which parallax smoothly disappears. Relief stays full through 80% of the selected range.",
-
 	"caustica.options.rt.dhRefresh": "Reload Distant Horizons Chunks",
 	"caustica.options.rt.dhRefresh.queued": "Distant Horizons Reload Queued",
 	"caustica.options.rt.dhRefresh.rtOnly": "Caustica RT Proxy Reload Queued",
-
 	"caustica.options.voxy.header": "Voxy LODs",
 	"caustica.options.voxy.enabled": "Voxy LODs",
 	"caustica.options.voxy.enabled.tooltip": "Enable Voxy distant terrain in the Caustica path tracer. This takes effect immediately.",
@@ -157,5 +128,7 @@
 	"caustica.options.voxy.chunks": "%s chunks",
 	"caustica.options.voxy.refresh": "Rebuild Voxy LODs",
 	"caustica.options.voxy.refresh.queued": "Voxy rebuild queued",
-	"caustica.options.voxy.refresh.unavailable": "Voxy is unavailable"
+	"caustica.options.voxy.refresh.unavailable": "Voxy is unavailable",
+	"caustica.options.rt.weatherDensity": "Weather Density",
+	"caustica.options.rt.weatherDensity.tooltip": "How many rain/snow columns are drawn, as a percentage of vanilla. 0% = no precipitation, 100% = vanilla amount (up to the particle budget). Affects both rain and snow; night tint is rain-only."
 }

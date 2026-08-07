@@ -59,7 +59,7 @@ public final class CausticaConfig {
             Rt.ENABLED, Rt.Composite.SPP, Rt.Composite.MAX_BOUNCES, Rt.Composite.SSS,
             Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER,
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
-            Rt.Entities.ENABLED, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
+            Rt.Entities.ENABLED, Rt.Entities.WEATHER_DENSITY, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
             Rt.Reflex.ENABLED, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
             Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
@@ -814,6 +814,13 @@ public final class CausticaConfig {
              */
             public static final BooleanSetting WEATHER_ENABLED =
                     bool("caustica.rt.weatherParticles", "particles.weather-enabled", true);
+            /**
+             * Amount of rain/snow columns. 0 = none (but still respects the toggle), 1 = vanilla
+             * amount (up to the particle budget), 0.5 = half the columns. Scales both rain and snow
+             * equally; the night-darkening of rain itself is separate and only affects rain.
+             */
+            public static final FloatSetting WEATHER_DENSITY =
+                    clampedFloat("caustica.rt.weatherDensity", "particles.weather-density", 1.0f, 0.0f, 1.0f);
             public static final BooleanSetting GLOW_ENABLED =
                     bool("caustica.rt.glow", "entities.glow.enabled", true);
             public static final BooleanSetting NAME_TAGS_ENABLED =

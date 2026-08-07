@@ -157,12 +157,28 @@ public final class RtWeatherCapture {
         if (intensity <= 0.0f) {
             return 0;
         }
+        // Density slider: scales how many columns are actually emitted, for both rain and snow.
+        // 0 = no columns (but still respects the main toggle), 1 = vanilla amount (up to the
+        // particle budget). Snow shares the same density, only the night tint is rain-only.
+        float density = CausticaConfig.Rt.Entities.WEATHER_DENSITY.value();
+        if (density <= 0.0f) {
+            return 0;
+        }
+        int effectiveBudget = budget;
+        if (density < 1.0f) {
+            effectiveBudget = Math.max(0, (int) (budget * density));
+            if (effectiveBudget == 0 && !state.rainColumns.isEmpty()) {
+                // Ensure at least one column when density is very low but >0 and there is
+                // actually precipitation, so the slider doesn't feel completely dead at 5%.
+                effectiveBudget = 1;
+            }
+        }
         int captured = 0;
         try {
             captured += captureColumns(capture, out, state.rainColumns, camPos, RAIN_MAX_ALPHA,
-                    state.radius, intensity, RAIN_LOCATION, budget - captured);
+                    state.radius, intensity, RAIN_LOCATION, effectiveBudget - captured);
             captured += captureColumns(capture, out, state.snowColumns, camPos, SNOW_MAX_ALPHA,
-                    state.radius, intensity, SNOW_LOCATION, budget - captured);
+                    state.radius, intensity, SNOW_LOCATION, effectiveBudget - captured);
         } catch (Throwable t) {
             // Never take the whole RT frame down over weather: log once and render this frame dry.
             if (!loggedFailure) {
@@ -220,6 +236,20 @@ public final class RtWeatherCapture {
         return mc.gameRenderer.gameRenderState().levelRenderState.weatherRenderState;
     }
 
+    private static boolean isNight() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) {
+            return false;
+        }
+        // Use the level's time of day (0.0 = sunrise, 0.5 = sunset, 0.75 = midnight).
+        // This matches how vanilla decides night for sky color and is cheaper than
+        // probing EnvironmentAttributes.
+        float time = mc.level.getTimeOfDay(1.0f);
+        // Night roughly 12541..23458 (0.52..0.98), but keep a small buffer so
+        // dusk/dawn still count as day and the tint doesn't pop at the exact tick.
+        return time > 0.53f && time < 0.96f;
+    }
+
     /**
      * Emit one quad per column, exactly as {@code WeatherEffectRenderer.renderInstances} does.
      *
@@ -262,13 +292,30 @@ public final class RtWeatherCapture {
             // means — fewer drop samples survive with distance — so the far columns thin out instead of
             // changing colour.
             //
-            // The RGB stays WHITE on purpose. An earlier version also scaled RGB by the same factor to
-            // reproduce the fade, but tint is not opacity: world.rchit multiplies it straight into the
-            // albedo, so it *darkened* the drops rather than thinning them. That is what produced the
-            // patch of rain that looked brighter than the rest — near columns kept a bright tint while
-            // columns a few blocks further out were shaded progressively darker, and the boundary
-            // between two adjacent alpha steps read as a visible seam across the sheet.
-            int color = ARGB.white(alpha);
+            // The RGB stays WHITE on purpose for snow and for daytime rain. An earlier version also
+            // scaled RGB by the same factor to reproduce the fade, but tint is not opacity:
+            // world.rchit multiplies it straight into the albedo, so it *darkened* the drops rather
+            // than thinning them. That is what produced the patch of rain that looked brighter than
+            // the rest — near columns kept a bright tint while columns a few blocks further out were
+            // shaded progressively darker, and the boundary between two adjacent alpha steps read as
+            // a visible seam across the sheet.
+            //
+            // Rain at night is too bright if it stays pure white — vanilla's rain is already a
+            // little blue, but at night it should be a darker blue-grey so it doesn't glow.
+            // This is rain-only; snow keeps its white tint and its own maxAlpha.
+            int color;
+            boolean isRain = texture.equals(RAIN_LOCATION);
+            if (isRain && isNight()) {
+                // Darker, desaturated blue-grey for night rain. Keep alpha as-is, only tint
+                // the RGB so the streaks don't glow against the dark sky.
+                int r = 0x5A;
+                int g = 0x5E;
+                int b = 0x6B;
+                int a = Mth.clamp((int) (alpha * 255.0f), 0, 255);
+                color = (a << 24) | (r << 16) | (g << 8) | b;
+            } else {
+                color = ARGB.white(alpha);
+            }
 
             // The orientation table is indexed by the column's offset from the camera, biased to the
             // table centre. Columns beyond the table (a radius option larger than 16) would index out of

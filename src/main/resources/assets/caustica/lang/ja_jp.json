@@ -108,5 +108,7 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-	"caustica.options.rt.tonemapOperator.psychov": "Psychov"
+	"caustica.options.rt.tonemapOperator.psychov": "Psychov",
+	"caustica.options.rt.weatherDensity": "天候密度",
+	"caustica.options.rt.weatherDensity.tooltip": "雨/雪の柱がどれだけ描画されるか、バニラに対する割合。0% = なし、100% = バニラ量。"
 }

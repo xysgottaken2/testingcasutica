@@ -108,5 +108,7 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-	"caustica.options.rt.tonemapOperator.psychov": "Psychov"
+	"caustica.options.rt.tonemapOperator.psychov": "Psychov",
+	"caustica.options.rt.weatherDensity": "天气密度",
+	"caustica.options.rt.weatherDensity.tooltip": "绘制多少雨/雪柱，以原版为100%。0% = 无，100% = 原版数量。"
 }

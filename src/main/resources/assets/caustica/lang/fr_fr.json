@@ -108,5 +108,7 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-	"caustica.options.rt.tonemapOperator.psychov": "Psychov"
+	"caustica.options.rt.tonemapOperator.psychov": "Psychov",
+	"caustica.options.rt.weatherDensity": "Densité Météo",
+	"caustica.options.rt.weatherDensity.tooltip": "Combien de colonnes de pluie/neige sont dessinées, en pourcentage de la vanilla. 0% = aucune, 100% = quantité vanilla."
 }

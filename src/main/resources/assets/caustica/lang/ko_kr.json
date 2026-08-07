@@ -108,5 +108,7 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-	"caustica.options.rt.tonemapOperator.psychov": "Psychov"
+	"caustica.options.rt.tonemapOperator.psychov": "Psychov",
+	"caustica.options.rt.weatherDensity": "날씨 밀도",
+	"caustica.options.rt.weatherDensity.tooltip": "비/눈 기둥이 얼마나 그려지는지, 바닐라 대비 백분율. 0% = 없음, 100% = 바닐라 양."
 }

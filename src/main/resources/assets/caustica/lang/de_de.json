@@ -108,5 +108,7 @@
 	"caustica.options.rt.debugHeader": "Debug",
 	"caustica.options.rt.dhHeader": "Distant Horizons",
 	"caustica.options.rt.exposureHeader": "Exposure",
-	"caustica.options.rt.tonemapOperator.psychov": "Psychov"
+	"caustica.options.rt.tonemapOperator.psychov": "Psychov",
+	"caustica.options.rt.weatherDensity": "Wetterdichte",
+	"caustica.options.rt.weatherDensity.tooltip": "Wie viele Regen-/Schneesäulen gezeichnet werden, in Prozent von Vanilla. 0% = keine, 100% = Vanilla-Menge."
 }
