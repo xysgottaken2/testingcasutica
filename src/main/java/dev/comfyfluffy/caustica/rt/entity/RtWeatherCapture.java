@@ -62,6 +62,7 @@ import java.util.List;
  * tile — and it works here because the bindless entity sampler is created with {@code REPEAT} addressing
  * in all three axes, so the coordinate wraps instead of clamping the whole column to one stretched texel.
  */
+// CI probe: verify build after artifact quota cleared (no functional change)
 public final class RtWeatherCapture {
     public static final RtWeatherCapture INSTANCE = new RtWeatherCapture();
 
