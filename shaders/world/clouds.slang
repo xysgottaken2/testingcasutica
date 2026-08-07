@@ -800,7 +800,7 @@ public CloudVolume cloudSegment(WorldPush push, float3 originRel, float3 dir, fl
     if (!cloudsEnabled(push)) {
         return result;
     }
-    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC && classicTextureReady(push)) {
+    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
         return cloudClassicAnalytic(push, originRel, dir, maxDistance, ambient, highQuality);
     }
     // A deck with real thickness is a VOLUME for both styles — that is what makes the classic clouds

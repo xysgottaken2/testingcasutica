@@ -1404,7 +1404,17 @@ public final class RtComposite {
         float stormLight = 1.0f - 0.50f * thunder;
         float rainSky = 1.0f - 0.55f * rain;
         float stormSky = 1.0f - 0.45f * thunder;
-        return new WeatherState(rain, thunder, rainSky * stormSky, rainLight * stormLight);
+        // When the sky is fully overcast (classic cubes filling the sky cube-by-cube), the sun
+        // must not shine through — it would look like light leaking through a solid ceiling.
+        // Scale the direct light to 0 when overcast is 1, but keep the sky's own grey fill
+        // (skyDarken) so the world is dim grey, not black. Volumetric keeps its own light
+        // handling, but classic overcast should be sunless.
+        float overcastForLight = Math.clamp(rain + thunder * 0.15f, 0f, 1f);
+        float sunOvercastFade = 1.0f - overcastForLight;
+        // Keep a tiny 3% to avoid pure black in the path tracer when the sky is also darkened,
+        // but make it visually sunless.
+        sunOvercastFade = Math.max(0.03f, sunOvercastFade);
+        return new WeatherState(rain, thunder, rainSky * stormSky, rainLight * stormLight * sunOvercastFade);
     }
 
     /**
