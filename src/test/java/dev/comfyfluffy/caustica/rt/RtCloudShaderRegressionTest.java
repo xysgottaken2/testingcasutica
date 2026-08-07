@@ -94,9 +94,9 @@ final class RtCloudShaderRegressionTest {
                 "the deck must close CONTINUOUSLY as coverage ramps — a hard threshold pops the sky");
         assertTrue(shown.contains("cloudClosed(push)"),
                 "a closed ceiling must show every cell — the authored pattern's holes are weather");
-        assertTrue(density.contains("cloudClosed(push)"),
-                "a closed ceiling must march a uniform slab instead of the open pattern");
-        assertTrue(classic.contains("if (!cloudClosed(push)) {\n        alpha *= push.cloudColor.w;"),
+        assertTrue(density.contains("cloudClosedAmount(push)"),
+                "the volumetric density must blend toward the closed slab CONTINUOUSLY, not jump");
+        assertTrue(classic.contains("alpha *= push.cloudColor.w;"),
                 "the closed ceiling must drop vanilla's ~0.8 base opacity so the slab reads fully closed");
     }
 
