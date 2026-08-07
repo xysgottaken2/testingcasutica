@@ -143,6 +143,29 @@ public float cloudShadowStrength(WorldPush push) {
     return clamp(push.clouds.z, 0.0, 1.0);
 }
 
+bool classicTextureReady(WorldPush push) { return push.cloudCellsAddr != 0 && push.cloudCellsWidth > 0 && push.cloudCellsHeight > 0; }
+bool isClassicCellOccupied(WorldPush push, int2 cell) {
+    if (push.clouds.x >= 0.999) {
+        return true;
+    }
+    if (!classicTextureReady(push)) {
+        float2 centre = (float2(cell) + 0.5) * CLOUD_CELL_BLOCKS;
+        float thr = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+        return cloudCoverageField(centre) > thr + CLOUD_EDGE_SOFTNESS * 0.5;
+    }
+    int w = int(push.cloudCellsWidth);
+    int h = int(push.cloudCellsHeight);
+    int ix = cell.x % w; if (ix < 0) ix += w;
+    int iz = cell.y % h; if (iz < 0) iz += h;
+    uint idx = uint(ix + iz * w);
+    ConstPtr<uint> cells = ConstPtr<uint>(push.cloudCellsAddr);
+    return cells[idx] != 0;
+}
+float classicCoverageAt(WorldPush push, float2 samplePos) {
+    if (push.clouds.x >= 0.999) return 1.0;
+    int2 cell = int2(floor(samplePos / CLOUD_CELL_BLOCKS));
+    return isClassicCellOccupied(push, cell) ? 1.0 : 0.0;
+}
 // Integer cell hash. Integer mixing rather than the sky's float hash13: the sample coordinate here is
 // a world position that can be thousands of blocks from the anchor, where a float hash starts losing
 // mantissa bits and the pattern degenerates into stripes. The mask is what makes the field periodic.
@@ -191,25 +214,11 @@ public float cloudCoverageField(float2 samplePos) {
  */
 public float cloudCoverage(WorldPush push, float2 samplePos) {
     float cov = clamp(push.clouds.x, 0.0, 1.0);
-    // Solid overcast (bug 3): when coverage has been pushed to 1 by heavy rain, the sky must be
-    // fully closed even where the procedural field has holes. Without this, rain*0.85 left holes.
-    if (cov >= 0.999) {
-        return 1.0;
+    if (cov >= 0.999) return 1.0;
+    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
+        return classicCoverageAt(push, samplePos);
     }
     float threshold = 1.0 - cov;
-    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC) {
-        // Snap to the cell centre so every point inside one cell gets the identical answer -> hard,
-        // axis-aligned edges exactly on the 12-block grid.
-        //
-        // The +EDGE*0.5 offset makes the two styles cover the SAME fraction of sky. The volumetric
-        // ramp crosses 0.5 at threshold + EDGE/2, so a hard cut at the bare threshold would call every
-        // partially-covered cell "full" and leave the classic sky markedly more overcast than the
-        // volumetric one at an identical coverage setting — switching style would look like the weather
-        // changed. Cutting at the ramp's own midpoint is what keeps them equivalent (measured: mean
-        // coverage 0.32 vs 0.36, and it is also where the correlation between the two peaks).
-        float2 cellCentre = (floor(samplePos / CLOUD_CELL_BLOCKS) + 0.5) * CLOUD_CELL_BLOCKS;
-        return cloudCoverageField(cellCentre) > threshold + CLOUD_EDGE_SOFTNESS * 0.5 ? 1.0 : 0.0;
-    }
     return smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, cloudCoverageField(samplePos));
 }
 
@@ -325,6 +334,103 @@ public float cloudSunShadow(WorldPush push, float3 pointRel, float3 lightDir) {
     float2 samplePos = push.cloudAnchor.xy + pointRel.xz + lightDir.xz * t;
     float alpha = clamp(cloudCoverage(push, samplePos) * clamp(push.clouds.y, 0.0, 1.0), 0.0, 1.0);
     return 1.0 - strength * alpha;
+}
+
+// ---- Classic analytic (authored texture) ----------------------------------------------
+
+CloudVolume cloudClassicAnalytic(WorldPush push, float3 originRel, float3 dir, float maxDistance, float3 skyBehind, bool highQuality) {
+    CloudVolume result;
+    result.scatter = float3(0.0, 0.0, 0.0);
+    result.transmittance = 1.0;
+    if (!cloudsEnabled(push)) {
+        return result;
+    }
+    float thickness = max(push.cloudAnchor.z, 4.0);
+    float deckCentre = push.clouds.w;
+    float slabBottom = deckCentre - thickness * 0.5 - originRel.y;
+    float slabTop = deckCentre + thickness * 0.5 - originRel.y;
+    float t0, t1;
+    if (abs(dir.y) < 1.0e-4) {
+        if (slabBottom > 0.0 || slabTop < 0.0) {
+            return result;
+        }
+        t0 = 0.0;
+        t1 = push.cloudAnchor.w;
+    } else {
+        float ta = slabBottom / dir.y;
+        float tb = slabTop / dir.y;
+        t0 = min(ta, tb);
+        t1 = max(ta, tb);
+    }
+    t0 = max(t0, 0.0);
+    t1 = min(t1, min(maxDistance, push.cloudAnchor.w));
+    t1 = min(t1, t0 + thickness * CLOUD_MAX_SLAB_CROSSINGS);
+    if (t1 <= t0) {
+        return result;
+    }
+    float horizon = length(dir.xz) * t0;
+    float fade = 1.0 - smoothstep(push.cloudAnchor.w * 0.55, push.cloudAnchor.w, horizon);
+    if (fade <= 0.0) {
+        return result;
+    }
+    float halfThickness = max(thickness, 0.5) * 0.5;
+    float deckRel = deckCentre - originRel.y;
+    float crossFade = smoothstep(halfThickness * 0.5, halfThickness * 1.5, abs(deckRel));
+    if (crossFade <= 0.0) {
+        return result;
+    }
+    fade *= crossFade;
+    float opacity = clamp(push.clouds.y, 0.0, 1.0);
+    float2 anchor = push.cloudAnchor.xy;
+    float2 startPos = anchor + originRel.xz + dir.xz * t0;
+    int2 startCell = int2(floor(startPos / CLOUD_CELL_BLOCKS));
+    if (isClassicCellOccupied(push, startCell)) {
+        CloudHit h;
+        h.hit = true;
+        h.samplePos = startPos;
+        h.distance = t0;
+        h.fade = fade;
+        h.fromBelow = deckRel > 0.0;
+        float alpha = clamp(opacity * fade, 0.0, 1.0);
+        result.scatter = cloudRadianceClassic(push, h, dir, skyBehind) * alpha;
+        result.transmittance = 1.0 - alpha;
+        return result;
+    }
+    float2 invDir = float2(dir.x != 0.0 ? 1.0 / dir.x : 1.0e9, dir.z != 0.0 ? 1.0 / dir.z : 1.0e9);
+    int2 step = int2(dir.x > 0.0 ? 1 : -1, dir.z > 0.0 ? 1 : -1);
+    float2 cellOrigin = float2(startCell) * CLOUD_CELL_BLOCKS;
+    float2 nextBoundary = cellOrigin + float2(step.x > 0 ? CLOUD_CELL_BLOCKS : 0.0, step.y > 0 ? CLOUD_CELL_BLOCKS : 0.0);
+    float2 tMax = (nextBoundary - (anchor + originRel.xz)) / dir.xz;
+    float2 tDelta = float2(12.0 / max(abs(dir.x), 1.0e-6), 12.0 / max(abs(dir.z), 1.0e-6));
+    int2 curCell = startCell;
+    float curT = t0;
+    for (int i = 0; i < 256; i++) {
+        if (tMax.x < tMax.y) {
+            curT = tMax.x;
+            tMax.x += tDelta.x;
+            curCell.x += step.x;
+        } else {
+            curT = tMax.y;
+            tMax.y += tDelta.y;
+            curCell.y += step.y;
+        }
+        if (curT > t1) {
+            break;
+        }
+        if (isClassicCellOccupied(push, curCell)) {
+            CloudHit h;
+            h.hit = true;
+            h.samplePos = anchor + originRel.xz + dir.xz * curT;
+            h.distance = curT;
+            h.fade = fade;
+            h.fromBelow = deckRel > 0.0;
+            float alpha = clamp(opacity * fade, 0.0, 1.0);
+            result.scatter = cloudRadianceClassic(push, h, dir, skyBehind) * alpha;
+            result.transmittance = 1.0 - alpha;
+            return result;
+        }
+    }
+    return result;
 }
 
 // ---- Classic (vanilla-style) shading -------------------------------------------------------------
@@ -693,6 +799,9 @@ public CloudVolume cloudSegment(WorldPush push, float3 originRel, float3 dir, fl
     result.transmittance = 1.0;
     if (!cloudsEnabled(push)) {
         return result;
+    }
+    if (cloudStyle(push) == CLOUD_STYLE_CLASSIC && classicTextureReady(push)) {
+        return cloudClassicAnalytic(push, originRel, dir, maxDistance, ambient, highQuality);
     }
     // A deck with real thickness is a VOLUME for both styles — that is what makes the classic clouds
     // actual boxes you can fly between rather than a decal. Only a thickness of (near) zero still takes

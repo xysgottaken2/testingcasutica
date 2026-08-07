@@ -106,6 +106,9 @@ public struct WorldPush {
     public float4   clouds;           // x coverage 0..1, y opacity 0..1, z shadow strength 0..1, w deck height (camera-relative blocks)
     public float4   cloudAnchor;      // xy wind-scrolled sample anchor (blocks, wrapped), z slab thickness, w view limit
     public float4   cloudColor;       // xyz linear rgb of EnvironmentAttributes.CLOUD_COLOR, w = 1
+    public uint64_t cloudCellsAddr;
+    public uint     cloudCellsWidth;
+    public uint     cloudCellsHeight;
     // Shader-only Parallax Occlusion Mapping (LabPBR _n alpha height field). Geometry and BLASes are
     // never rebuilt; a zero relief depth disables the effect entirely.
     public float4   parallaxParams;   // x relief depth, y height-march layer count, z unused, w max distance

@@ -68,6 +68,7 @@ import dev.comfyfluffy.caustica.rt.pipeline.RtExposure;
 import dev.comfyfluffy.caustica.rt.pipeline.RtPipeline;
 import dev.comfyfluffy.caustica.rt.terrain.RtTerrain;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.LongBuffer;
@@ -225,7 +226,11 @@ public final class RtComposite {
     // blocks overhead is already ~1750 blocks out. Keeping at least this many multiples of the deck's
     // height in view means the fade always stays down near the horizon where it belongs.
     private static final float CLOUD_VIEW_LIMIT_HEIGHT_MULTIPLE = 6.0f;
-
+    private static final Identifier CLOUDS_TEXTURE_LOCATION =
+            Identifier.withDefaultNamespace("textures/environment/clouds.png");
+    private static RtBuffer cloudCellsBuffer;
+    private static boolean cloudCellsDirty = true;
+    private static boolean cloudCellsLoadFailedLogged;
     // ---- Overworld distance haze (see overworldFog).
     //
     // The haze is calibrated so that terrain at the far plane keeps this fraction of its radiance. Below
@@ -774,6 +779,7 @@ public final class RtComposite {
         materialBindingsReady = false;
         setCelestialUvAtlas(0L);
         RtEntities.INSTANCE.onResourceReload();
+        cloudCellsDirty = true;
         RtContext ctx = RtContext.currentOrNull();
         if (ctx != null) {
             ctx.waitIdle();
@@ -1121,6 +1127,7 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
+            ensureCloudCells(ctx);
             new WorldPushData(
                     frameInvViewProj,
                     new Float3((float) (camX - terrain.blockX), (float) (camY - terrain.blockY),
@@ -1165,6 +1172,9 @@ public final class RtComposite {
                     clouds.clouds(),
                     clouds.anchor(),
                     cloudColorRgb(),
+                    cloudCellsAddress(),
+                    cloudCellsWidth(),
+                    cloudCellsHeight(),
                     // Shader-only POM: x relief depth (blocks), y fixed layer count, w fade distance.
                     parallaxParams(),
                     dimension,
@@ -1619,6 +1629,27 @@ public final class RtComposite {
         }
     }
 
+    private static void ensureCloudCells(RtContext ctx) {
+        if (!cloudCellsDirty && cloudCellsBuffer != null) return;
+        try { loadCloudCells(ctx); cloudCellsDirty = false; cloudCellsLoadFailedLogged = false; } catch (Throwable e) { if (!cloudCellsLoadFailedLogged) { cloudCellsLoadFailedLogged = true; CausticaMod.LOGGER.warn("Failed to load classic cloud texture", e); } }
+    }
+    private static void loadCloudCells(RtContext ctx) throws Exception {
+        var manager = Minecraft.getInstance().getResourceManager();
+        var res = manager.getResource(CLOUDS_TEXTURE_LOCATION).orElse(null);
+        if (res == null) throw new java.io.IOException("not found");
+        try (var in = res.open(); var img = com.mojang.blaze3d.platform.NativeImage.read(in)) {
+            int w = img.getWidth(); int h = img.getHeight();
+            int count = w*h; long bytes = (long)count*4L;
+            if (cloudCellsBuffer == null || cloudCellsBuffer.size != bytes) { if (cloudCellsBuffer != null) { ctx.waitIdle(); cloudCellsBuffer.destroy(); } cloudCellsBuffer = ctx.createBuffer(bytes, VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, "clouds"); }
+            java.nio.ByteBuffer m = org.lwjgl.system.MemoryUtil.memByteBuffer(cloudCellsBuffer.mapped, (int)bytes).order(java.nio.ByteOrder.nativeOrder());
+            m.clear();
+            for (int y=0; y<h; y++) for (int x=0; x<w; x++) { int c = img.getPixel(x,y); int a = (c>>>24)&0xFF; int occ = a<10?0:1; m.putInt((y*w+x)*4, occ); }
+            cloudCellsBuffer.flush(0, bytes);
+        }
+    }
+    private static long cloudCellsAddress() { return cloudCellsBuffer != null ? cloudCellsBuffer.deviceAddress : 0L; }
+    private static int cloudCellsWidth() { return cloudCellsBuffer != null ? 256 : 0; }
+    private static int cloudCellsHeight() { return cloudCellsBuffer != null ? 256 : 0; }
     /**
      * Derive the celestial light from Minecraft's time of day as typed values for {@link WorldPushData}.
      * Celestial angles come from the camera's {@link EnvironmentAttributeProbe} (partial-tick
@@ -1882,6 +1913,7 @@ public final class RtComposite {
             }
             atlasSampler = 0L;
         }
+        if (cloudCellsBuffer != null) { RtContext c2 = RtContext.currentOrNull(); if (c2 != null) c2.waitIdle(); cloudCellsBuffer.destroy(); cloudCellsBuffer=null; }
     }
 
     private long atlasSampler(RtContext ctx) {
