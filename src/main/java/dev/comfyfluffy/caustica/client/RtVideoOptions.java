@@ -43,6 +43,7 @@ public final class RtVideoOptions {
             entities(),
             particles(),
             weatherParticles(),
+            rainDensity(),
             waterWaves(),
             // POM: the on/off toggle followed by its tuning sliders, shader-only and safe live.
             parallaxEnabled(),
@@ -88,6 +89,7 @@ public final class RtVideoOptions {
             entities(),
             particles(),
             weatherParticles(),
+            rainDensity(),
             waterWaves(),
             handFov(),
         };
@@ -311,6 +313,15 @@ public final class RtVideoOptions {
      */
     private static OptionInstance<Boolean> weatherParticles() {
         return bool("caustica.options.rt.weatherParticles", CausticaConfig.Rt.Entities.WEATHER_ENABLED);
+    }
+
+    /**
+     * Rain/snow density, as a percentage of vanilla's column density. 100% is exactly vanilla; lower
+     * values thin the precipitation out so fewer drops fall. Does not change the weather simulation —
+     * only how much of it is drawn.
+     */
+    private static OptionInstance<Integer> rainDensity() {
+        return percent("caustica.options.rt.rainDensity", CausticaConfig.Rt.Entities.RAIN_DENSITY);
     }
 
     private static OptionInstance<Boolean> waterWaves() {

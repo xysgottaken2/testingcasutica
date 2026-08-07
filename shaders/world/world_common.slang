@@ -105,6 +105,16 @@ public struct WorldPush {
     // pushed raw so a mid-frame change takes effect on the next frame like every other RT option.
     public float4   clouds;           // x coverage 0..1, y opacity 0..1, z shadow strength 0..1, w deck height (camera-relative blocks)
     public float4   cloudAnchor;      // xy wind-scrolled sample anchor (blocks, wrapped), z slab thickness, w view limit
+    // Authored vanilla cloud cells (clouds.slang): points into the WorldPush BDA ring at the cell
+    // map RtCloudCells writes behind the ready mask — 8-byte header, then 256x256 occupancy/
+    // neighbour bytes, then 256x256 coverage-"shown" bytes. Zero = no map (clouds disabled),
+    // mirroring vanilla's failed-reload behaviour.
+    public uint64_t cloudCellsAddr;
+    // Vanilla's weather-resolved cloud colour (EnvironmentAttributes.CLOUD_COLOR via LevelExtractor,
+    // which Caustica does not cancel): xyz sRGB tint (clear ≈ white; rain greys it, thunder darkens)
+    // and w the base alpha — vanilla's clouds are ~80 % opaque even in clear weather, and the alpha
+    // is also the per-dimension presence gate (Nether/End resolve it to 0).
+    public float4   cloudColor;
     // Shader-only Parallax Occlusion Mapping (LabPBR _n alpha height field). Geometry and BLASes are
     // never rebuilt; a zero relief depth disables the effect entirely.
     public float4   parallaxParams;   // x relief depth, y height-march layer count, z unused, w max distance

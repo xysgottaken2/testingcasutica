@@ -78,6 +78,14 @@ public final class RtWeatherCapture {
     /** Max alpha for rain vs. snow, matching vanilla's two {@code renderInstances} calls. */
     private static final float RAIN_MAX_ALPHA = 1.0f;
     private static final float SNOW_MAX_ALPHA = 0.8f;
+    /**
+     * Player's rain density slider (0..1), as a fraction of vanilla's column density. 1 (default) is
+     * exactly vanilla; lower values thin the sheet out — fewer columns survive the coverage fade. Read
+     * through {@link #densityScale()} so the option is honoured even when the slider is hidden.
+     */
+    private static float densityScale() {
+        return Math.clamp(CausticaConfig.Rt.Entities.RAIN_DENSITY.value(), 0f, 1f);
+    }
 
     /**
      * Rain level below which no drops are drawn at all — the dead zone in {@link #visualIntensity}.
@@ -107,20 +115,12 @@ public final class RtWeatherCapture {
                 float deltaX = x - HALF_RAIN_TABLE_SIZE;
                 float deltaZ = z - HALF_RAIN_TABLE_SIZE;
                 float distance = Mth.length(deltaX, deltaZ);
-                if (distance < 1.0e-4f) {
-                    // The exact table centre is the column the camera is standing in: deltaX == deltaZ == 0,
-                    // so vanilla's -deltaZ/distance is 0/0 = NaN. Vanilla gets away with it because a NaN
-                    // vertex is simply dropped by the rasteriser. Here the quad is fed to a BLAS build
-                    // instead, and a NaN-cornered triangle poisons that node's bounding box — every ray
-                    // that tests it degenerates, which is exactly the thin vertical sliver that appeared
-                    // after standing still long enough for the camera to settle inside one cell.
-                    //
-                    // Any unit direction is correct for a column centred on the camera (it is seen from
-                    // every side at once), so pick a fixed one rather than propagating the NaN.
-                    columnSizeX[z * RAIN_TABLE_SIZE + x] = 1.0f;
-                    columnSizeZ[z * RAIN_TABLE_SIZE + x] = 0.0f;
-                    continue;
-                }
+                // The exact table centre is the column the camera is standing in: deltaX == deltaZ == 0,
+                // so vanilla's -deltaZ/distance is 0/0 = NaN and its rasteriser simply DROPS the NaN
+                // vertex — the column under the camera is never drawn. A NaN corner fed to a BLAS build
+                // would instead poison that node's bounding box (every ray testing it degenerates), so
+                // the same "don't draw the camera's own column" is reproduced with an explicit skip in
+                // captureColumns: the NaN stays here as the marker.
                 columnSizeX[z * RAIN_TABLE_SIZE + x] = -deltaZ / distance;
                 columnSizeZ[z * RAIN_TABLE_SIZE + x] = deltaX / distance;
             }
@@ -153,16 +153,17 @@ public final class RtWeatherCapture {
         if (state == null || state.intensity <= 0.0f || state.radius <= 0) {
             return 0;
         }
-        float intensity = visualIntensity(state.intensity);
+        float intensity = visualIntensity(state.intensity) * densityScale();
         if (intensity <= 0.0f) {
             return 0;
         }
         int captured = 0;
+        int[] tint = rainTint();
         try {
             captured += captureColumns(capture, out, state.rainColumns, camPos, RAIN_MAX_ALPHA,
-                    state.radius, intensity, RAIN_LOCATION, budget - captured);
+                    state.radius, intensity, RAIN_LOCATION, budget - captured, tint);
             captured += captureColumns(capture, out, state.snowColumns, camPos, SNOW_MAX_ALPHA,
-                    state.radius, intensity, SNOW_LOCATION, budget - captured);
+                    state.radius, intensity, SNOW_LOCATION, budget - captured, tint);
         } catch (Throwable t) {
             // Never take the whole RT frame down over weather: log once and render this frame dry.
             if (!loggedFailure) {
@@ -221,6 +222,22 @@ public final class RtWeatherCapture {
     }
 
     /**
+     * The storm-grey the rain should be. Vanilla tints rain by the sky's overcast; under Caustica the
+     * sky greys through the same {@code LevelRenderState.cloudColor} (weather-resolved
+     * {@code EnvironmentAttributes.CLOUD_COLOR}) the cloud deck reads, so the drops take that value and
+     * read as part of the storm instead of a bright blue sheet against a grey sky. Falls back to a
+     * neutral grey if the state is unavailable.
+     */
+    private static final int[] rainTint() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.gameRenderer != null && mc.gameRenderer.gameRenderState() != null) {
+            int argb = mc.gameRenderer.gameRenderState().levelRenderState.cloudColor;
+            return new int[] {(argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF};
+        }
+        return new int[] {0x9E, 0x9E, 0x9E}; // vanilla rain-grey (CLOUD_COLOR blended toward grey)
+    }
+
+    /**
      * Emit one quad per column, exactly as {@code WeatherEffectRenderer.renderInstances} does.
      *
      * <p>Each column is a vertical sheet spanning {@code bottomY..topY} — the range vanilla already
@@ -231,7 +248,8 @@ public final class RtWeatherCapture {
      */
     private int captureColumns(RtEntityCapture capture, RtParticleCapture out,
                                List<WeatherEffectRenderer.ColumnInstance> columns, Vec3 camPos,
-                               float maxAlpha, int radius, float intensity, Identifier texture, int budget) {
+                               float maxAlpha, int radius, float intensity, Identifier texture, int budget,
+                               int[] tint) {
         if (columns == null || columns.isEmpty() || budget <= 0) {
             return 0;
         }
@@ -262,13 +280,15 @@ public final class RtWeatherCapture {
             // means — fewer drop samples survive with distance — so the far columns thin out instead of
             // changing colour.
             //
-            // The RGB stays WHITE on purpose. An earlier version also scaled RGB by the same factor to
-            // reproduce the fade, but tint is not opacity: world.rchit multiplies it straight into the
-            // albedo, so it *darkened* the drops rather than thinning them. That is what produced the
-            // patch of rain that looked brighter than the rest — near columns kept a bright tint while
-            // columns a few blocks further out were shaded progressively darker, and the boundary
-            // between two adjacent alpha steps read as a visible seam across the sheet.
-            int color = ARGB.white(alpha);
+            // The RGB must NOT be white: world.rchit multiplies it straight into the albedo, and the
+            // sheet texel is a white streak, so the quad's colour IS the rain's colour. Vanilla tints
+            // rain by the sky's overcast; under Caustica the sky greys through the same weather state,
+            // so the drops should match that grey instead of reading as bright blue/white against a
+            // grey sky — the reported "sky is grey but the rain is blue". The tint is the storm-grey
+            // of vanilla's cloud colour (LevelRenderState.cloudColor, weather-resolved). Tint here is
+            // not opacity: the distance fade stays purely in the alpha lane (fewer drop samples survive
+            // with distance) while the colour stays a uniform grey across the whole sheet.
+            int color = ARGB.color((int) (alpha * 255f), tint[0], tint[1], tint[2]);
 
             // The orientation table is indexed by the column's offset from the camera, biased to the
             // table centre. Columns beyond the table (a radius option larger than 16) would index out of
@@ -280,6 +300,14 @@ public final class RtWeatherCapture {
 
             float halfSizeX = columnSizeX[index] / 2.0f;
             float halfSizeZ = columnSizeZ[index] / 2.0f;
+            if (Float.isNaN(halfSizeX + halfSizeZ)) {
+                // The column under the camera: vanilla's 0/0 orientation is NaN and its rasteriser
+                // drops the quad, so the camera's own column is never drawn there either. Drawing it
+                // with any fixed facing makes a thin vertical sliver appear exactly when the player
+                // stands still (the quad is seen edge-on half the time and does not move with the
+                // camera), so reproduce vanilla: skip it.
+                continue;
+            }
             float x0 = relativeX - halfSizeX;
             float x1 = relativeX + halfSizeX;
             float y1 = (float) (column.topY() - camPos.y);

@@ -101,7 +101,11 @@ public final class RtComposite {
     private static final int READY_MASK_OFFSET = (WORLD_PUSH_SIZE + 15) & ~15;
     // Covers a 257x257x48-section window (render distance 128) with room to spare.
     private static final int READY_MASK_CAPACITY = 512 * 1024;
-    private static final int WORLD_PUSH_BUFFER_SIZE = READY_MASK_OFFSET + READY_MASK_CAPACITY;
+    // Authored vanilla cloud cell map (RtCloudCells), appended after the ready mask in the same slot:
+    // 8-byte header + 2 x 65536 cell bytes. Mirrors how the DH mask is transported — no new binding.
+    private static final int CLOUD_CELLS_OFFSET = (READY_MASK_OFFSET + READY_MASK_CAPACITY + 15) & ~15;
+    private static final int CLOUD_CELLS_BYTES = RtCloudCells.TOTAL_BYTES;
+    private static final int WORLD_PUSH_BUFFER_SIZE = CLOUD_CELLS_OFFSET + CLOUD_CELLS_BYTES;
     // Real inline push constants (fast constant-bank reads), separate from the WorldPush BDA ring above.
     // Hot addresses/frameIndex and raygen's debugView avoid unnecessary global-memory dereferences;
     // WorldPushConstantsData is generated from the same Slang module and owns this second ABI as well.
@@ -189,21 +193,20 @@ public final class RtComposite {
     private static final int WATER_ANCHOR_MASK = 4095;
     // ---- Cloud deck. These mirror clouds.slang and must stay in lock-step with it.
     //
-    // The classic field repeats every CLOUD_CELL_BLOCKS * CLOUD_PERIOD_CELLS = 12 * 512 = 6144 blocks,
-    // but the VOLUMETRIC field samples the same hash at CLOUD_VOLUMETRIC_SCALE (0.5), so in its own
-    // sampled space 6144 blocks is only half a period. Wrapping the anchor there landed mid-period and
-    // snapped the entire cloudscape to a different pattern — clouds visibly changing shape while
-    // walking, in the volumetric style only.
-    //
-    // The wrap must therefore be a whole period in EVERY space the field is sampled in: the base
-    // octaves, the domain warp, and both billow layers. The binding constraint is the largest octave
-    // divisor (CLOUD_WARP_DIV = 2.0 in clouds.slang):
+    // The deck has TWO shape sources (owner decision after testing the all-authored version): the
+    // classic style reads vanilla's authored cell map (RtCloudCells: 256x256 cells of 12 blocks,
+    // tiling every 3072 blocks with a mask — exactly periodic by construction), and the volumetric
+    // style reads the procedural coverage field at CLOUD_VOLUMETRIC_SCALE (0.5). The anchor wrap must
+    // therefore be a whole hash period in EVERY sampled space: the base octaves, the domain warp and
+    // both billow layers (the hash repeats every 512 cells per space). The binding constraint is the
+    // largest divisor (CLOUD_WARP_DIV = 2.0) over the smallest scale (CLOUD_VOLUMETRIC_SCALE = 0.5):
     //
     //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) / scale(0.5) = 24576 blocks
     //
-    // Every divisor there is a power of two, so all of these multiplies are exact in binary floating
-    // point and the wrap identity holds bit-for-bit rather than approximately. Verified: the full
-    // density function (base octaves + warp + billow) is now identical across a wrap to 0.0.
+    // 24576 is also a whole multiple of the cell map's 3072-block tile, so one anchor wrap stays
+    // seamless for every consumer. Every divisor/scale is a power of two, so all of these multiplies
+    // are exact in binary floating point and the wrap identity holds bit-for-bit rather than
+    // approximately.
     private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0 / 0.5;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
@@ -1121,6 +1124,21 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
+            // Authored cloud cell map + vanilla's weather-resolved cloud colour. Both live in the same
+            // ring slot as the WorldPush that references them, so the address is consistent by
+            // construction (same producer, same frame, same slot — no extra binding).
+            RtCloudCells.INSTANCE.ensureLoaded();
+            ByteBuffer cloudCells = MemoryUtil.memByteBuffer(
+                    pushBuf.mapped + CLOUD_CELLS_OFFSET, CLOUD_CELLS_BYTES)
+                    .order(ByteOrder.nativeOrder());
+            // Only publish the map when a consumer can actually read it: the shader's cloudsEnabled
+            // short-circuits on dimension/coverage/opacity, so writing 131 KB per ring slot per frame
+            // in the Nether, the End or with the sliders at zero is pure waste.
+            boolean cloudMapReady = dimension == DIMENSION_OVERWORLD
+                    && clouds.clouds().x() > 0f && clouds.clouds().y() > 0f
+                    && RtCloudCells.INSTANCE.writeFrame(cloudCells, clouds.clouds().x());
+            long cloudCellsAddress = cloudMapReady ? pushBuf.deviceAddress + CLOUD_CELLS_OFFSET : 0L;
+            Float4 cloudColor = cloudColor(level);
             new WorldPushData(
                     frameInvViewProj,
                     new Float3((float) (camX - terrain.blockX), (float) (camY - terrain.blockY),
@@ -1164,12 +1182,16 @@ public final class RtComposite {
                     ambientFog(dimension, weather, sky.sunDir().w()),
                     clouds.clouds(),
                     clouds.anchor(),
+                    cloudCellsAddress,
+                    cloudColor,
                     // Shader-only POM: x relief depth (blocks), y fixed layer count, w fade distance.
                     parallaxParams(),
                     dimension,
                     featureFlags()
             ).write(push);
-            pushBuf.flush(0L, Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes));
+            // Flush through the cell map region so the ring slot carries the whole hand-off payload.
+            pushBuf.flush(0L, Math.max(WORLD_PUSH_SIZE,
+                    Math.max(READY_MASK_OFFSET + readyMaskBytes, CLOUD_CELLS_OFFSET + CLOUD_CELLS_BYTES)));
             // Upload any entity textures registered this frame into the bindless set before the trace.
             RtEntityTextures.INSTANCE.uploadPending(active, atlasSampler(ctx));
             // Build the entity BLAS, the TLAS that references it and the terrain BLAS, then the trace.
@@ -1343,6 +1365,14 @@ public final class RtComposite {
      */
     private record WeatherState(float rain, float thunder, float skyDarken, float lightAttenuation) {
         static final WeatherState CLEAR = new WeatherState(0f, 0f, 1f, 1f);
+        /**
+         * Global rain over a biome with no precipitation (desert, savanna): the storm is elsewhere, but
+         * the sky still carries the overcast haze. The sun is dimmed and diffused (not full), the sky
+         * greys a little, and no drops fall — rain stays 0 so the weather columns and the rain-lane
+         * effects stay off. The world must not go black: no precipitation means no storm darkness, only
+         * a thin overcast veil.
+         */
+        static final WeatherState DRY_OVERCAST = new WeatherState(0f, 0f, 0.9f, 0.75f);
     }
 
     /**
@@ -1382,6 +1412,20 @@ public final class RtComposite {
         float rain = Math.clamp(level.getRainLevel(partial), 0f, 1f);
         if (rain <= 0f) {
             return WeatherState.CLEAR;
+        }
+        // Biome gate: the world's rain level is GLOBAL — during a storm every biome reports rain>0,
+        // even deserts and savannas where no drop falls. The sun/sky must only dim where precipitation
+        // actually happens, or a desert under a distant storm would go dark with no rain to show for
+        // it. Vanilla's own precipitation test is per-biome (and per-temperature for snow), so mirror
+        // it for the camera's biome. getBiomeFabric is the mod's existing accessor (see
+        // RtSectionSnapshots) — the 26.2 ClientLevel API is not a plain getBiome(BlockPos).
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.player != null && mc.player.blockPosition() != null
+                && !level.getBiomeFabric(mc.player.blockPosition()).value().hasPrecipitation()) {
+            // No precipitation here: the storm is elsewhere. The sun softens (diffused, not piercing
+            // through the overcast) and the sky carries a thin grey veil, but nothing goes black and no
+            // drops fall — see DRY_OVERCAST.
+            return WeatherState.DRY_OVERCAST;
         }
         // getThunderLevel already includes the rain level as a factor in vanilla; clamp defensively so a
         // datapack or mod that drives it independently cannot push the multipliers negative.
@@ -1504,24 +1548,28 @@ public final class RtComposite {
     }
 
     /**
-     * Resolve this frame's cloud deck into the two {@link WorldPushData} lanes {@code clouds.slang}
-     * reads: {@code clouds} (coverage, opacity, shadow strength, camera-relative deck height) and
-     * {@code cloudAnchor} (wind-scrolled sample anchor, slab thickness, view limit).
+     * Resolve this frame's cloud deck into the {@link WorldPushData} lanes {@code clouds.slang} reads:
+     * {@code clouds} (coverage, opacity, shadow strength, camera-relative deck height), {@code cloudAnchor}
+     * (wind-scrolled sample anchor, slab thickness, view limit), {@code cloudCellsAddr} (authored cell
+     * map, {@link RtCloudCells}) and {@code cloudColor} (vanilla's weather-resolved cloud colour).
      *
-     * <p><b>Coverage and weather.</b> Rain pushes coverage toward fully overcast on top of the
-     * configured clear-sky value, and thunder finishes closing it. That is the same rain/thunder pair
-     * the sky darkening and the light attenuation come from, so a storm's dark sky, its dimmer sunlight
-     * and its solid cloud cover are three readings of one state and cannot drift apart — the invariant
-     * {@link #weatherState} already establishes for the rest of the weather look. It also fixes the
-     * thing the sky shader always claimed but could never show: it hides the sun "behind the cloud
-     * deck" during rain, and now there is an actual deck there to hide it.
+     * <p><b>Coverage and weather.</b> Rain drives coverage (and opacity) to fully overcast on top of the
+     * configured clear-sky value, and thunder only makes the transition happen earlier. With the
+     * authored cell map that means "show the whole vanilla deck" — the texture itself never adds cells,
+     * exactly like vanilla. It is the same rain/thunder pair the sky darkening and the light attenuation
+     * come from, so a storm's dark sky, its dimmer sunlight and its closed cloud cover are three
+     * readings of one state and cannot drift apart — the invariant {@link #weatherState} already
+     * establishes for the rest of the weather look. It also fixes the thing the sky shader always
+     * claimed but could never show: it hides the sun "behind the cloud deck" during rain, and now there
+     * is an actual deck there to hide it.
      *
      * <p><b>The anchor.</b> Clouds drift with world time, so the sample offset grows without bound; the
      * camera can also stand 30M blocks out at the world border. Either alone would destroy float
-     * precision in the shader's noise lookup (visible as the pattern coarsening into stripes and then
-     * freezing). The anchor is therefore reduced modulo the cloud field's exact repeat period, which is
-     * seamless precisely because {@code clouds.slang} wraps its cell hash to that same period, so the
-     * wrapped anchor selects the identical pattern the unwrapped one would have.
+     * precision in the shader lookups (visible as the pattern coarsening into stripes and then
+     * freezing). The anchor is therefore reduced modulo the deck's exact repeat period: a whole number
+     * of cell-map tiles (3072 blocks) and simultaneously a whole hash period of every volumetric noise
+     * octave (see {@link #CLOUD_FIELD_PERIOD_BLOCKS}), so the wrapped anchor selects the identical
+     * pattern the unwrapped one would have.
      *
      * <p><b>Height.</b> Pushed camera-relative, matching every other position in the push (the terrain
      * rebase means absolute world coordinates are not meaningful in the shader).
@@ -1534,9 +1582,14 @@ public final class RtComposite {
             // Neither the Nether nor the End has a sky to put clouds in; both draw a closed skybox.
             return CloudPush.NONE;
         }
-        // Overcast ramp: rain closes most of the remaining gap toward full cover, thunder the rest.
-        float overcast = Math.min(1f, weather.rain() * 0.85f + weather.thunder() * 0.15f);
+        // Overcast ramp: rain alone closes the deck — the authored texture never adds cells, so full
+        // rain shows the ENTIRE vanilla deck (coverage 1 = the full 20.4 % cell set) and thunder only
+        // makes the transition happen earlier. Opacity closes with it, and the shadow is floored so a
+        // closed ceiling dims every receiver instead of dappling it through the texture's holes.
+        float overcast = Math.min(1f, weather.rain() + weather.thunder() * 0.25f);
         coverage = coverage + (1f - coverage) * overcast;
+        opacity = opacity + (1f - opacity) * overcast;
+        shadow = Math.max(shadow, overcast * 0.95f);
         float height = CausticaConfig.Rt.Composite.CLOUD_HEIGHT.value();
         // Wind drift, in blocks, from world time. Wrapped with the anchor below.
         double gameTime = 0.0;
@@ -1550,11 +1603,11 @@ public final class RtComposite {
         // on, so the pattern stays pinned to the world while the camera moves through it.
         double anchorX = camX + drift;
         double anchorZ = camZ;
-        // Player-controlled thickness, shared by both styles. At 0 the shader takes its flat-plane path
-        // (see CLOUD_FLAT_EPSILON in clouds.slang), so the slider bottoming out is genuinely a flat deck
-        // rather than a degenerate zero-length march.
-        float thickness = Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
-                * CLOUD_MAX_THICKNESS_BLOCKS;
+        // Player-controlled thickness = the box height / slab depth for both styles, never thinner than
+        // vanilla's own 4-block extrusion (the slider's floor is the vanilla look). The old flat-plane
+        // path is gone: the rework replaced it with analytic 4-block boxes (see clouds.slang).
+        float thickness = Math.max(4f, Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
+                * CLOUD_MAX_THICKNESS_BLOCKS);
         // The slider sets the deck's BASE, but the shader's slab is centred on the pushed height, so the
         // half-thickness is added back here. Pushing the base directly would make the clouds appear to
         // sink as the thickness slider is raised (the slab would grow downward as well as upward), which
@@ -1566,6 +1619,25 @@ public final class RtComposite {
                         Math.clamp(shadow, 0f, 1f), (float) (deckCentre - cameraY)),
                 new Float4(wrapCloudAnchor(anchorX), wrapCloudAnchor(anchorZ),
                         thickness, cloudViewLimit(deckCentre - (float) cameraY)));
+    }
+
+    /**
+     * Vanilla's weather-resolved cloud colour, read straight from the {@code LevelRenderState} that
+     * {@code LevelExtractor.extract} fills every frame (the extraction Caustica does not cancel — only
+     * {@code LevelRenderer.render} is). This is {@code EnvironmentAttributes.CLOUD_COLOR} already
+     * resolved by the game: clear ≈ white, rain blends it toward grey, thunder darkens it — the mod
+     * never re-implements the weather ramp, it just reproduces the value. The alpha doubles as the
+     * per-dimension presence gate (Nether/End resolve it to 0), which {@code clouds.slang}'s
+     * {@code cloudsEnabled} checks exactly like vanilla's own {@code ARGB.alpha(cloudColor) > 0}.
+     */
+    private static Float4 cloudColor(ClientLevel level) {
+        Minecraft mc = Minecraft.getInstance();
+        if (level == null || mc == null || mc.gameRenderer == null || mc.gameRenderer.gameRenderState() == null) {
+            return new Float4(0f, 0f, 0f, 0f);
+        }
+        int argb = mc.gameRenderer.gameRenderState().levelRenderState.cloudColor;
+        return new Float4(((argb >> 16) & 0xFF) / 255f, ((argb >> 8) & 0xFF) / 255f,
+                (argb & 0xFF) / 255f, ((argb >> 24) & 0xFF) / 255f);
     }
 
     /**

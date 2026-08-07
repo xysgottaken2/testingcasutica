@@ -80,25 +80,29 @@ final class RtWeatherCaptureTest {
 
     /**
      * The table's exact centre is the column the camera stands in, where vanilla's {@code -deltaZ/dist}
-     * is 0/0.
+     * is 0/0 = NaN. Vanilla tolerates it because its rasteriser silently drops a NaN vertex — the
+     * column under the camera is simply never drawn there.
      *
-     * <p>Vanilla tolerates the resulting NaN because the rasteriser silently drops a NaN vertex. Caustica
-     * feeds these quads to a BLAS build instead, where a NaN corner poisons the acceleration structure
-     * node and every ray tested against it degenerates — which is what produced the thin vertical sliver
-     * that appeared after standing still long enough for the camera to settle into one cell. Assert the
-     * capture substitutes a finite direction rather than inheriting vanilla's NaN.
+     * <p>Caustica cannot feed that quad to a BLAS build: a NaN corner poisons the acceleration
+     * structure node and every ray tested against it degenerates — the thin vertical sliver that
+     * appeared after standing still long enough for the camera to settle into one cell. The capture
+     * therefore reproduces vanilla's outcome explicitly: the NaN stays in the table as the marker, and
+     * {@code captureColumns} skips the column before any vertex is emitted.
      */
     @Test
-    void tableCentreIsFiniteRatherThanVanillasNaN() throws IOException {
+    void tableCentreColumnIsSkippedLikeVanilla() throws IOException {
         // The raw vanilla expression really is NaN at the centre — this is the hazard being guarded.
         float degenerate = -0.0f / 0.0f;
         assertTrue(Float.isNaN(degenerate), "0/0 must be NaN, or this test is not testing anything");
 
         String src = Files.readString(source());
-        assertTrue(src.contains("distance < 1.0e-4f"),
-                "the degenerate centre cell must be detected before dividing");
-        // A NaN reaching the BLAS is the actual failure mode, so make the reason unmissable in-source.
-        assertTrue(src.contains("NaN"), "the centre-cell guard must explain the NaN/BLAS hazard");
+        // The centre must keep vanilla's raw NaN formula (it is the marker), not a substitute direction.
+        assertTrue(src.contains("-deltaZ / distance"),
+                "the orientation table must reproduce vanilla's raw formula, NaN centre included");
+        // ...and the capture must skip that column before any vertex reaches the BLAS.
+        assertTrue(src.contains("Float.isNaN(halfSizeX + halfSizeZ)"),
+                "the camera's own column must be skipped in captureColumns, like vanilla drops the NaN quad");
+        assertTrue(src.contains("NaN"), "the centre-cell skip must explain the NaN/BLAS hazard");
     }
 
     /**
@@ -141,15 +145,18 @@ final class RtWeatherCaptureTest {
      * <p>An earlier version also scaled the vertex RGB by the fade to reproduce vanilla's falloff. But
      * tint is not opacity: {@code world.rchit} multiplies it straight into the albedo, so far columns
      * were rendered *darker* rather than thinner, and the step between two adjacent fade values showed up
-     * as a visible seam — one patch of rain brighter than the rest. Pin the white RGB so this cannot
-     * regress.
+     * as a visible seam — one patch of rain brighter than the rest. The RGB is now the storm-grey tint
+     * (from the weather-resolved cloud colour) so the drops match the grey sky instead of reading blue;
+     * the distance fade stays purely in the alpha/coverage lane.
      */
     @Test
     void distanceFadeUsesCoverageNotTint() throws IOException {
         String src = Files.readString(source());
 
-        assertTrue(src.contains("ARGB.white(alpha)"),
-                "column colour must stay white: the fade belongs in alpha/coverage, not in the tint");
+        assertTrue(src.contains("ARGB.color((int) (alpha * 255f), tint[0], tint[1], tint[2])"),
+                "column colour must be the storm-grey tint (not white, not fade-scaled RGB)");
+        assertFalse(src.contains("ARGB.white(alpha)"),
+                "white rain against a grey sky reads blue — the tint must come from the weather");
         assertFalse(src.contains("ARGB.color(level, level, level, level)"),
                 "scaling RGB by the fade darkens distant rain instead of thinning it");
     }

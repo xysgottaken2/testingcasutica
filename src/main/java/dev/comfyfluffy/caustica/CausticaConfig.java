@@ -643,10 +643,10 @@ public final class CausticaConfig {
             /**
              * Cloud thickness, 0..1, as a fraction of {@link #CLOUD_MAX_THICKNESS_BLOCKS}.
              *
-             * <p>0 is a flat sheet (the deck collapses to a plane and takes the cheap non-marched
-             * path); 1 is a deep bank. Applies to BOTH styles — classic clouds become real vanilla-like
-             * boxes with lit tops and shaded sides rather than a decal, and volumetric clouds gain the
-             * depth their shading needs to read as cumulus.
+             * <p>0 is vanilla's own 4-block extrusion (the authored cell map's boxes are never thinner
+             * than that); 1 is a deep bank. Applies to BOTH styles — classic clouds are vanilla-shaped
+             * boxes with lit tops and shaded sides, and volumetric clouds gain the depth their shading
+             * needs to read as cumulus.
              */
             public static final FloatSetting CLOUD_THICKNESS =
                     clampedFloat("caustica.rt.cloudThickness", "composite.cloud-thickness", 0.5f, 0.0f, 1.0f);
@@ -814,6 +814,15 @@ public final class CausticaConfig {
              */
             public static final BooleanSetting WEATHER_ENABLED =
                     bool("caustica.rt.weatherParticles", "particles.weather-enabled", true);
+            /**
+             * How dense the rain/snow sheet is, as a fraction of vanilla's column density. 1 (default)
+             * is exactly vanilla; lower values thin the precipitation out — the drops' coverage fade is
+             * scaled, so fewer columns survive and the sky reads clearer through the rain. This is the
+             * "rain amount" slider: it does not change the weather simulation, only how much of it is
+             * drawn.
+             */
+            public static final FloatSetting RAIN_DENSITY =
+                    clampedFloat("caustica.rt.rainDensity", "particles.rain-density", 1.0f, 0.0f, 1.0f);
             public static final BooleanSetting GLOW_ENABLED =
                     bool("caustica.rt.glow", "entities.glow.enabled", true);
             public static final BooleanSetting NAME_TAGS_ENABLED =
