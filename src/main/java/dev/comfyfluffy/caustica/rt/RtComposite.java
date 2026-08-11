@@ -165,6 +165,7 @@ public final class RtComposite {
     // it is simply never set anymore (the shader's nrdEnabled() is always false).
     private static final int FEATURE_NRD = 64;
     private static final int FEATURE_TAA = 128;
+    private static final int FEATURE_MASKED_FOG = 256;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -216,6 +217,10 @@ public final class RtComposite {
                 // shares the same exclusion.
                 flags |= FEATURE_TAA;
             }
+        }
+        boolean fogEnabled = CausticaConfig.Rt.Composite.FOG.value();
+        if (fogEnabled && CausticaConfig.Rt.Composite.MASKED_FOG.value()) {
+            flags |= FEATURE_MASKED_FOG;
         }
         return flags;
     }
@@ -536,6 +541,7 @@ public final class RtComposite {
     private float previousWaterWaveTime;
     private boolean waterWaveTimeValid;
     private long atlasSampler;
+    private long depthSampler;
     private boolean failed;
     private boolean loggedActive;
 
@@ -1263,7 +1269,8 @@ public final class RtComposite {
             worldPipeline.setStorageImage(output.view);
             bindGuideImages();
         }
-        displayPipeline.setImages(displayImage.view, rrOutput.view, exposure.image().view, hdrDisplayImage.view);
+        long depthSampler = depthSampler(ctx);
+        displayPipeline.setImages(displayImage.view, rrOutput.view, exposure.image().view, hdrDisplayImage.view, gDepth.view, depthSampler);
     }
 
     /**
@@ -1498,7 +1505,10 @@ public final class RtComposite {
                             weather.lightAttenuation()),
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the
                     // haze follows the same dusk curve as the light rather than switching at an angle.
-                    ambientFog(dimension, weather, sky.sunDir().w()),
+                    // Master FOG toggle: when off we push zero-density medium (completely clear air).
+                    CausticaConfig.Rt.Composite.FOG.value()
+                            ? ambientFog(dimension, weather, sky.sunDir().w())
+                            : new Float4(0f, 0f, 0f, 0f),
                     clouds.clouds(),
                     clouds.anchor(),
                     clouds.color(),
@@ -2477,6 +2487,13 @@ public final class RtComposite {
             }
             atlasSampler = 0L;
         }
+        if (depthSampler != 0L) {
+            RtContext ctx = RtContext.currentOrNull();
+            if (ctx != null) {
+                VK10.vkDestroySampler(ctx.vk(), depthSampler, null);
+            }
+            depthSampler = 0L;
+        }
     }
 
     private long atlasSampler(RtContext ctx) {
@@ -2498,6 +2515,27 @@ public final class RtComposite {
             }
         }
         return atlasSampler;
+    }
+
+    /** Nearest linear depth sampler for masked fog in display.comp (depth read-only). */
+    private long depthSampler(RtContext ctx) {
+        if (depthSampler == 0L) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkSamplerCreateInfo sci = VkSamplerCreateInfo.calloc(stack).sType$Default()
+                        .magFilter(VK10.VK_FILTER_LINEAR).minFilter(VK10.VK_FILTER_LINEAR)
+                        .mipmapMode(VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST)
+                        .addressModeU(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeV(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                        .addressModeW(VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+                LongBuffer p = stack.mallocLong(1);
+                if (VK10.vkCreateSampler(ctx.vk(), sci, null, p) != VK10.VK_SUCCESS) {
+                    throw new IllegalStateException("vkCreateSampler(depth sampler) failed");
+                }
+                depthSampler = p.get(0);
+                RtDebugLabels.name(ctx, VK10.VK_OBJECT_TYPE_SAMPLER, depthSampler, "masked fog depth sampler");
+            }
+        }
+        return depthSampler;
     }
 
     private static long blockAlbedoAtlasView() {

@@ -134,8 +134,10 @@ public final class RtVideoOptions {
 
     public static OptionInstance<?>[] effectsOptions() {
         return new OptionInstance<?>[] {
+            fog(),                    // master distance fog (path-traced ambient + masked)
             subsurfaceScattering(),
             weatherLighting(),
+            maskedFog(),
         };
     }
 
@@ -372,6 +374,25 @@ public final class RtVideoOptions {
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */
     private static OptionInstance<Boolean> weatherLighting() {
         return bool("caustica.options.rt.weatherLighting", CausticaConfig.Rt.Composite.WEATHER_LIGHTING);
+    }
+
+    /**
+     * Master distance fog toggle. Controls the path-traced ambient fog (Overworld haze + Nether/End medium)
+     * that is integrated into every ray. Also gates the masked (screen-space) fog below.
+     * Off = completely clear air (no distance haze at all).
+     */
+    private static OptionInstance<Boolean> fog() {
+        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /**
+     * Masked (depth-aware) fog. Applies cheap screen-space fog using the depth buffer so it stops at
+     * visible surfaces instead of bleeding through walls. Also modulates intensity in dark/low-exposure
+     * zones. Complements the path-traced ambient fog and is cheap for performance.
+     * Only has effect when the master "Fog" toggle is also on.
+     */
+    private static OptionInstance<Boolean> maskedFog() {
+        return bool("caustica.options.rt.maskedFog", CausticaConfig.Rt.Composite.MASKED_FOG);
     }
 
     /**
