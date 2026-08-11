@@ -254,11 +254,11 @@ void main() {
     vec3 ldr = tonemap(rt.rgb, exposure);
 
     // ---- Masked (depth-aware) fog / haze ----
-    // 100% AUTÊNTICO Caustica — reescrito do zero pra esse pipeline, sem copiar NADA de fork nenhum (nem do vorobey nem de mais ninguém).
+    // 100% AUTÊNTICO Caustica — reescrito do zero pra esse pipeline.
     // Screen-space exp fog com gDepth (para na geometria, zero bleed em paredes).
-    // Modulação própria pra zonas escuras/low-exposure (caves não ficam estranhas).
+    // Modulação forte pra zonas escuras/low-exposure (caves e interiores ficam quase sem fog).
     // Complementa o ambientFog path-traced do medium.slang, não substitui.
-    // Ativado via maskedFogDensity no push (config + FEATURE_MASKED_FOG).
+    // Ativado via maskedFogDensity no push (só quando FOG + MASKED_FOG estão ligados).
     // imageLoad direto no r32f.
     if (pc.maskedFogDensity > 0.0) {
         float viewZ = imageLoad(gDepthImage, pix).r;
@@ -266,15 +266,19 @@ void main() {
             float d = pc.maskedFogDensity * viewZ;
             float fogFactor = exp(-d);
 
-            // Curva darkMod 100% nossa (ajustada pro AgX/Psychov + nosso ambientFog)
+            // DarkMod MUITO agressivo pra caverna e áreas escuras.
+            // Em lum baixo (caverna) o fog praticamente some. Aumentado pra resolver "ainda tem muito fog nas caverna".
             float lum = dot(ldr, vec3(0.2126, 0.7152, 0.0722));
-            float darkMod = clamp(lum * 2.7 + 0.30, 0.30, 1.0);
+            float darkMod = clamp(lum * 18.0 + 0.003, 0.003, 1.0);
 
-            // Cor de haze feita pra combinar com o FOG_DAY_COLOR do RtComposite (nossa paleta)
-            vec3 hazeColor = vec3(0.050, 0.063, 0.087);
+            // Cor de haze (combina com ambientFog) — um pouco mais escura pra cavernas
+            vec3 hazeColor = vec3(0.040, 0.050, 0.068);
 
             vec3 fogged = ldr * fogFactor + hazeColor * (1.0 - fogFactor) * darkMod;
-            ldr = mix(ldr, fogged, 0.80);
+
+            // Mix controlado por darkMod: em cave quase zero fog (ainda mais forte).
+            float fogMix = 0.55 * darkMod;
+            ldr = mix(ldr, fogged, fogMix);
         }
     }
 
