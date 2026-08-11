@@ -303,6 +303,10 @@ public final class RtComposite {
     // valleys keep the distance haze while high ground and open sky stay clear (see fogHeightMask).
     private static final float FOG_HEIGHT_MASK_FULL_Y = 64f;   // sea level
     private static final float FOG_HEIGHT_MASK_CLEAR_Y = 200f;
+    // Enclosed (cave/building) probe: how far above the eye to scan for a solid block that would mean
+    // the camera has a ceiling overhead. Bounded so open air reads as open in a fixed number of lookups
+    // instead of walking the whole world column every frame.
+    private static final int FOG_ENCLOSED_SCAN_HEIGHT = 32;
     private static final Identifier SUN_ID = Identifier.withDefaultNamespace("sun");
     private static final Identifier[] MOON_IDS = createMoonIds();
     // Celestial rotation axis (the pole the sun/moon arc about): perpendicular to the east-west arc,
@@ -1505,7 +1509,8 @@ public final class RtComposite {
                     // haze follows the same dusk curve as the light rather than switching at an angle.
                     // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
                     // spaces (see overworldFog); the Nether/End keep their per-dimension fog.
-                    boolean cameraEnclosed = level != null && isCameraEnclosed(level, cameraBlockPos);
+                    boolean cameraEnclosed = level != null && isCameraEnclosed(level, camY, cameraBlockPos,
+                            level.getMinY() + level.getHeight());
                     ambientFog(dimension, weather, sky.sunDir().w(), camY, cameraEnclosed),
                     clouds.clouds(),
                     clouds.anchor(),
@@ -2057,11 +2062,20 @@ public final class RtComposite {
 
     /**
      * Whether the camera is inside an enclosed space (cave, mine, or under a roof/building) rather than
-     * under open sky. Uses {@link Level#canSeeSky}, which walks the MOTION_BLOCKING heightmap of the
-     * camera's column: a camera that cannot see the sky has a ceiling overhead.
+     * under open sky. Scans upward from just above the eye for a non-air block using only {@link
+     * Level#getBlockState}: a solid block overhead (a cave ceiling or a roof) means the space is
+     * enclosed. Bounded by {@code worldTop} and {@link #FOG_ENCLOSED_SCAN_HEIGHT} so open air reads as
+     * open in a fixed, small number of lookups instead of walking the whole world column every frame.
      */
-    private static boolean isCameraEnclosed(Level level, BlockPos eye) {
-        return !level.canSeeSky(eye);
+    private static boolean isCameraEnclosed(Level level, double camY, BlockPos.MutableBlockPos eye, int worldTop) {
+        int scanTop = Math.min(worldTop, Mth.floor(camY) + FOG_ENCLOSED_SCAN_HEIGHT);
+        for (int y = Mth.floor(camY) + 1; y < scanTop; y++) {
+            eye.set(eye.getX(), y, eye.getZ());
+            if (!level.getBlockState(eye).isAir()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
