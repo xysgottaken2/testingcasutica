@@ -23,8 +23,14 @@ public static const int   WAVE_COUNT = 10;            // λ = 14 m … 0.38 m (e
 public static const float WAVE_G = 9.81;
 public static const float2 WAVE_WIND = normalize(float2(1.0, 0.35)); // dominant travel direction
 public static const float WAVE_MEANDER = 1.1;         // crest phase-wobble amplitude (rad) on the long components
+// Anti-aliasing / noise floor for the spectrum. A zero footprint would sample every octave — including
+// the shortest 0.38 m chop — at whatever the ray cone resolves, which aliases the high-frequency wave
+// normals into a grainy shimmer on the surface and makes the point-sampled caustics speckle. Clamping the
+// footprint here keeps at least a small support under every evaluation so sub-footprint chop is culled
+// (it would be sub-pixel anyway), which smooths that grain while leaving the long swell untouched.
+public static const float WATER_MIN_FOOTPRINT = 0.35; // m
 public float waterWaveLodWeight(float wavelength, float footprint) {
-    float cyclesPerPixel = max(footprint, 0.0) / max(wavelength, 1.0e-4);
+    float cyclesPerPixel = max(footprint, WATER_MIN_FOOTPRINT) / max(wavelength, 1.0e-4);
     return 1.0 - smoothstep(0.25, 0.5, cyclesPerPixel);
 }
 

@@ -38,6 +38,8 @@
 	"caustica.options.rt.glow.tooltip": "Draw the vanilla Glowing-effect outline (through walls) around glowing entities.",
 	"caustica.options.rt.waterWaves": "Animated Water",
 	"caustica.options.rt.waterWaves.tooltip": "Animate water-surface normals for moving wave highlights.",
+	"caustica.options.rt.fog": "Fog",
+	"caustica.options.rt.fog.tooltip": "The Overworld's distance haze. When on it is masked: it clings to low ground and fades out with altitude (valleys get mist, high ground and open sky stay clear), and it is removed inside caves and enclosed buildings where there is no render-distance seam to hide. Off removes it everywhere. The Nether and End keep their own dense/void fog either way.",
 	"caustica.options.rt.sss": "Subsurface Scattering",
 	"caustica.options.rt.sss.tooltip": "Let light scatter through thin surfaces such as leaves and grass, so foliage glows when you look through it toward the sun. Only affects materials that provide subsurface data; costs an extra shadow ray where it applies.",
 	"caustica.options.rt.weatherLighting": "Weather Lighting",

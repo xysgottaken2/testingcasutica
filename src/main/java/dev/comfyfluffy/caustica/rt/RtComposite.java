@@ -298,6 +298,15 @@ public final class RtComposite {
     private static final float[] FOG_DAY_COLOR = {0.052f, 0.066f, 0.090f};
     private static final float[] FOG_NIGHT_COLOR = {0.0045f, 0.0060f, 0.0105f};
     private static final float[] FOG_RAIN_COLOR = {0.062f, 0.067f, 0.076f};
+    // Masked-fog altitude band (camera Y, world blocks). The Overworld haze is a ground-level mist: it
+    // stays full at and below sea level and fades linearly to nothing at FOG_HEIGHT_MASK_CLEAR_Y, so
+    // valleys keep the distance haze while high ground and open sky stay clear (see fogHeightMask).
+    private static final float FOG_HEIGHT_MASK_FULL_Y = 64f;   // sea level
+    private static final float FOG_HEIGHT_MASK_CLEAR_Y = 200f;
+    // Enclosed (cave/building) probe: how far above the eye to scan for a solid block that would mean
+    // the camera has a ceiling overhead. Bounded so open air reads as open in a fixed number of lookups
+    // instead of walking the whole world column every frame.
+    private static final int FOG_ENCLOSED_SCAN_HEIGHT = 32;
     private static final Identifier SUN_ID = Identifier.withDefaultNamespace("sun");
     private static final Identifier[] MOON_IDS = createMoonIds();
     // Celestial rotation axis (the pole the sun/moon arc about): perpendicular to the east-west arc,
@@ -1458,6 +1467,11 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
+            // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
+            // spaces (see overworldFog); the Nether/End keep their per-dimension fog. Resolved once,
+            // outside the WorldPushData argument list, and passed in as a plain boolean lane.
+            boolean cameraEnclosed = level != null && isCameraEnclosed(level, camY, cameraBlockPos,
+                    level.getMinY() + level.getHeight());
             new WorldPushData(
                     frameInvViewProj,
                     new Float3((float) (camX - terrain.blockX), (float) (camY - terrain.blockY),
@@ -1498,7 +1512,9 @@ public final class RtComposite {
                             weather.lightAttenuation()),
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the
                     // haze follows the same dusk curve as the light rather than switching at an angle.
-                    ambientFog(dimension, weather, sky.sunDir().w()),
+                    // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
+                    // spaces (see overworldFog); the Nether/End keep their per-dimension fog.
+                    ambientFog(dimension, weather, sky.sunDir().w(), camY, cameraEnclosed),
                     clouds.clouds(),
                     clouds.anchor(),
                     clouds.color(),
@@ -1953,11 +1969,12 @@ public final class RtComposite {
      *
      * <p>Densities are per block: 0.012 halves radiance at ~58 blocks, 0.0016 at ~430.
      */
-    private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor) {
+    private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor,
+                                     double camY, boolean enclosed) {
         return switch (dimension) {
             case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);
             case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);
-            default -> overworldFog(weather, dayFactor);
+            default -> overworldFog(weather, dayFactor, camY, enclosed);
         };
     }
 
@@ -1985,8 +2002,19 @@ public final class RtComposite {
      * flat desaturated grey and multiplies the density, which is what makes a downpour genuinely close
      * the view in. All three are the same medium — one colour and one density — so they cross-fade
      * instead of fighting.
+     *
+     * <p><b>Masked fog.</b> The haze is not a sky-filling veil: it is masked by {@link #fogHeightMask} so
+     * it clings to low ground and fades out with altitude (valleys misty, high ground and open sky
+     * clear), and it is dropped entirely when the camera is {@linkplain #isCameraEnclosed enclosed} in a
+     * cave, mine or building — a space whose walls cap the view long before the render distance, so the
+     * seam-hiding the haze exists for has nothing left to hide, and its in-scatter only washes out the
+     * scene (it is also what gives flowing water its bright rim in dark caves). The whole Overworld haze
+     * is switched off by {@link CausticaConfig.Rt.Composite#FOG}.
      */
-    private static Float4 overworldFog(WeatherState weather, float dayFactor) {
+    private static Float4 overworldFog(WeatherState weather, float dayFactor, double camY, boolean enclosed) {
+        if (!CausticaConfig.Rt.Composite.FOG.value()) {
+            return new Float4(0.0f, 0.0f, 0.0f, 0.0f);
+        }
         float distance = fogDistanceBlocks();
         // sigma such that exp(-sigma * distance) == FOG_HORIZON_TRANSMITTANCE at the far plane.
         float baseDensity = (float) (-Math.log(FOG_HORIZON_TRANSMITTANCE) / Math.max(distance, 16.0));
@@ -1996,6 +2024,12 @@ public final class RtComposite {
         // Night deepens the haze a little and darkens it a lot: the same amount of air, lit by the moon
         // instead of the sun.
         float density = baseDensity * Mth.lerp(day, NIGHT_FOG_DENSITY_SCALE, 1.0f);
+        // Masked fog: altitude mask (ground mist) then the enclosed-space kill switch. A density of 0
+        // makes evalAmbientFog in medium.slang return an empty medium, so the colour below is unused.
+        density *= fogHeightMask((float) camY);
+        if (enclosed) {
+            density = 0.0f;
+        }
         float[] clear = new float[3];
         for (int i = 0; i < 3; i++) {
             clear[i] = Mth.lerp(day, FOG_NIGHT_COLOR[i], FOG_DAY_COLOR[i]);
@@ -2011,6 +2045,40 @@ public final class RtComposite {
             }
         }
         return new Float4(clear[0], clear[1], clear[2], density);
+    }
+
+    /**
+     * The masked-fog altitude factor: 1.0 at and below {@link #FOG_HEIGHT_MASK_FULL_Y} (sea level),
+     * 0.0 at and above {@link #FOG_HEIGHT_MASK_CLEAR_Y}, linear in between. Camera-level — the renderer
+     * treats the haze as one uniform per-frame medium, so the mask keys off where the eye is rather than
+     * re-tracing sky visibility per path segment.
+     */
+    private static float fogHeightMask(float camY) {
+        if (camY <= FOG_HEIGHT_MASK_FULL_Y) {
+            return 1.0f;
+        }
+        if (camY >= FOG_HEIGHT_MASK_CLEAR_Y) {
+            return 0.0f;
+        }
+        return 1.0f - (camY - FOG_HEIGHT_MASK_FULL_Y) / (FOG_HEIGHT_MASK_CLEAR_Y - FOG_HEIGHT_MASK_FULL_Y);
+    }
+
+    /**
+     * Whether the camera is inside an enclosed space (cave, mine, or under a roof/building) rather than
+     * under open sky. Scans upward from just above the eye for a non-air block using only {@link
+     * Level#getBlockState}: a solid block overhead (a cave ceiling or a roof) means the space is
+     * enclosed. Bounded by {@code worldTop} and {@link #FOG_ENCLOSED_SCAN_HEIGHT} so open air reads as
+     * open in a fixed, small number of lookups instead of walking the whole world column every frame.
+     */
+    private static boolean isCameraEnclosed(Level level, double camY, BlockPos.MutableBlockPos eye, int worldTop) {
+        int scanTop = Math.min(worldTop, Mth.floor(camY) + FOG_ENCLOSED_SCAN_HEIGHT);
+        for (int y = Mth.floor(camY) + 1; y < scanTop; y++) {
+            eye.set(eye.getX(), y, eye.getZ());
+            if (!level.getBlockState(eye).isAir()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

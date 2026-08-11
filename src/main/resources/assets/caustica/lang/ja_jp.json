@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "発光中のエンティティに、バニラの発光効果アウトライン（壁越し）を描画します。",
 	"caustica.options.rt.waterWaves": "アニメーションする水",
 	"caustica.options.rt.waterWaves.tooltip": "水面の法線をアニメーションさせ、動く波のハイライトを表示します。",
+	"caustica.options.rt.fog": "フォグ",
+	"caustica.options.rt.fog.tooltip": "オーバーワールドの距離のかすみ。オンの場合、マスクされます。低地に付着し高度とともに消え(谷は霧、高地と開けた空は晴れ)、隠すべきレンダリング距離の継ぎ目がない洞窟や密閉された建物の内部では削除されます。オフにするとどこでも削除されます。ネザーとエンドはそれぞれの濃密/虚無の霧を維持します。",
 	"caustica.options.rt.sss": "サブサーフェススキャタリング",
 	"caustica.options.rt.sss.tooltip": "葉や草などの薄い面を光が透過して散乱し、太陽に向かって見たときに葉が輝くようになります。サブサーフェス情報を持つマテリアルにのみ影響し、適用箇所ではシャドウレイが1本増えます。",
 	"caustica.options.rt.weatherLighting": "天候による照明",

@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "Zeichnet die Vanilla-Kontur des Glowing-Effekts (durch Wände) um leuchtende Entitäten.",
 	"caustica.options.rt.waterWaves": "Animiertes Wasser",
 	"caustica.options.rt.waterWaves.tooltip": "Animiert Wasseroberflächen-Normalen für bewegte Wellenlichter.",
+	"caustica.options.rt.fog": "Nebel",
+	"caustica.options.rt.fog.tooltip": "Die Distanznebel der Overworld. Wenn aktiv, ist sie maskiert: sie hält sich am Boden und verschwindet mit der Höhe (Täler werden neblig, Hochland und offener Himmel bleiben klar) und wird in Höhlen und geschlossenen Gebäuden entfernt, wo es keine Renderdistanznaht zu verstecken gibt. Aus entfernt sie überall. Der Nether und das Ende behalten ihren eigenen dichten/leeren Nebel.",
 	"caustica.options.rt.sss": "Streuung unter der Oberfläche",
 	"caustica.options.rt.sss.tooltip": "Lässt Licht durch dünne Oberflächen wie Blätter und Gras streuen, sodass Laub leuchtet, wenn man in Richtung Sonne hindurchschaut. Betrifft nur Materialien mit Subsurface-Daten und kostet dort einen zusätzlichen Schattenstrahl.",
 	"caustica.options.rt.weatherLighting": "Wetterbeleuchtung",

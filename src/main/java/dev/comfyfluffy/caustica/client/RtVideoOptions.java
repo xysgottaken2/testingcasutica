@@ -134,6 +134,7 @@ public final class RtVideoOptions {
 
     public static OptionInstance<?>[] effectsOptions() {
         return new OptionInstance<?>[] {
+            fog(),
             subsurfaceScattering(),
             weatherLighting(),
         };
@@ -358,6 +359,16 @@ public final class RtVideoOptions {
 
     private static OptionInstance<Boolean> waterWaves() {
         return bool("caustica.options.rt.waterWaves", CausticaConfig.Rt.Composite.WATER_WAVES);
+    }
+
+    /**
+     * The Overworld distance haze. When on it is masked: altitude-masked (ground mist that fades with
+     * height) and removed inside caves / enclosed buildings, where there is no render-distance seam to
+     * hide. Off removes it entirely. The Nether and End keep their own dense/void fog either way — that
+     * is what makes those dimensions read as enclosed.
+     */
+    private static OptionInstance<Boolean> fog() {
+        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
     }
 
     /**
