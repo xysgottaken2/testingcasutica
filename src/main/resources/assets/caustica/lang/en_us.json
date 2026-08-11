@@ -160,5 +160,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Frame Generation via Caustica's own engine: this GPU doesn't have DLSS Frame Generation (RTX 40/50 series only), so Caustica's native motion-vector interpolation engine takes over — same toggle, multiplier up to 4x. Costs a little extra GPU work and latency.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex low-latency mode: the driver paces frame submission so frames finish just in time for the display — less delay between your input and the screen. Pairs especially well with Frame Generation (FG costs about one rendered frame of latency; Reflex removes the rest of the pipeline queue). May slightly reduce maximum FPS — that's the latency/throughput trade.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "Unavailable: the VK_NV_low_latency2 extension was not enabled on this device (requires a recent NVIDIA driver)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "Unavailable: the VK_NV_low_latency2 extension was not enabled on this device (requires a recent NVIDIA driver).",
+	"caustica.options.rt.fog": "Fog",
+	"caustica.options.rt.fog.tooltip": "Master distance fog / atmospheric haze. When off, completely removes the path-traced medium (clean air, no distance haze at all) and also disables Masked Fog. Use for a completely clear look or clean screenshots.",
+	"caustica.options.rt.maskedFog": "Masked Fog (Depth-aware)",
+	"caustica.options.rt.maskedFog.tooltip": "Cheap screen-space fog that respects depth (stops at walls and geometry, no bleeding through). Strongly reduces itself in dark/low-exposure areas like caves and indoors so it doesn't look weird there. Only active when the main Fog toggle is on."
 }

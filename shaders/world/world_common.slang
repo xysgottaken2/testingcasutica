@@ -139,6 +139,7 @@ public static const uint FEATURE_CLOUDS_VOLUMETRIC = 16u; // clouds are ray-marc
 public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial emitter-reservoir reuse
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_TAA = 128u;             // renderer temporal accumulation needs gViewZ (its sky cutoff)
+public static const uint FEATURE_MASKED_FOG = 256u;      // depth-aware screen-space haze (post-process in display.comp)
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume

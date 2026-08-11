@@ -142,5 +142,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Frame Generation via motor próprio do Caustica: essa GPU não tem DLSS Frame Generation (só séries RTX 40/50), então o motor nativo de interpolação por motion vectors do Caustica assume no lugar — mesmo botão, multiplicador até 4x. Custa um pouco mais de GPU e latência.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex (baixa latência): o driver cadencia a entrega dos frames pra eles terminarem justo a tempo do display — menos atraso entre o teu input e a tela. Combina muito bem com Frame Generation (o FG custa ~1 frame de latência; o Reflex tira o resto da fila). Pode reduzir um pouco o FPS máximo — é a troca de latência por vazão.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "Indisponível: a extensão VK_NV_low_latency2 não foi ativada nesse dispositivo (precisa de um driver NVIDIA recente)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "Indisponível: a extensão VK_NV_low_latency2 não foi ativada nesse dispositivo (precisa de um driver NVIDIA recente).",
+	"caustica.options.rt.fog": "Névoa",
+	"caustica.options.rt.fog.tooltip": "Névoa de distância mestre (haze atmosférico). Desligado remove completamente o meio path-traced (ar limpo, sem névoa de distância) e também desativa o Masked Fog. Útil para visual limpo ou screenshots.",
+	"caustica.options.rt.maskedFog": "Névoa Mascarada (Depth-aware)",
+	"caustica.options.rt.maskedFog.tooltip": "Névoa barata screen-space que respeita profundidade (para nas paredes e geometria, sem vazar). Reduz fortemente em áreas escuras/low-exposure (cavernas e interiores) pra não ficar estranho. Só funciona se o toggle principal de Névoa estiver ligado."
 }

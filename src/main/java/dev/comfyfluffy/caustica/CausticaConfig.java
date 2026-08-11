@@ -58,6 +58,7 @@ public final class CausticaConfig {
         Object[] touch = {
             Rt.ENABLED, Rt.Composite.SPP, Rt.Composite.MAX_BOUNCES, Rt.Composite.SSS,
             Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER,
+            Rt.Composite.FOG, Rt.Composite.MASKED_FOG,
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
             Rt.Entities.ENABLED, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
             Rt.Fsr.ENABLED, Rt.Fsr.QUALITY, Rt.Xess.ENABLED, Rt.Xess.QUALITY, Rt.Spatial.ENABLED,
@@ -707,6 +708,25 @@ public final class CausticaConfig {
                     finiteFloat("caustica.rt.jitterSignX", "composite.jitter-sign-x", 1.0f);
             public static final FloatSetting JITTER_SIGN_Y =
                     finiteFloat("caustica.rt.jitterSignY", "composite.jitter-sign-y", -1.0f);
+
+            /**
+             * Master distance fog / haze toggle (path-traced ambient medium).
+             * Controls the classic Overworld distance haze + Nether/End ambient fog that is integrated
+             * into every ray in the path tracer (via medium.slang + ambientFog push). When off, the
+             * air has zero participating medium (clean look, useful for screenshots or "no fog" prefs).
+             */
+            public static final BooleanSetting FOG =
+                    bool("caustica.rt.fog", "composite.fog", true);
+
+            /**
+             * Masked (depth-aware) fog / distance haze. Applies a cheap screen-space exponential fog
+             * using the primary depth buffer so the haze stops at visible surfaces (does not "bleed"
+             * through walls or geometry). Also modulates intensity in low-exposure / dark zones so it
+             * does not look weird inside caves or heavily shadowed areas. Cheap post-process; complements
+             * (and can reduce) the path-traced ambientFog. Respects the master FOG toggle.
+             */
+            public static final BooleanSetting MASKED_FOG =
+                    bool("caustica.rt.maskedFog", "composite.masked-fog", true);
 
             private Composite() {
             }
