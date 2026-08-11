@@ -30,6 +30,8 @@
 	"caustica.options.rt.sss.tooltip": "Lässt Licht durch dünne Oberflächen wie Blätter und Gras streuen, sodass Laub leuchtet, wenn man in Richtung Sonne hindurchschaut. Betrifft nur Materialien mit Subsurface-Daten und kostet dort einen zusätzlichen Schattenstrahl.",
 	"caustica.options.rt.weatherLighting": "Wetterbeleuchtung",
 	"caustica.options.rt.weatherLighting.tooltip": "Dämpft Sonnen- und Mondlicht und verdunkelt den Himmel bei Regen und Gewitter; Sonne, Mond und Sterne verschwinden hinter den Wolken. Aus behält bei jedem Wetter die Beleuchtung eines klaren Himmels bei.",
+	"caustica.options.rt.maskedFog": "Maskierter Nebel",
+	"caustica.options.rt.maskedFog.tooltip": "Lässt den Distanznebel nur dort leuchten, wo die Luft tatsächlich zum Himmel hin offen ist. Aus füllt der Nebel auch geschlossene Räume, sodass Höhlen und andere dunkle Bereiche einen tageslichtfarbenen Schleier ohne Quelle in der Szene erhalten. An hört eingeschlossene Luft auf zu leuchten, während Ansichten im Freien unverändert bleiben. Kostet einen Verdeckungsstrahl pro Pfad; Nether und End sind nicht betroffen.",
 	"caustica.options.rt.denoiser": "Rauschunterdrückungsfilter",
 	"caustica.options.rt.denoiser.tooltip": "Wendet den Rauschunterdrückungsfilter von DLSS Ray Reconstruction auf das pfadverfolgte Bild an. Aus zeigt den rohen, verrauschten Trace in voller Auflösung – als Referenzansicht nützlich, bei wenigen Samples aber deutlich körniger. Erfordert DLSS-Ray-Reconstruction-Unterstützung.",
 	"caustica.options.rt.handFov": "Hand-Sichtfeld",

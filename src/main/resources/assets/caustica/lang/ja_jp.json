@@ -30,6 +30,8 @@
 	"caustica.options.rt.sss.tooltip": "葉や草などの薄い面を光が透過して散乱し、太陽に向かって見たときに葉が輝くようになります。サブサーフェス情報を持つマテリアルにのみ影響し、適用箇所ではシャドウレイが1本増えます。",
 	"caustica.options.rt.weatherLighting": "天候による照明",
 	"caustica.options.rt.weatherLighting.tooltip": "雨や雷雨の間、太陽光と月光を弱めて空を暗くし、太陽・月・星を雲の後ろに隠します。オフにすると、どの天候でも快晴時の照明を維持します。",
+	"caustica.options.rt.maskedFog": "マスク付きフォグ",
+	"caustica.options.rt.maskedFog.tooltip": "遠景の霞を、実際に空へ開けている場所でのみ光らせます。オフでは霞が密閉空間にも満ちるため、洞窟などの暗い場所がシーンに光源のない昼光色のもやを帯びます。オンでは閉じた空気は光らなくなり、屋外の見た目は変わりません。パスあたり1本の遮蔽レイを消費します。ネザーとジ・エンドには影響しません。",
 	"caustica.options.rt.denoiser": "ノイズ除去フィルター",
 	"caustica.options.rt.denoiser.tooltip": "パストレーシング画像に DLSS Ray Reconstruction のノイズ除去フィルターを適用します。オフにすると、生のノイズを含むトレース結果をフル解像度で表示します。参照用としては便利ですが、サンプル数が少ないと非常に粗くなります。DLSS Ray Reconstruction 対応が必要です。",
 	"caustica.options.rt.handFov": "手の視野角",

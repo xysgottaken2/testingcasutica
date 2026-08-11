@@ -30,6 +30,8 @@
 	"caustica.options.rt.sss.tooltip": "나뭇잎이나 풀처럼 얇은 표면을 빛이 투과하며 산란하도록 하여, 태양 쪽을 바라볼 때 잎이 빛나 보이게 합니다. 표면 하부 데이터를 제공하는 재질에만 적용되며, 적용되는 지점마다 그림자 광선이 하나씩 추가됩니다.",
 	"caustica.options.rt.weatherLighting": "날씨 조명",
 	"caustica.options.rt.weatherLighting.tooltip": "비와 뇌우가 내리는 동안 햇빛과 달빛을 약하게 하고 하늘을 어둡게 하며, 해와 달과 별을 구름 뒤로 가립니다. 끄면 어떤 날씨에서도 맑은 하늘 조명을 유지합니다.",
+	"caustica.options.rt.maskedFog": "마스크 안개",
+	"caustica.options.rt.maskedFog.tooltip": "원거리 안개가 실제로 하늘로 열린 공기에서만 빛나도록 합니다. 끄면 안개가 막힌 공간까지 채워서 동굴이나 어두운 지역이 장면에 광원이 없는 낮빛 색조를 띠게 됩니다. 켜면 갇힌 공기는 더 이상 빛나지 않고 야외 풍경은 그대로 유지됩니다. 경로당 차폐 광선 하나가 소모되며, 네더와 엔드에는 영향이 없습니다.",
 	"caustica.options.rt.denoiser": "노이즈 제거 필터",
 	"caustica.options.rt.denoiser.tooltip": "경로 추적 이미지에 DLSS Ray Reconstruction 노이즈 제거 필터를 적용합니다. 끄면 노이즈가 있는 원본 추적 결과를 전체 해상도로 표시합니다. 기준 화면으로는 유용하지만 샘플 수가 적으면 훨씬 거칠어집니다. DLSS Ray Reconstruction 지원이 필요합니다.",
 	"caustica.options.rt.handFov": "손 시야각",
