@@ -38,6 +38,8 @@
 	"caustica.options.rt.glow.tooltip": "Desenha o contorno vanilla do efeito Brilhante (através de paredes) ao redor de entidades brilhantes.",
 	"caustica.options.rt.waterWaves": "Água animada",
 	"caustica.options.rt.waterWaves.tooltip": "Anima as normais da superfície da água para brilhos de ondas em movimento.",
+	"caustica.options.rt.fog": "Névoa",
+	"caustica.options.rt.fog.tooltip": "A névoa de distância do Overworld. Quando ligada, ela é mascarada: fica próxima do chão e some com a altitude (vales ganham névoa, terrenos altos e céu aberto ficam limpos), e é removida dentro de cavernas e construções fechadas, onde não há borda de distância de renderização a esconder. Desligada, remove-a em todo lugar. O Nether e o Fim mantêm suas próprias névoas densas/vazias de qualquer forma.",
 	"caustica.options.rt.sss": "Espalhamento subsuperficial",
 	"caustica.options.rt.sss.tooltip": "Permite que a luz se espalhe através de superfícies finas, como folhas e grama, fazendo a folhagem brilhar quando você olha através dela na direção do sol. Só afeta materiais que fornecem dados de subsuperfície; custa um raio de sombra adicional onde é aplicado.",
 	"caustica.options.rt.weatherLighting": "Iluminação do clima",

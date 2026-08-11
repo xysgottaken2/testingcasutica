@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "발광 중인 엔티티 주위에 바닐라 발광 효과 윤곽선(벽 너머 표시)을 그립니다.",
 	"caustica.options.rt.waterWaves": "애니메이션 물",
 	"caustica.options.rt.waterWaves.tooltip": "움직이는 물결 하이라이트를 위해 물 표면 노멀을 애니메이션합니다.",
+	"caustica.options.rt.fog": "안개",
+	"caustica.options.rt.fog.tooltip": "오버월드의 거리 안개입니다. 켜면 마스킹됩니다. 낮은 지면에 붙어 고도와 함께 사라지고(계곡은 안개, 높은 지대와 트인 하늘은 맑음), 숨길 렌더 거리 이음새가 없는 동굴과 밀폐된 건물 내부에서는 제거됩니다. 끄면 어디서나 제거됩니다. 네더와 엔드는 각자의 짙은/빈 안개를 유지합니다.",
 	"caustica.options.rt.sss": "표면 하부 산란",
 	"caustica.options.rt.sss.tooltip": "나뭇잎이나 풀처럼 얇은 표면을 빛이 투과하며 산란하도록 하여, 태양 쪽을 바라볼 때 잎이 빛나 보이게 합니다. 표면 하부 데이터를 제공하는 재질에만 적용되며, 적용되는 지점마다 그림자 광선이 하나씩 추가됩니다.",
 	"caustica.options.rt.weatherLighting": "날씨 조명",

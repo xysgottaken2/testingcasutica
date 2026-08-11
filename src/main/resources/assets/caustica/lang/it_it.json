@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "Disegna il contorno vanilla dell'effetto Luminescenza (attraverso i muri) attorno alle entità luminose.",
 	"caustica.options.rt.waterWaves": "Acqua animata",
 	"caustica.options.rt.waterWaves.tooltip": "Anima le normali della superficie dell'acqua per riflessi di onde in movimento.",
+	"caustica.options.rt.fog": "Nebbia",
+	"caustica.options.rt.fog.tooltip": "La nebbia di distanza dell Overworld. Se attiva, è mascherata: resta vicino al suolo e sfuma con l altitudine (le valli sono nebbiose, le alture e il cielo aperto restano nitidi) e viene rimossa dentro grotte ed edifici chiusi dove non c è alcuna cucitura di distanza di renderizzazione da nascondere. Spenta, la rimuove ovunque. Il Nether e l End mantengono comunque la loro nebbia densa/vuota.",
 	"caustica.options.rt.sss": "Dispersione sottosuperficiale",
 	"caustica.options.rt.sss.tooltip": "Consente alla luce di diffondersi attraverso superfici sottili come foglie ed erba, così il fogliame si illumina quando lo si guarda in controluce. Interessa solo i materiali che forniscono dati di sottosuperficie e costa un raggio d'ombra aggiuntivo dove viene applicata.",
 	"caustica.options.rt.weatherLighting": "Illuminazione meteorologica",

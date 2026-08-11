@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "Dessine le contour vanilla de l'effet Luminescence (à travers les murs) autour des entités lumineuses.",
 	"caustica.options.rt.waterWaves": "Eau animée",
 	"caustica.options.rt.waterWaves.tooltip": "Anime les normales de surface de l'eau pour des reflets de vagues en mouvement.",
+	"caustica.options.rt.fog": "Brouillard",
+	"caustica.options.rt.fog.tooltip": "La brume de distance de l Overworld. Activée, elle est masquée : elle reste près du sol et s estompe avec l altitude (les vallées ont du brouillard, les hauteurs et le ciel ouvert restent nets) et elle est supprimée dans les grottes et bâtiments fermés où il n y a pas de bord de distance de rendu à cacher. Désactivée, elle disparaît partout. Le Nether et l End gardent leur brouillard dense/vide.",
 	"caustica.options.rt.sss": "Diffusion sous-surfacique",
 	"caustica.options.rt.sss.tooltip": "Laisse la lumière se diffuser à travers les surfaces fines comme les feuilles et l'herbe, si bien que le feuillage rayonne lorsqu'on le regarde à contre-jour. N'affecte que les matériaux fournissant des données de sous-surface et coûte un rayon d'ombre supplémentaire là où elle s'applique.",
 	"caustica.options.rt.weatherLighting": "Éclairage météorologique",

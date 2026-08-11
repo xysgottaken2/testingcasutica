@@ -57,7 +57,7 @@ public final class CausticaConfig {
         @SuppressWarnings("unused")
         Object[] touch = {
             Rt.ENABLED, Rt.Composite.SPP, Rt.Composite.MAX_BOUNCES, Rt.Composite.SSS,
-            Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER,
+            Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER, Rt.Composite.FOG,
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
             Rt.Entities.ENABLED, Rt.Entities.GLOW_ENABLED, Rt.EntityTextures.MAX_TEXTURES, Rt.DlssRr.ENABLED, Rt.Fg.ENABLED,
             Rt.Fsr.ENABLED, Rt.Fsr.QUALITY, Rt.Xess.ENABLED, Rt.Xess.QUALITY, Rt.Spatial.ENABLED,
@@ -97,7 +97,9 @@ public final class CausticaConfig {
                         + " weather-lighting: attenuate sun/moon light and darken the sky during rain and\n"
                         + " thunderstorms. Off keeps clear-sky lighting in all weather.\n"
                         + " denoiser: the DLSS Ray Reconstruction denoise+upscale filter. Off presents the raw\n"
-                        + " path-traced image at full resolution (noisy reference view). Requires dlss-rr.enabled.");
+                        + " path-traced image at full resolution (noisy reference view). Requires dlss-rr.enabled.\n"
+                        + " fog: the Overworld distance haze. Off removes it everywhere; on, it is masked by altitude\n"
+                        + " (ground mist) and removed inside caves/enclosed spaces.");
         FILE.setComment("terrain",
                 " Render-thread terrain work is bounded by dispatch/result counts per streaming pass.\n"
                         + " Buffer fill and BLAS/OMM preparation run on workers. max-inflight-sections bounds\n"
@@ -573,6 +575,16 @@ public final class CausticaConfig {
                     clampedInt("caustica.rt.maxBounces", "composite.max-bounces", 4, 2, 8);
             public static final BooleanSetting WATER_WAVES =
                     bool("caustica.rt.waterWaves", "composite.water-waves", true);
+            /**
+             * The Overworld's distance haze (the ambient-fog medium in {@code medium.slang}). This is the
+             * player-facing fog toggle: off removes the Overworld haze entirely (the Nether and the End
+             * keep their own dense/void fog, which is what makes those dimensions read as enclosed — see
+             * {@code RtComposite.ambientFog}). When on, the haze is masked: it stays full at low altitude,
+             * fades out with height, and is removed inside caves and enclosed buildings where there is no
+             * render-distance seam left to hide. See {@code RtComposite.overworldFog}.
+             */
+            public static final BooleanSetting FOG =
+                    bool("caustica.rt.fog", "composite.fog", true);
             /**
              * Shader-only Parallax Occlusion Mapping from the LabPBR {@code _n} alpha height channel.
              * The closest-hit shader marches a short ray through the height field and shades the

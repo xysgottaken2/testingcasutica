@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "為發光實體繪製原版發光效果輪廓（可穿牆顯示）。",
 	"caustica.options.rt.waterWaves": "動態水面",
 	"caustica.options.rt.waterWaves.tooltip": "對水面法線進行動畫處理，以顯示移動波浪高光。",
+	"caustica.options.rt.fog": "霧",
+	"caustica.options.rt.fog.tooltip": "主世界的距離霧。開啟時，它是被遮罩的：貼近地面並隨海拔消失(山谷有霧，高地與開闊天空保持清晰)，並在洞穴和封閉建築內移除，因為那裡沒有需要隱藏的渲染距離接縫。關閉則處處移除。地獄與終界各自保留濃密/虛空之霧。",
 	"caustica.options.rt.sss": "次表面散射",
 	"caustica.options.rt.sss.tooltip": "讓光線穿過樹葉、草等薄表面並產生散射，因此朝太陽方向看時植被會發光。僅影響提供次表面資料的材質，並在生效處增加一條陰影光線。",
 	"caustica.options.rt.weatherLighting": "天氣光照",

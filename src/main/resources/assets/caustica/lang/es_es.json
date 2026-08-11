@@ -26,6 +26,8 @@
 	"caustica.options.rt.glow.tooltip": "Dibuja el contorno del efecto Brillo de Minecraft vanilla (a través de paredes) alrededor de las entidades brillantes.",
 	"caustica.options.rt.waterWaves": "Agua animada",
 	"caustica.options.rt.waterWaves.tooltip": "Anima las normales de la superficie del agua para reflejos de olas en movimiento.",
+	"caustica.options.rt.fog": "Niebla",
+	"caustica.options.rt.fog.tooltip": "La niebla de distancia del Overworld. Cuando está activa, está enmascarada: se aferra al suelo y se desvanece con la altitud (los valles quedan con niebla, las tierras altas y el cielo abierto limpios) y se elimina dentro de cuevas y edificios cerrados donde no hay costura de distancia de renderizado que ocultar. Apagada, la elimina en todas partes. El Nether y el End conservan su propia niebla densa/vacía.",
 	"caustica.options.rt.sss": "Dispersión subsuperficial",
 	"caustica.options.rt.sss.tooltip": "Permite que la luz se disperse a través de superficies finas como hojas y hierba, de modo que el follaje brilla al mirarlo a contraluz. Solo afecta a los materiales con datos de subsuperficie y cuesta un rayo de sombra adicional donde se aplica.",
 	"caustica.options.rt.weatherLighting": "Iluminación meteorológica",
