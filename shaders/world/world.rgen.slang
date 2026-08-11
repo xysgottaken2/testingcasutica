@@ -56,6 +56,19 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     float3 ro = seg.ro;
     float3 rd = seg.rd;
     float3 throughput = seg.throughput;
+    // Masked-fog state for this path: one sky-access probe, computed lazily by the first segment
+    // whose fog is worth masking and reused by the rest (see medium.ambientFogMask). Both stay at
+    // their neutral values when the feature is off, and the mask is a hard 1 in that case, so the
+    // whole thing collapses to the original uniform integral.
+    bool maskedFog = maskedFogEnabled();
+    float fogMask = 1.0;
+    bool fogMaskValid = false;
+    // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
+    // produces independent lighting/BSDF paths from the shared terminal continuation. Derived before
+    // the prefix block below because the masked-fog probe drawn there consumes from this stream; the
+    // derivation itself is independent of everything above it, so hoisting it changes no sequence.
+    uint seed = seg.seed ^ sampleIndex * 2246822519u;
+    seed = pcg(seed);
 
     // ---- Cloud over the prefix Pass A already consumed.
     //
@@ -85,7 +98,16 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // rain/fog" case. The split-branch accounting is exact for the same reason as the cloud: the
             // two branches' Fresnel throughputs sum to one, so the prefix is counted once, not twice.
             // Prefix segments only exist behind a dielectric split — specular channel.
-            AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist);
+            //
+            // The prefix runs camera -> interface, so it is masked by the openness of the air the
+            // CAMERA is standing in — which is why the probe is issued from the camera end with the
+            // prefix's own direction. A player inside a cave looking at a water pool no longer sees
+            // the pool's reflection sitting behind a wash of outdoor haze.
+            float prefixMask = maskedFog
+                    ? ambientFogMask(worldPush.ambientFog, worldPush.camOffset, toStart / prefixDist,
+                                     prefixDist, fogMask, fogMaskValid, seed)
+                    : 1.0;
+            AmbientFog preFog = evalAmbientFog(worldPush.ambientFog, prefixDist, prefixMask);
             L += throughput * preFog.inScatter;
             Lspec += throughput * preFog.inScatter;
             throughput *= preFog.transmittance;
@@ -97,10 +119,6 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             throughput *= pre.transmittance;
         }
     }
-    // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
-    // produces independent lighting/BSDF paths from the shared terminal continuation.
-    uint seed = seg.seed ^ sampleIndex * 2246822519u;
-    seed = pcg(seed);
     float rayConeWidth = seg.rayConeWidth;
     float rayConeSpread = max(seg.rayConeSpread, RAY_CONE_MIN_SPREAD);
     int maxBounces = int(worldPush.maxBounces);
@@ -197,8 +215,17 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // that one describes what the path is submerged in (water, glass), this one the air of the
         // dimension itself, so a ray inside a Nether lava-lit cave picks up both. Added into L rather
         // than only attenuating, because the medium glows.
+        //
+        // Masked by this segment's own sky access when the option is on: the segment that just ended
+        // on geometry is exactly the air whose openness decides whether the haze should glow at all,
+        // and it is bounded by payload.hitT, so the probe is drawn from inside the traversed span
+        // rather than from somewhere past the surface (see medium.ambientFogMask).
         {
-            AmbientFog segFog = evalAmbientFog(worldPush.ambientFog, payload.hitT);
+            float segMask = maskedFog
+                    ? ambientFogMask(worldPush.ambientFog, ro, rd, payload.hitT,
+                                     fogMask, fogMaskValid, seed)
+                    : 1.0;
+            AmbientFog segFog = evalAmbientFog(worldPush.ambientFog, payload.hitT, segMask);
             L += throughput * segFog.inScatter;
             if (channel == 2) {
                 Lspec += throughput * segFog.inScatter;

@@ -165,6 +165,7 @@ public final class RtComposite {
     // it is simply never set anymore (the shader's nrdEnabled() is always false).
     private static final int FEATURE_NRD = 64;
     private static final int FEATURE_TAA = 128;
+    private static final int FEATURE_MASKED_FOG = 256;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -188,6 +189,12 @@ public final class RtComposite {
         }
         if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
             flags |= FEATURE_RESTIR;
+        }
+        if (CausticaConfig.Rt.Composite.MASKED_FOG.value()) {
+            // The shader restricts this to the Overworld itself (world_core.maskedFogEnabled): the
+            // Nether/End media are not reflected sky and must not be masked. Pushing the raw option
+            // keeps the dimension rule in one place rather than splitting it across the seam.
+            flags |= FEATURE_MASKED_FOG;
         }
         if (CausticaConfig.Rt.Composite.CLOUDS.value()) {
             flags |= FEATURE_CLOUDS;

@@ -30,6 +30,8 @@ changes while the renderer is being built.
 - Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
   with adjustable thickness, opacity and cloud shadows, visible in reflections
 - Dedicated Nether and End skyboxes with per-dimension ambient fog
+- Masked fog: the Overworld haze only glows where the air is open to the sky, so
+  caves and other enclosed spaces stay dark instead of filling with daylight haze
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
 
 ## Requirements

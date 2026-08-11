@@ -616,6 +616,29 @@ public final class CausticaConfig {
             public static final BooleanSetting WEATHER_LIGHTING =
                     bool("caustica.rt.weatherLighting", "composite.weather-lighting", true);
             /**
+             * Masked fog: the Overworld's distance haze only glows where the air is actually open to
+             * the sky.
+             *
+             * <p>The haze is a uniform medium integrated along every path segment, and its in-scatter
+             * is the sky reflected off the air. Applied uniformly it also fills sealed spaces, so a
+             * ray crossing a dark cave corridor picks up daylight-coloured in-scatter with no source
+             * in the scene — a flat luminous wash exactly where the scene should be black, which
+             * auto-exposure then amplifies. It shows up worst underground and in other low-exposure
+             * areas; outdoors, where the air really is open, the uniform fog is already correct.
+             *
+             * <p>On, the fog density is scaled by an occlusion probe toward the sky, so enclosed air
+             * stops glowing (and stops absorbing, which is the half a colour-only mask would miss)
+             * while open air is untouched. The probe is one shadow-class ray per path — cheap next to
+             * the rays a path already traces, and, because it lives in the path integral rather than
+             * at a screen-space seam, it stays correct in reflections and refractions.
+             *
+             * <p>Only the Overworld is masked; the Nether's haze and the End's dust are
+             * self-illuminated dimension media rather than reflected sky, so the shader leaves them
+             * uniform regardless of this setting.
+             */
+            public static final BooleanSetting MASKED_FOG =
+                    bool("caustica.rt.maskedFog", "composite.masked-fog", true);
+            /**
              * Denoising filter (DLSS Ray Reconstruction). Off traces and presents the raw path-traced
              * image — a reference view that is correct but visibly noisy at low SPP, and, because RR
              * also owns the upscale, one that renders at full display resolution instead of RR's

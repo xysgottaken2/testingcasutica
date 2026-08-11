@@ -77,6 +77,16 @@ public bool restirEnabled() {
     return pc.restirMode != 0u
             && pc.restirPreviousAddr != 0 && pc.restirCurrentAddr != 0;
 }
+/**
+ * Sky-access masked ambient fog (medium.slang). Restricted to the Overworld on purpose: the Nether's
+ * haze and the End's dust are self-illuminated dimension media rather than reflected sky, so masking
+ * them by sky access would delete the look instead of fixing an artefact. Keeping the dimension test
+ * inside the predicate means every pass agrees on the scope without repeating the reasoning.
+ */
+public bool maskedFogEnabled() {
+    return worldFeature(worldPush, FEATURE_MASKED_FOG)
+            && worldPush.dimension == DIMENSION_OVERWORLD;
+}
 public bool waterWavesEnabled() { return worldFlag(worldPush, WORLD_FLAG_WAVES); }
 public bool cameraSubmerged() { return worldFlag(worldPush, WORLD_FLAG_SUBMERGED); }
 

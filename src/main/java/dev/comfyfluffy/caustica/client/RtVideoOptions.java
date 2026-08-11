@@ -63,6 +63,7 @@ public final class RtVideoOptions {
             // pairs them two per row, so they read as one block rather than scattered checkboxes.
             subsurfaceScattering(),
             weatherLighting(),
+            maskedFog(),
             // Clouds: the on/off toggle followed by its two tuning sliders, so the control that gates
             // the other two reads immediately before them.
             clouds(),
@@ -136,6 +137,7 @@ public final class RtVideoOptions {
         return new OptionInstance<?>[] {
             subsurfaceScattering(),
             weatherLighting(),
+            maskedFog(),
         };
     }
 
@@ -372,6 +374,15 @@ public final class RtVideoOptions {
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */
     private static OptionInstance<Boolean> weatherLighting() {
         return bool("caustica.options.rt.weatherLighting", CausticaConfig.Rt.Composite.WEATHER_LIGHTING);
+    }
+
+    /**
+     * Masked fog: the distance haze glows only where the air is open to the sky, so caves and other
+     * enclosed spaces stop filling with a daylight-coloured wash. Costs one occlusion ray per path;
+     * open-air scenes are visually unchanged.
+     */
+    private static OptionInstance<Boolean> maskedFog() {
+        return bool("caustica.options.rt.maskedFog", CausticaConfig.Rt.Composite.MASKED_FOG);
     }
 
     /**

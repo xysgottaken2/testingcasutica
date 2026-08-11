@@ -30,6 +30,8 @@
 	"caustica.options.rt.sss.tooltip": "Laisse la lumière se diffuser à travers les surfaces fines comme les feuilles et l'herbe, si bien que le feuillage rayonne lorsqu'on le regarde à contre-jour. N'affecte que les matériaux fournissant des données de sous-surface et coûte un rayon d'ombre supplémentaire là où elle s'applique.",
 	"caustica.options.rt.weatherLighting": "Éclairage météorologique",
 	"caustica.options.rt.weatherLighting.tooltip": "Atténue la lumière du soleil et de la lune et assombrit le ciel pendant la pluie et les orages, en masquant le soleil, la lune et les étoiles derrière les nuages. Désactivé, conserve l'éclairage d'un ciel dégagé par tous les temps.",
+	"caustica.options.rt.maskedFog": "Brouillard masqué",
+	"caustica.options.rt.maskedFog.tooltip": "Ne fait briller la brume de distance que là où l'air est réellement ouvert au ciel. Désactivé, la brume remplit aussi les espaces clos : les grottes et autres zones sombres reçoivent un voile couleur lumière du jour sans source dans la scène. Activé, l'air enfermé cesse de briller et les vues en extérieur restent identiques. Coûte un rayon d'occlusion par chemin ; le Nether et l'End ne sont pas concernés.",
 	"caustica.options.rt.denoiser": "Filtre de débruitage",
 	"caustica.options.rt.denoiser.tooltip": "Applique le filtre de débruitage DLSS Ray Reconstruction à l'image en path tracing. Désactivé, affiche le rendu brut et bruité en pleine résolution — utile comme vue de référence, mais bien plus granuleux à faible nombre d'échantillons. Nécessite la prise en charge de DLSS Ray Reconstruction.",
 	"caustica.options.rt.handFov": "Champ de vision de la main",

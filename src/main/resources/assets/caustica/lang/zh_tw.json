@@ -30,6 +30,8 @@
 	"caustica.options.rt.sss.tooltip": "讓光線穿過樹葉、草等薄表面並產生散射，因此朝太陽方向看時植被會發光。僅影響提供次表面資料的材質，並在生效處增加一條陰影光線。",
 	"caustica.options.rt.weatherLighting": "天氣光照",
 	"caustica.options.rt.weatherLighting.tooltip": "在下雨與雷暴期間減弱陽光與月光並壓暗天空，同時將太陽、月亮和星星隱藏在雲層之後。關閉後，任何天氣下都維持晴空光照。",
+	"caustica.options.rt.maskedFog": "遮蔽霧",
+	"caustica.options.rt.maskedFog.tooltip": "讓遠景霧氣只在真正朝天空敞開的空氣中發光。關閉時霧氣也會填滿封閉空間，於是洞穴等黑暗區域會蒙上一層在場景中毫無光源的日光色薄霧。開啟後封閉空氣不再發光，而露天視野維持不變。每條路徑消耗一條遮蔽光線；地獄與終界不受影響。",
 	"caustica.options.rt.denoiser": "降噪濾鏡",
 	"caustica.options.rt.denoiser.tooltip": "對路徑追蹤影像套用 DLSS Ray Reconstruction 降噪濾鏡。關閉後會以完整解析度顯示原始的雜訊追蹤結果——可作為參考畫面，但在低取樣數下顆粒感明顯更強。需要 DLSS Ray Reconstruction 支援。",
 	"caustica.options.rt.handFov": "手部視野",

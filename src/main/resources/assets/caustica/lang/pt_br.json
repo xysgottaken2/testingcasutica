@@ -42,6 +42,8 @@
 	"caustica.options.rt.sss.tooltip": "Permite que a luz se espalhe através de superfícies finas, como folhas e grama, fazendo a folhagem brilhar quando você olha através dela na direção do sol. Só afeta materiais que fornecem dados de subsuperfície; custa um raio de sombra adicional onde é aplicado.",
 	"caustica.options.rt.weatherLighting": "Iluminação do clima",
 	"caustica.options.rt.weatherLighting.tooltip": "Reduz a luz do sol e da lua e escurece o céu durante chuvas e tempestades, além de ocultar o sol, a lua e as estrelas atrás das nuvens. Desativado, mantém a iluminação de céu limpo em qualquer clima.",
+	"caustica.options.rt.maskedFog": "Névoa mascarada",
+	"caustica.options.rt.maskedFog.tooltip": "Faz a névoa de distância brilhar apenas onde o ar está realmente aberto para o céu. Desativado, a névoa também preenche espaços fechados, então cavernas e outras áreas escuras recebem um brilho com cor de luz do dia que não tem origem na cena. Ativado, o ar fechado deixa de brilhar e as vistas ao ar livre continuam iguais. Custa um raio de oclusão por caminho; o Nether e o End não são afetados.",
 	"caustica.options.rt.denoiser": "Filtro de redução de ruído",
 	"caustica.options.rt.denoiser.tooltip": "Aplica o filtro de redução de ruído do DLSS Ray Reconstruction à imagem com path tracing. Desativado, mostra o traçado bruto e ruidoso em resolução total — útil como referência, mas bem mais granulado com poucas amostras. Requer suporte a DLSS Ray Reconstruction.",
 	"caustica.options.rt.handFov": "FOV da mão",
