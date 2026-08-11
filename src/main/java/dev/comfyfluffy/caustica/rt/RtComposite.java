@@ -35,7 +35,6 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.MoonPhase;
-import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.FluidState;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -304,10 +303,6 @@ public final class RtComposite {
     // valleys keep the distance haze while high ground and open sky stay clear (see fogHeightMask).
     private static final float FOG_HEIGHT_MASK_FULL_Y = 64f;   // sea level
     private static final float FOG_HEIGHT_MASK_CLEAR_Y = 200f;
-    // Camera-column epsilon for the enclosed (cave/building) test: standing on the surface the eye sits
-    // ~1.62 above the top blocking block, so only a camera that has actually descended below the
-    // surface reads as enclosed. The 0.5 margins against heightmap/boundary jitter.
-    private static final float FOG_ENCLOSED_EPSILON = 0.5f;
     private static final Identifier SUN_ID = Identifier.withDefaultNamespace("sun");
     private static final Identifier[] MOON_IDS = createMoonIds();
     // Celestial rotation axis (the pole the sun/moon arc about): perpendicular to the east-west arc,
@@ -1510,7 +1505,7 @@ public final class RtComposite {
                     // haze follows the same dusk curve as the light rather than switching at an angle.
                     // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
                     // spaces (see overworldFog); the Nether/End keep their per-dimension fog.
-                    boolean cameraEnclosed = level != null && isCameraEnclosed(level, camY, cameraBlockPos);
+                    boolean cameraEnclosed = level != null && isCameraEnclosed(level, cameraBlockPos);
                     ambientFog(dimension, weather, sky.sunDir().w(), camY, cameraEnclosed),
                     clouds.clouds(),
                     clouds.anchor(),
@@ -2062,14 +2057,11 @@ public final class RtComposite {
 
     /**
      * Whether the camera is inside an enclosed space (cave, mine, or under a roof/building) rather than
-     * under open sky. Uses the heightmap of the camera's column: the top of the highest motion-blocking
-     * block. A camera above that top is in the open; one at or below it has a ceiling overhead. Standing
-     * on the surface the eye is ~1.62 above the top block, so {@link #FOG_ENCLOSED_EPSILON} only lets a
-     * camera that has genuinely descended read as enclosed.
+     * under open sky. Uses {@link Level#canSeeSky}, which walks the MOTION_BLOCKING heightmap of the
+     * camera's column: a camera that cannot see the sky has a ceiling overhead.
      */
-    private static boolean isCameraEnclosed(Level level, double camY, BlockPos eye) {
-        int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, eye.getX(), eye.getZ());
-        return camY < top + FOG_ENCLOSED_EPSILON;
+    private static boolean isCameraEnclosed(Level level, BlockPos eye) {
+        return !level.canSeeSky(eye);
     }
 
     /**
