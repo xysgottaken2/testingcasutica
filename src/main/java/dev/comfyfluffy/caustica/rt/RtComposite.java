@@ -1467,6 +1467,11 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
+            // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
+            // spaces (see overworldFog); the Nether/End keep their per-dimension fog. Resolved once,
+            // outside the WorldPushData argument list, and passed in as a plain boolean lane.
+            boolean cameraEnclosed = level != null && isCameraEnclosed(level, camY, cameraBlockPos,
+                    level.getMinY() + level.getHeight());
             new WorldPushData(
                     frameInvViewProj,
                     new Float3((float) (camX - terrain.blockX), (float) (camY - terrain.blockY),
@@ -1509,8 +1514,6 @@ public final class RtComposite {
                     // haze follows the same dusk curve as the light rather than switching at an angle.
                     // The Overworld haze is masked by camera altitude and removed inside caves/enclosed
                     // spaces (see overworldFog); the Nether/End keep their per-dimension fog.
-                    boolean cameraEnclosed = level != null && isCameraEnclosed(level, camY, cameraBlockPos,
-                            level.getMinY() + level.getHeight());
                     ambientFog(dimension, weather, sky.sunDir().w(), camY, cameraEnclosed),
                     clouds.clouds(),
                     clouds.anchor(),
