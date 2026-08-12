@@ -113,10 +113,6 @@ public PathSegment tracePrimary(PathSegment seg,
         bool isWater = material == MATERIAL_WATER;
         bool entering = payloadDielectricEntering();
         float3 geometricNormal = n;
-        // Keep the physical dielectric untouched, but identify Minecraft's block-aligned waterfall side
-        // so its DLSS-RR guides can remain on the foreground interface instead of jumping to an unrelated
-        // refracted cave surface at every sub-pixel corner.
-        bool waterfallSide = isWater && isFallingWaterSide(geometricNormal);
         float3 previousNormal = n;
         if (isWater && waterWaves) {
             float2 waterDomain = hitPos.xz + worldPush.waterAnchor.xy;
@@ -147,10 +143,7 @@ public PathSegment tracePrimary(PathSegment seg,
 
         if (bounce == 0) {
             gv_normal = n;
-            // Guide-only roughness: the radiance branches below still use the exact Fresnel F and exact
-            // reflection/refraction directions. RR gets a small alpha only on vertical waterfall sides,
-            // enough to reconstruct their colourful reflections without spreading them into a hard halo.
-            gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;
+            gv_rough = 0.0;
             gv_albedo = float3(0.0, 0.0, 0.0);
             gv_hitCamRel = hitPos - worldPush.camOffset;
             gv_motionUseRefracted = false;
@@ -158,12 +151,13 @@ public PathSegment tracePrimary(PathSegment seg,
             gv_spec = makeSpecSurface(gv_hitCamRel, n, previousNormal, geometricNormal,
                                       isWater ? float3(0.0, 0.0, 0.0) : float3(payload.motionPrev),
                                       gv_rough, float3(F, F, F));
-            // A sub-pixel vertical sheet carries both foreground reflection and a refracted destination.
-            // DLSS-RR cannot assign two depths/normals to one pixel; replacing the tuple with whichever
-            // cave surface the guide happens to hit is what expands sparse coloured reflection samples
-            // into the reported border. Keep local water depth/normal/albedo for these sides. Horizontal
-            // water still follows transmission as before, where the destination guide is stable.
-            if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide) {
+            // A water pixel contains foreground reflection and a different refracted layer. DLSS-RR has
+            // only one ordinary depth/normal/albedo tuple, and trying to make that tuple follow the back
+            // layer produced halos and, when mixed with foreground depth, long black shards. Keep the
+            // complete ordinary tuple on the exact crystalline interface for EVERY water orientation.
+            // The physical reflection and transmission leaves below are unchanged. Other dielectrics keep
+            // their existing destination guide because they do not form Minecraft's connected fluid sheet.
+            if (dot(transmittedDir, transmittedDir) > 0.0 && !isWater) {
                 MediumStack guideMedium = medium;
                 if (entering) {
                     mediumPush(guideMedium, entered);

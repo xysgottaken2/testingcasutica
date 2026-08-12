@@ -9,7 +9,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression guards for waterfall DLSS guides and water-volume misses. */
+/** Regression guards for stable all-face water guides and water-volume misses. */
 final class RtWaterShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path WATER = REPO_ROOT.resolve("shaders/world/water.slang");
@@ -46,25 +46,28 @@ final class RtWaterShaderRegressionTest {
     }
 
     @Test
-    void waterfallHaloFixChangesOnlyDlssGuides() throws IOException {
+    void everyWaterFaceKeepsTheCompleteCrystallineForegroundTuple() throws IOException {
         String water = Files.readString(WATER);
-        assertTrue(water.contains("WATERFALL_RR_GUIDE_ROUGHNESS = 0.08"));
-        assertTrue(water.contains("return abs(nGeo.y) < 0.5;"));
+        assertFalse(water.contains("WATERFALL_RR_GUIDE_ROUGHNESS"),
+                "vertical water must not be rougher than top/bottom water");
 
         String primary = Files.readString(PRIMARY);
         String interfaceHandler = slice(primary,
                 "bool isWater = material == MATERIAL_WATER;",
                 "return continuation;");
         assertInOrder(interfaceHandler,
-                "bool waterfallSide = isWater && isFallingWaterSide(geometricNormal);",
                 "float F = fresnelDielectric",
                 "float3 transmittedDir = refract",
-                "gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;",
+                "gv_normal = n;",
+                "gv_rough = 0.0;",
+                "gv_albedo = float3(0.0, 0.0, 0.0);",
                 "gv_spec = makeSpecSurface",
                 "float3(F, F, F)",
-                "if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide)",
+                "if (dot(transmittedDir, transmittedDir) > 0.0 && !isWater)",
                 "bool splitEligible",
                 "throughput * F");
+        assertFalse(interfaceHandler.contains("waterfallSide"),
+                "top, bottom and side faces must use exactly the same guide policy");
     }
 
     @Test
