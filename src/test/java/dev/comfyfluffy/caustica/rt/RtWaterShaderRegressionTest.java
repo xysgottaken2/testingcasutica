@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class RtWaterShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
+    private static final Path GUIDES = REPO_ROOT.resolve("shaders/world/guides.slang");
 
     @Test
     void unresolvedInWaterPathCannotRevealTheFarFieldSky() throws IOException {
@@ -26,6 +27,20 @@ final class RtWaterShaderRegressionTest {
                 "break;",
                 "float3 sky = payload.albedo;",
                 "L += throughput * sky;");
+    }
+
+    @Test
+    void unresolvedInWaterGuideKeepsForegroundInsteadOfPublishingSky() throws IOException {
+        String guides = Files.readString(GUIDES);
+        String missHandler = slice(guides,
+                "if (payload.hitT <= 0.0)",
+                "uint material = payloadMaterial();");
+
+        assertInOrder(missHandler,
+                "if (medium.current.water)",
+                "return;",
+                "setTransmissionGuide",
+                "guideFilter * SKY_DIFF_ALBEDO");
     }
 
     @Test
