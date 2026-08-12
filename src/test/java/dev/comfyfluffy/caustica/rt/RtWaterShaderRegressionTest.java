@@ -1,0 +1,73 @@
+package dev.comfyfluffy.caustica.rt;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** Regression guards for water-volume misses at waterfall and streamed-terrain edges. */
+final class RtWaterShaderRegressionTest {
+    private static final Path REPO_ROOT = repoRoot();
+    private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
+
+    @Test
+    void unresolvedInWaterPathCannotRevealTheFarFieldSky() throws IOException {
+        String world = Files.readString(WORLD);
+        String missHandler = slice(world,
+                "if (payload.hitT < 0.0)",
+                "// Beer–Lambert: attenuate along the segment");
+
+        assertInOrder(missHandler,
+                "if (medium.current.water)",
+                "break;",
+                "float3 sky = payload.albedo;",
+                "L += throughput * sky;");
+    }
+
+    @Test
+    void fixDoesNotRemovePhysicalWaterFresnel() throws IOException {
+        String world = Files.readString(WORLD);
+        String dielectricHandler = slice(world,
+                "if (material == MATERIAL_WATER || material == MATERIAL_DIELECTRIC)",
+                "// A dielectric interface IS the specular event");
+
+        assertInOrder(dielectricHandler,
+                "float F = fresnelDielectric",
+                "float3 transmittedDir = refract",
+                "bool chooseReflection = rndf(seed) < F;");
+        assertFalse(world.contains("stabilizeFallingWaterFresnel"),
+                "waterfall edges should be fixed at the invalid medium miss, not by deleting reflections");
+    }
+
+    private static String slice(String source, String startNeedle, String endNeedle) {
+        int start = source.indexOf(startNeedle);
+        assertTrue(start >= 0, "missing shader snippet start: " + startNeedle);
+        int end = source.indexOf(endNeedle, start);
+        assertTrue(end > start, "missing shader snippet end: " + endNeedle);
+        return source.substring(start, end);
+    }
+
+    private static void assertInOrder(String source, String... needles) {
+        int at = -1;
+        for (String needle : needles) {
+            int next = source.indexOf(needle, at + 1);
+            assertTrue(next > at, "expected snippet after index " + at + ": " + needle);
+            at = next;
+        }
+    }
+
+    private static Path repoRoot() {
+        Path dir = Path.of("").toAbsolutePath();
+        for (Path candidate = dir; candidate != null; candidate = candidate.getParent()) {
+            if (Files.isDirectory(candidate.resolve("shaders/world"))
+                    && Files.isDirectory(candidate.resolve("src/main/java"))) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("could not locate the repository root from " + dir);
+    }
+}
