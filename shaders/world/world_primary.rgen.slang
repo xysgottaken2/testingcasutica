@@ -155,9 +155,15 @@ public PathSegment tracePrimary(PathSegment seg,
             gv_hitCamRel = hitPos - worldPush.camOffset;
             gv_motionUseRefracted = false;
             gv_motionObjDisp = isWater ? float3(0.0, 0.0, 0.0) : payload.motionPrev;
+            // A vertical voxel sheet has no single stable reflected virtual image at its corners. Keep
+            // its Fresnel colour/albedo, but disable the dedicated reflection-MV probe by classifying
+            // only that guide as broad. Otherwise a near-grazing projection can produce an enormous
+            // gSpecMotion vector that makes DLSS-RR corrupt a rectangular part of the frame when the
+            // camera points down. Horizontal water keeps its exact reflection motion.
+            float reflectionGuideRoughness = waterfallSide ? 1.0 : gv_rough;
             gv_spec = makeSpecSurface(gv_hitCamRel, n, previousNormal, geometricNormal,
                                       isWater ? float3(0.0, 0.0, 0.0) : float3(payload.motionPrev),
-                                      gv_rough, float3(F, F, F));
+                                      reflectionGuideRoughness, float3(F, F, F));
             // A sub-pixel vertical sheet carries both foreground reflection and a refracted destination.
             // DLSS-RR cannot assign two depths/normals to one pixel; replacing the tuple with whichever
             // cave surface the guide happens to hit is what expands sparse coloured reflection samples

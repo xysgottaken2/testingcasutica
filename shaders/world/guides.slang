@@ -85,8 +85,21 @@ public SpecSurface makeSpecSurface(float3 camRel, float3 normal, float3 motionPr
 // angle can land behind the eye even though the reflector itself is comfortably in view.
 public float2 projectPrevNdc(float3 worldPos, out bool valid) {
     float4 clip = mul(worldPush.prevViewProj, float4(worldPos - worldPush.camOffset + worldPush.camDelta, 1.0));
-    valid = clip.w > 0.0;
-    return valid ? clip.xy / clip.w : float2(0.0, 0.0);
+    valid = clip.w > 1.0e-4 && !any(isnan(clip)) && !any(isinf(clip));
+    float2 ndc = valid ? clip.xy / clip.w : float2(0.0, 0.0);
+    valid = valid && !any(isnan(ndc)) && !any(isinf(ndc));
+    return valid ? ndc : float2(0.0, 0.0);
+}
+
+// DLSS cannot reproject a sample whose previous coordinate is farther than an entire frame away; that
+// point has no usable on-screen history. More importantly, NaN/Inf or near-plane-amplified reflection
+// vectors can poison an NGX tile and appear as the large rectangular rainbow corruption seen when the
+// camera points down beside a waterfall. Invalid/off-frame vectors deliberately fall back to zero.
+public float2 sanitizeGuideMotion(float2 motion, float2 size) {
+    if (any(isnan(motion)) || any(isinf(motion)) || any(abs(motion) > size)) {
+        return float2(0.0, 0.0);
+    }
+    return motion;
 }
 
 // Previous-frame screen position of a planar reflection. The reflected image of a world point P seen
@@ -160,7 +173,9 @@ public float2 resolveSpecularGuides(SpecSurface surface, float3 primaryDir,
     float2 prevNdc = previousReflectionNdc(
             surfacePos, previousN, surface.motionPrev,
             reflectedHit, reflectedMotionPrev, prevValid);
-    return prevValid ? (prevNdc - currentNdc) * 0.5 * size : float2(0.0, 0.0);
+    float2 motion = prevValid
+            ? (prevNdc - currentNdc) * 0.5 * size : float2(0.0, 0.0);
+    return sanitizeGuideMotion(motion, size);
 }
 
 public void setTransmissionGuide(float3 hitCamRel, float3 motionPrev, float3 normal,
@@ -316,6 +331,7 @@ public void writeGuides(int2 pix, float3 primaryDir, float2 jndc, float2 size, f
     } else {
         motion = float2(0.0, 0.0);
     }
+    motion = sanitizeGuideMotion(motion, size);
 
     // Guide buffers: first-hit or coherently replaced attributes consumed by the denoiser/DLSS-RR.
     gNormal[pix] = float4(gv_normal, gv_rough);
