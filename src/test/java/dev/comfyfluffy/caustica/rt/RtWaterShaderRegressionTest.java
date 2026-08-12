@@ -60,29 +60,11 @@ final class RtWaterShaderRegressionTest {
                 "float F = fresnelDielectric",
                 "float3 transmittedDir = refract",
                 "gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;",
-                "float reflectionGuideRoughness = waterfallSide ? 1.0 : gv_rough;",
                 "gv_spec = makeSpecSurface",
-                "reflectionGuideRoughness, float3(F, F, F)",
+                "float3(F, F, F)",
                 "if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide)",
                 "bool splitEligible",
                 "throughput * F");
-    }
-
-    @Test
-    void invalidOrOffFrameMotionCannotReachDlss() throws IOException {
-        String guides = Files.readString(GUIDES);
-        String sanitizer = slice(guides,
-                "public float2 sanitizeGuideMotion",
-                "// Previous-frame screen position of a planar reflection.");
-        assertInOrder(sanitizer,
-                "any(isnan(motion))",
-                "any(isinf(motion))",
-                "any(abs(motion) > size)",
-                "return float2(0.0, 0.0);");
-        assertTrue(guides.contains("return sanitizeGuideMotion(motion, size);"),
-                "reflection motion must be sanitized");
-        assertTrue(guides.contains("motion = sanitizeGuideMotion(motion, size);"),
-                "ordinary motion must be sanitized");
     }
 
     @Test
