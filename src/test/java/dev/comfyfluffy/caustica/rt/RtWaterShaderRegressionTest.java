@@ -6,12 +6,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression guards for water-volume misses at waterfall and streamed-terrain edges. */
+/** Regression guards for waterfall edges and water-volume misses. */
 final class RtWaterShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
+    private static final Path WATER = REPO_ROOT.resolve("shaders/world/water.slang");
+    private static final Path PRIMARY = REPO_ROOT.resolve("shaders/world/world_primary.rgen.slang");
     private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
     private static final Path GUIDES = REPO_ROOT.resolve("shaders/world/guides.slang");
 
@@ -44,18 +45,45 @@ final class RtWaterShaderRegressionTest {
     }
 
     @Test
-    void fixDoesNotRemovePhysicalWaterFresnel() throws IOException {
-        String world = Files.readString(WORLD);
-        String dielectricHandler = slice(world,
-                "if (material == MATERIAL_WATER || material == MATERIAL_DIELECTRIC)",
-                "// A dielectric interface IS the specular event");
+    void verticalVoxelClosureFacesTransmitInsteadOfMirroringNearbyLights() throws IOException {
+        String water = Files.readString(WATER);
+        String helper = slice(water,
+                "public float stabilizeFallingWaterFresnel",
+                "// ---- Water caustics.");
 
-        assertInOrder(dielectricHandler,
+        assertInOrder(helper,
+                "if (dot(transmittedDir, transmittedDir) <= 0.0)",
+                "return 1.0;",
+                "float freeSurface = smoothstep(0.45, 0.75, abs(nGeo.y));",
+                "return fresnel * freeSurface;");
+        assertTrue(water.contains("if (abs(nGeo.y) < 0.5) return nGeo;"),
+                "vertical waterfall faces must remain identifiable by their geometric normal");
+    }
+
+    @Test
+    void bothWavefrontPassesStabilizeFresnelBeforeUsingIt() throws IOException {
+        String primary = Files.readString(PRIMARY);
+        String primaryHandler = slice(primary,
+                "float etaI = medium.current.ior;",
+                "return continuation;");
+        assertInOrder(primaryHandler,
                 "float F = fresnelDielectric",
                 "float3 transmittedDir = refract",
+                "if (isWater)",
+                "F = stabilizeFallingWaterFresnel(F, geometricNormal, transmittedDir);",
+                "gv_spec = makeSpecSurface",
+                "bool splitEligible");
+
+        String world = Files.readString(WORLD);
+        String indirectHandler = slice(world,
+                "if (material == MATERIAL_WATER || material == MATERIAL_DIELECTRIC)",
+                "// A dielectric interface IS the specular event");
+        assertInOrder(indirectHandler,
+                "float F = fresnelDielectric",
+                "float3 transmittedDir = refract",
+                "if (isWater)",
+                "F = stabilizeFallingWaterFresnel(F, geometricNormal, transmittedDir);",
                 "bool chooseReflection = rndf(seed) < F;");
-        assertFalse(world.contains("stabilizeFallingWaterFresnel"),
-                "waterfall edges should be fixed at the invalid medium miss, not by deleting reflections");
     }
 
     private static String slice(String source, String startNeedle, String endNeedle) {

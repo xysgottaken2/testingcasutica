@@ -112,6 +112,24 @@ public float3 applyWaterWaves(float3 nGeo, float2 worldXZ, float t, float footpr
     return nGeo.y >= 0.0 ? up : -up;
 }
 
+// Minecraft represents a falling stream as block-aligned vertical closure quads. Unlike the real free
+// surface at the top, those voxel walls are perfectly flat delta mirrors. Fresnel therefore approaches
+// one along their silhouettes and mirrors whatever radiance is nearby into a razor-thin outline: white
+// with only ambient light, orange beside lava, and so on. That is the coloured "halo" visible even in
+// caves. The wall exists to close the refractive volume, not to act as a polished vertical mirror.
+//
+// Preserve the physical Fresnel term on horizontal/sloped free surfaces and preserve total internal
+// reflection, where no transmitted path exists. On a transmissive vertical closure face, continuously
+// move the artificial mirror energy into the existing (1-F) refraction branch. This keeps the waterfall
+// tinted and refractive while removing the light-coloured voxel outline.
+public float stabilizeFallingWaterFresnel(float fresnel, float3 nGeo, float3 transmittedDir) {
+    if (dot(transmittedDir, transmittedDir) <= 0.0) {
+        return 1.0;
+    }
+    float freeSurface = smoothstep(0.45, 0.75, abs(nGeo.y));
+    return fresnel * freeSurface;
+}
+
 // ---- Water caustics. Sunlight refracting through the waved surface converges/diverges before it
 // reaches an underwater receiver; the analytic wave field makes the true focusing factor computable
 // instead of faked with a scrolling texture. Where the shadow ray of an underwater NEE vertex crossed

@@ -268,6 +268,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             float cosI = clamp(dot(-rd, n), 0.0, 1.0);
             float F = fresnelDielectric(cosI, etaI, etaT);
             float3 transmittedDir = refract(rd, n, etaI / etaT);
+            if (isWater) {
+                F = stabilizeFallingWaterFresnel(F, geometricNormal, transmittedDir);
+            }
             // The translucent terrain layer is recessed by TRANSLUCENT_INSET (RtTerrainMesher), so a
             // glass/ice face touching a slab or stair sits a hair behind that neighbour's surface. A full
             // SURF_BIAS would restart the transmitted ray past the neighbour and see through it. Water

@@ -139,6 +139,9 @@ public PathSegment tracePrimary(PathSegment seg,
         float etaT = entering ? entered.ior : medium.outer.ior;
         float F = fresnelDielectric(clamp(dot(-rd, n), 0.0, 1.0), etaI, etaT);
         float3 transmittedDir = refract(rd, n, etaI / etaT);
+        if (isWater) {
+            F = stabilizeFallingWaterFresnel(F, geometricNormal, transmittedDir);
+        }
         float transmitBias = isWater ? SURF_BIAS : INSET_TRANSMIT_BIAS;
 
         if (bounce == 0) {
