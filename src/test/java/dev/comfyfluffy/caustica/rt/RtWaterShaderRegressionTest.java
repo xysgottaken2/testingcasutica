@@ -9,9 +9,11 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression guards for water-volume misses at waterfall and streamed-terrain edges. */
+/** Regression guards for waterfall DLSS guides and water-volume misses. */
 final class RtWaterShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
+    private static final Path WATER = REPO_ROOT.resolve("shaders/world/water.slang");
+    private static final Path PRIMARY = REPO_ROOT.resolve("shaders/world/world_primary.rgen.slang");
     private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
     private static final Path GUIDES = REPO_ROOT.resolve("shaders/world/guides.slang");
 
@@ -44,7 +46,29 @@ final class RtWaterShaderRegressionTest {
     }
 
     @Test
-    void fixDoesNotRemovePhysicalWaterFresnel() throws IOException {
+    void waterfallHaloFixChangesOnlyDlssGuides() throws IOException {
+        String water = Files.readString(WATER);
+        assertTrue(water.contains("WATERFALL_RR_GUIDE_ROUGHNESS = 0.08"));
+        assertTrue(water.contains("return abs(nGeo.y) < 0.5;"));
+
+        String primary = Files.readString(PRIMARY);
+        String interfaceHandler = slice(primary,
+                "bool isWater = material == MATERIAL_WATER;",
+                "return continuation;");
+        assertInOrder(interfaceHandler,
+                "bool waterfallSide = isWater && isFallingWaterSide(geometricNormal);",
+                "float F = fresnelDielectric",
+                "float3 transmittedDir = refract",
+                "gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;",
+                "gv_spec = makeSpecSurface",
+                "float3(F, F, F)",
+                "if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide)",
+                "bool splitEligible",
+                "throughput * F");
+    }
+
+    @Test
+    void physicalWaterFresnelRemainsUnchangedInTheIndirectPass() throws IOException {
         String world = Files.readString(WORLD);
         String dielectricHandler = slice(world,
                 "if (material == MATERIAL_WATER || material == MATERIAL_DIELECTRIC)",
@@ -55,7 +79,7 @@ final class RtWaterShaderRegressionTest {
                 "float3 transmittedDir = refract",
                 "bool chooseReflection = rndf(seed) < F;");
         assertFalse(world.contains("stabilizeFallingWaterFresnel"),
-                "waterfall edges should be fixed at the invalid medium miss, not by deleting reflections");
+                "the RR-only fix must not remove the waterfall's physical reflections");
     }
 
     private static String slice(String source, String startNeedle, String endNeedle) {
