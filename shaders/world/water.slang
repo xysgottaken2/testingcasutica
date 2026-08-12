@@ -23,6 +23,14 @@ public static const int   WAVE_COUNT = 10;            // λ = 14 m … 0.38 m (e
 public static const float WAVE_G = 9.81;
 public static const float2 WAVE_WIND = normalize(float2(1.0, 0.35)); // dominant travel direction
 public static const float WAVE_MEANDER = 1.1;         // crest phase-wobble amplitude (rad) on the long components
+// Guide-only alpha for block-aligned falling-water sides. The physical path remains an exact dielectric;
+// this only tells DLSS-RR not to turn sparse reflected light samples at a sub-pixel voxel edge into a
+// razor-sharp halo. 0.08 is the original stable water-guide alpha used before all water became delta.
+public static const float WATERFALL_RR_GUIDE_ROUGHNESS = 0.08;
+
+public bool isFallingWaterSide(float3 nGeo) {
+    return abs(nGeo.y) < 0.5;
+}
 
 public float waterWaveLodWeight(float wavelength, float footprint) {
     float cyclesPerPixel = max(footprint, 0.0) / max(wavelength, 1.0e-4);
@@ -107,7 +115,7 @@ public void waterWaveGradTemporal(float2 p, float currentT, float previousT, flo
 // anchor) so the ripples stay pinned in the world. `nGeo` is already oriented toward the viewer, so the
 // down-viewed underside (n.y < 0) takes the mirrored slope (-up).
 public float3 applyWaterWaves(float3 nGeo, float2 worldXZ, float t, float footprint) {
-    if (abs(nGeo.y) < 0.5) return nGeo;
+    if (isFallingWaterSide(nGeo)) return nGeo;
     float2 grad = waterWaveGrad(worldXZ, t, footprint);
     float3 up = normalize(float3(-grad.x, 1.0, -grad.y));
     return nGeo.y >= 0.0 ? up : -up;

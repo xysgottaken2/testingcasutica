@@ -51,7 +51,6 @@ public PathSegment tracePrimary(PathSegment seg,
                 gv_albedo = SKY_DIFF_ALBEDO;
                 gv_rough = 1.0;
                 gv_hitCamRel = rd * 1.0e6;
-                gv_depthCamRel = gv_hitCamRel;
                 gv_motionUseRefracted = false;
                 gv_motionObjDisp = float3(0.0, 0.0, 0.0);
                 gv_spec = makeSpecSurface(gv_hitCamRel, gv_normal, 1.0, SKY_SPEC_ALBEDO);
@@ -79,7 +78,6 @@ public PathSegment tracePrimary(PathSegment seg,
             if (bounce == 0) {
                 gv_normal = n;
                 gv_hitCamRel = hitPos - worldPush.camOffset;
-                gv_depthCamRel = gv_hitCamRel;
                 gv_motionUseRefracted = false;
                 gv_motionObjDisp = payload.motionPrev;
                 if (material == MATERIAL_PARTICLE) {
@@ -115,6 +113,10 @@ public PathSegment tracePrimary(PathSegment seg,
         bool isWater = material == MATERIAL_WATER;
         bool entering = payloadDielectricEntering();
         float3 geometricNormal = n;
+        // Keep the physical dielectric untouched, but identify Minecraft's block-aligned waterfall side
+        // so its DLSS-RR guides can remain on the foreground interface instead of jumping to an unrelated
+        // refracted cave surface at every sub-pixel corner.
+        bool waterfallSide = isWater && isFallingWaterSide(geometricNormal);
         float3 previousNormal = n;
         if (isWater && waterWaves) {
             float2 waterDomain = hitPos.xz + worldPush.waterAnchor.xy;
@@ -145,17 +147,23 @@ public PathSegment tracePrimary(PathSegment seg,
 
         if (bounce == 0) {
             gv_normal = n;
-            gv_rough = 0.0;
+            // Guide-only roughness: the radiance branches below still use the exact Fresnel F and exact
+            // reflection/refraction directions. RR gets a small alpha only on vertical waterfall sides,
+            // enough to reconstruct their colourful reflections without spreading them into a hard halo.
+            gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;
             gv_albedo = float3(0.0, 0.0, 0.0);
-            float3 interfaceCamRel = hitPos - worldPush.camOffset;
-            gv_hitCamRel = interfaceCamRel;
-            gv_depthCamRel = interfaceCamRel;
+            gv_hitCamRel = hitPos - worldPush.camOffset;
             gv_motionUseRefracted = false;
             gv_motionObjDisp = isWater ? float3(0.0, 0.0, 0.0) : payload.motionPrev;
-            gv_spec = makeSpecSurface(interfaceCamRel, n, previousNormal, geometricNormal,
+            gv_spec = makeSpecSurface(gv_hitCamRel, n, previousNormal, geometricNormal,
                                       isWater ? float3(0.0, 0.0, 0.0) : float3(payload.motionPrev),
                                       gv_rough, float3(F, F, F));
-            if (dot(transmittedDir, transmittedDir) > 0.0) {
+            // A sub-pixel vertical sheet carries both foreground reflection and a refracted destination.
+            // DLSS-RR cannot assign two depths/normals to one pixel; replacing the tuple with whichever
+            // cave surface the guide happens to hit is what expands sparse coloured reflection samples
+            // into the reported border. Keep local water depth/normal/albedo for these sides. Horizontal
+            // water still follows transmission as before, where the destination guide is stable.
+            if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide) {
                 MediumStack guideMedium = medium;
                 if (entering) {
                     mediumPush(guideMedium, entered);
@@ -166,15 +174,6 @@ public PathSegment tracePrimary(PathSegment seg,
                         guideMedium, transmitBias, rayConeWidth, rayConeSpread,
                         !isWater && entering
                                 ? float3(payload.albedo) : float3(1.0, 1.0, 1.0));
-                if (isWater) {
-                    // Refraction albedo + motion still follow the visible destination, but every water
-                    // orientation keeps depth, normal and exact-zero roughness on the same foreground
-                    // interface as its Fresnel reflection. This removes the halo on top, bottom and side
-                    // faces without touching F or making vertical water less crystalline than horizontal.
-                    gv_depthCamRel = interfaceCamRel;
-                    gv_normal = n;
-                    gv_rough = 0.0;
-                }
             }
         }
 

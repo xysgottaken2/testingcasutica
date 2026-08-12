@@ -9,7 +9,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression guards for coherent all-face water guides and water-volume misses. */
+/** Regression guards for waterfall DLSS guides and water-volume misses. */
 final class RtWaterShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path WATER = REPO_ROOT.resolve("shaders/world/water.slang");
@@ -46,37 +46,25 @@ final class RtWaterShaderRegressionTest {
     }
 
     @Test
-    void everyWaterFaceKeepsOneCoherentForegroundSurfaceForDlss() throws IOException {
+    void waterfallHaloFixChangesOnlyDlssGuides() throws IOException {
         String water = Files.readString(WATER);
-        assertFalse(water.contains("WATERFALL_RR_GUIDE_ROUGHNESS"),
-                "vertical water must not be made less crystalline than horizontal water");
+        assertTrue(water.contains("WATERFALL_RR_GUIDE_ROUGHNESS = 0.08"));
+        assertTrue(water.contains("return abs(nGeo.y) < 0.5;"));
 
         String primary = Files.readString(PRIMARY);
         String interfaceHandler = slice(primary,
                 "bool isWater = material == MATERIAL_WATER;",
                 "return continuation;");
         assertInOrder(interfaceHandler,
+                "bool waterfallSide = isWater && isFallingWaterSide(geometricNormal);",
                 "float F = fresnelDielectric",
                 "float3 transmittedDir = refract",
-                "gv_rough = 0.0;",
-                "float3 interfaceCamRel = hitPos - worldPush.camOffset;",
-                "gv_depthCamRel = interfaceCamRel;",
+                "gv_rough = waterfallSide ? WATERFALL_RR_GUIDE_ROUGHNESS : 0.0;",
                 "gv_spec = makeSpecSurface",
                 "float3(F, F, F)",
-                "resolveTransmissionGuide",
-                "if (isWater)",
-                "gv_depthCamRel = interfaceCamRel;",
-                "gv_normal = n;",
-                "gv_rough = 0.0;",
+                "if (dot(transmittedDir, transmittedDir) > 0.0 && !waterfallSide)",
                 "bool splitEligible",
                 "throughput * F");
-        assertFalse(interfaceHandler.contains("waterfallSide"),
-                "top, bottom and side water faces must use the same guide policy");
-
-        String guides = Files.readString(GUIDES);
-        assertTrue(guides.contains("float4 depthClip = mul(worldPush.curViewProj, float4(gv_depthCamRel, 1.0));"));
-        assertTrue(guides.contains("float4(gv_hitCamRel + worldPush.camDelta - gv_motionObjDisp, 1.0)"),
-                "refracted content motion should still follow its visible destination");
     }
 
     @Test
