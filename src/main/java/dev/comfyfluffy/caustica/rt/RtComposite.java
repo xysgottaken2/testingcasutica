@@ -207,10 +207,11 @@ public final class RtComposite {
             }
         }
         // Reports what the pipeline is ACTUALLY doing, not just what the option asks for:
-        // RtDlssRr.enabled() already folds in the backend switch, and a debug view suppresses RR
+        // RtDlssRr.active() already folds in the backend switch AND the failure latch (a broken RR
+        // degrades to the fallback denoiser), and a debug view suppresses RR
         // entirely (see recordFrame's rrPath), so a shader reading this flag learns whether its output
         // will be denoised rather than whether the player would like it to be.
-        if (RtDlssRr.enabled() && debugView() == 0) {
+        if (RtDlssRr.active() && debugView() == 0) {
             flags |= FEATURE_DENOISER;
         } else {
             if (RtNrdDenoiser.active() && debugView() == 0) {
@@ -1139,7 +1140,7 @@ public final class RtComposite {
     }
 
     private void ensureOutput(RtContext ctx, int width, int height) {
-        boolean rrEnabled = RtDlssRr.enabled();
+        boolean rrEnabled = RtDlssRr.active();
         int rrQuality = rrEnabled ? RtDlssRr.quality() : Integer.MIN_VALUE;
         // FSR 3 only takes the upscale slot when RR is not running (the selector makes them
         // mutually exclusive, but a hand-edited config could enable both — RR wins).
@@ -1154,10 +1155,11 @@ public final class RtComposite {
         //   > SVGF (the renderer's own; the default for every non-DLSS path).
         // Two temporal denoisers in series would fight over the same history and reintroduce exactly
         // the ghosting this rework removes, so they are strictly exclusive.
-        // RtNrdDenoiser.active() rather than enabled(): if the NRD integration has latched off after
-        // a failure, the slot goes back to SVGF, so SVGF's targets have to exist. Keying the
-        // allocation on the option alone left BOTH denoisers inert on a failure, which is why
-        // toggling NRD appeared to do nothing at all.
+        // RtDlssRr.active() rather than enabled(), same contract as RtNrdDenoiser.active(): if the
+        // RR integration has latched off after a failure, the slot goes back to SVGF, so SVGF's
+        // targets have to exist. Keying the allocation on the option alone left the fallback inert
+        // on a failure — a selected-but-broken RR presented the raw undenoised 1-SPP trace (the
+        // "wall of noise" report) because rrPath stayed true while RR silently did nothing.
         boolean nrdEnabled = !rrEnabled && RtNrdDenoiser.active();
         boolean svgfEnabled = !rrEnabled && !nrdEnabled && CausticaConfig.Rt.Denoise.ENABLED.value();
         if (output != null && continuationQueue != null
@@ -1208,6 +1210,25 @@ public final class RtComposite {
         int[] optimal;
         if (rrEnabled) {
             optimal = RtDlssRr.INSTANCE.queryOptimalRenderSize(width, height);
+            if (optimal == null) {
+                // RR's failure latch tripped DURING the query (unavailable at init): every boolean
+                // above was derived with RR still "enabled". Rederive the slot from the latched-off
+                // state so this rebuild lands directly on the fallback path (FSR/XeSS + SVGF)
+                // instead of one wasted rebuild on the next frame.
+                rrEnabled = false;
+                rrQuality = Integer.MIN_VALUE;
+                fsrEnabled = !rrEnabled && RtFsrUpscaler.enabled();
+                fsrQuality = fsrEnabled ? RtFsrUpscaler.quality() : Integer.MIN_VALUE;
+                xessEnabled = !rrEnabled && !fsrEnabled && RtXessUpscaler.enabled();
+                xessQuality = xessEnabled ? RtXessUpscaler.quality() : Integer.MIN_VALUE;
+                nrdEnabled = !rrEnabled && RtNrdDenoiser.active();
+                svgfEnabled = !rrEnabled && !nrdEnabled && CausticaConfig.Rt.Denoise.ENABLED.value();
+                if (fsrEnabled) {
+                    optimal = RtFsrUpscaler.INSTANCE.queryRenderSize(width, height);
+                } else if (xessEnabled) {
+                    optimal = RtXessUpscaler.INSTANCE.queryRenderSize(width, height);
+                }
+            }
         } else if (fsrEnabled) {
             optimal = RtFsrUpscaler.INSTANCE.queryRenderSize(width, height);
         } else if (xessEnabled) {
@@ -1359,7 +1380,7 @@ public final class RtComposite {
             // (denoise+upscale) or FSR 3 (upscale only) brings it to display res. They occupy one
             // slot — RR wins if both are somehow on — and jitter is suppressed for the no-upscaler
             // reference and for the debug guide views (raw inspection).
-            boolean rrPath = RtDlssRr.enabled() && debugView == 0;
+            boolean rrPath = RtDlssRr.active() && debugView == 0;
             boolean fsrPath = !rrPath && RtFsrUpscaler.enabled() && debugView == 0;
             boolean xessPath = !rrPath && !fsrPath && RtXessUpscaler.enabled() && debugView == 0;
             // The denoise slot, in the same priority order ensureOutput allocated for:

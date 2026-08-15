@@ -5,6 +5,7 @@ import dev.comfyfluffy.caustica.fsr.FsrRuntime;
 import dev.comfyfluffy.caustica.ngx.NgxLibrary;
 import dev.comfyfluffy.caustica.ngx.NgxRuntime;
 import dev.comfyfluffy.caustica.rt.RtDeviceBringup;
+import dev.comfyfluffy.caustica.rt.pipeline.RtDlssRr;
 import dev.comfyfluffy.caustica.xess.XessRuntime;
 
 import java.util.ArrayList;
@@ -71,6 +72,12 @@ public final class RtUpscalerSupport {
         CausticaConfig.Rt.Fsr.ENABLED.set(MODE_FSR3.equals(mode));
         CausticaConfig.Rt.Xess.ENABLED.set(MODE_XESS.equals(mode));
         CausticaConfig.Rt.DlssRr.ENABLED.set(MODE_DLSS.equals(mode));
+        if (MODE_DLSS.equals(mode)) {
+            // Re-selecting DLSS is an explicit retry: RR latches off after a runtime failure so the
+            // fallback denoiser takes the slot, and a user who fixed the cause (driver update, DLL,
+            // VRAM) should not need a restart to get RR back.
+            RtDlssRr.INSTANCE.retry();
+        }
     }
 
     /**

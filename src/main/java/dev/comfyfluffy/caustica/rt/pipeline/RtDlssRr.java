@@ -25,15 +25,28 @@ public final class RtDlssRr {
     public static final RtDlssRr INSTANCE = new RtDlssRr();
 
     /**
-     * Whether the RR denoise+upscale pass should run this frame. Two switches gate it and both must be
-     * on: {@code dlss-rr.enabled} is the backend/capability switch (it is what a machine without RR
-     * support turns off), while {@code composite.denoiser} is the player-facing denoising-filter toggle
-     * in Video Settings. Keeping the check here rather than at each call site means every consumer —
-     * the render-size query, the per-frame evaluate, the resize path and teardown — sees one consistent
-     * answer, so flipping the toggle can never leave the trace sized for RR while RR is not running.
+     * Whether the player has selected RR: the backend/capability switch ({@code dlss-rr.enabled}, what a
+     * machine without RR support turns off) AND the player-facing denoising-filter toggle
+     * ({@code composite.denoiser}). This is the config-side gate; the renderer's per-frame path
+     * decisions use {@link #active()}, which also folds in the failure latch — a selected-but-broken RR
+     * must behave as if it were off so the fallback denoiser takes the slot instead of presenting the
+     * raw trace.
      */
     public static boolean enabled() {
         return CausticaConfig.Rt.DlssRr.ENABLED.value() && CausticaConfig.Rt.Composite.DENOISER.value();
+    }
+
+    /**
+     * Whether the RR denoise+upscale pass should actually run this frame: the player-facing switches
+     * ({@link #enabled()}) AND the failure latch. The latch trips on any runtime failure (NGX
+     * unavailable, feature creation failure, evaluate failure); from then on the pipeline must behave
+     * as if RR were off so the fallback denoiser (SVGF) takes the slot instead of presenting the raw,
+     * undenoised 1-SPP trace — the "wall of noise" state a broken-but-selected RR produced before the
+     * latch existed. Mirrors {@code RtNrdDenoiser.active()}'s contract, which RtComposite already keys
+     * the NRD slot on for exactly this reason.
+     */
+    public static boolean active() {
+        return enabled() && !INSTANCE.failed;
     }
 
     // DLSS feature flags. IsHDR (bit 0): color is linear HDR (rgba16f) — RR requires it ("HDR Color
@@ -129,7 +142,7 @@ public final class RtDlssRr {
             return true;
         } catch (Throwable t) {
             failed = true;
-            CausticaMod.LOGGER.error("DLSS-RR evaluate failed; RT composite continues without it", t);
+            CausticaMod.LOGGER.error("DLSS-RR evaluate failed; RT composite falls back to the built-in denoiser", t);
             return false;
         }
     }
@@ -147,12 +160,12 @@ public final class RtDlssRr {
      * <p>Idempotent: with the denoiser on, or with no feature allocated, this does nothing.
      */
     public boolean releaseIfDisabled() {
-        if (enabled() || isNull(feature)) {
+        if (active() || isNull(feature)) {
             return false;
         }
         if (((GpuDeviceAccessor) RenderSystem.getDevice()).caustica$getBackend() instanceof VulkanDevice device) {
             releaseFeature(device);
-            CausticaMod.LOGGER.info("DLSS-RR feature released: denoising filter turned off");
+            CausticaMod.LOGGER.info("DLSS-RR feature released: denoising filter off or RR latched off after failure");
             return true;
         }
         return false;
@@ -160,10 +173,11 @@ public final class RtDlssRr {
 
     /**
      * Asks NGX what render resolution the current quality mode expects for the given display size.
-     * Returns {@code null} only when RR is off (or already disabled from an earlier failure elsewhere)
-     * — in that state there is no feature to query and the caller should trace at full resolution.
-     * Once RR is active, a failed query (stale shim, old driver, bad NGX result) throws instead of
-     * silently falling back, so a broken render/display sync is never masked.
+     * Returns {@code null} when RR is off, already disabled from an earlier failure, or unavailable
+     * at initialization (missing driver support / NGX init failure) — in that state the caller
+     * should trace at full resolution and let the fallback denoiser own the slot. Once RR is
+     * genuinely active, a failed query (stale shim, bad NGX result) throws instead of silently
+     * falling back, so a broken render/display sync is never masked.
      */
     public int[] queryOptimalRenderSize(int displayWidth, int displayHeight) {
         if (!enabled() || failed) {
@@ -172,7 +186,16 @@ public final class RtDlssRr {
         if (!(((GpuDeviceAccessor) RenderSystem.getDevice()).caustica$getBackend() instanceof VulkanDevice device)) {
             return null;
         }
-        ensureInitialized(device);
+        try {
+            ensureInitialized(device);
+        } catch (Throwable t) {
+            // RR cannot initialize (old driver without RR support, NGX init failure, missing DLL):
+            // latch off instead of letting the exception kill the whole RT composite, so the
+            // pipeline degrades to the built-in denoiser the same way a runtime failure does.
+            failed = true;
+            CausticaMod.LOGGER.error("DLSS-RR unavailable at init; falling back to the built-in denoiser", t);
+            return null;
+        }
         if (!lib.hasQueryOptimalDlssd()) {
             throw new IllegalStateException("ngxshim is missing ngxshim_query_optimal_dlssd (stale native shim)");
         }
@@ -234,7 +257,7 @@ public final class RtDlssRr {
             return true;
         } catch (Throwable t) {
             failed = true;
-            CausticaMod.LOGGER.error("DLSS-RR setup failed; RT composite continues without it", t);
+            CausticaMod.LOGGER.error("DLSS-RR setup failed; RT composite falls back to the built-in denoiser", t);
             return false;
         }
     }
@@ -261,6 +284,16 @@ public final class RtDlssRr {
     }
 
     /**
+     * Clear the failure latch so a fresh attempt can be made. Called when the player explicitly
+     * re-selects DLSS in the upscaler selector: a user who fixed the underlying cause (driver
+     * update, DLL, VRAM) should not need a restart to get RR back. A still-broken setup simply
+     * latches off again on the next attempt and hands the slot back to the fallback denoiser.
+     */
+    public void retry() {
+        failed = false;
+    }
+
+    /**
      * Release the RR feature. Does NOT shut down NGX — that is the shared {@link NgxRuntime}'s job at device
      * teardown ({@code NgxRuntime.shutdown()} in {@code CausticaClient.shutdownRt}), so FG can keep using NGX.
      */
@@ -269,6 +302,7 @@ public final class RtDlssRr {
             releaseFeature(device);
         }
         initialized = false;
+        failed = false;
         lib = null;
     }
 
