@@ -65,6 +65,33 @@ static void messageCallback(uint32_t type, const wchar_t* message) {
     std::fflush(stderr);
 }
 
+static void configureAntiGhosting(ffxContext* context, PfnFfxConfigure ffxConfigure) {
+    if (!ffxConfigure) {
+        return;
+    }
+    // Tune anti-ghosting constants for FSR 3.1 upscaler:
+    // Lower fAccumulationAddedPerFrame from 0.333 to 0.15 to reduce history persistence and ghosting.
+    {
+        float val = 0.15f;
+        ffxConfigureDescUpscaleKeyValue cfg;
+        std::memset(&cfg, 0, sizeof(cfg));
+        cfg.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+        cfg.key = FFX_API_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME;
+        cfg.ptr = &val;
+        ffxConfigure(context, &cfg.header);
+    }
+    // Increase fReactivenessScale slightly from 1.0 to 1.25 to improve responsiveness to dynamic changes.
+    {
+        float val = 1.25f;
+        ffxConfigureDescUpscaleKeyValue cfg;
+        std::memset(&cfg, 0, sizeof(cfg));
+        cfg.header.type = FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE;
+        cfg.key = FFX_API_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE;
+        cfg.ptr = &val;
+        ffxConfigure(context, &cfg.header);
+    }
+}
+
 // One upscale context + the descriptors it was created with. ffxCreateContext requires the desc
 // memory to stay live until ffxDestroyContext, so both live in this heap block with the context.
 struct FsrUpscaler {
@@ -179,6 +206,7 @@ FSR_SHIM_EXPORT void* fsrshim_create_upscaler(unsigned int maxRenderWidth, unsig
         std::free(upscaler);
         return nullptr;
     }
+    configureAntiGhosting(&upscaler->context, p_ffxConfigure);
     return upscaler;
 }
 
@@ -233,7 +261,9 @@ FSR_SHIM_EXPORT int fsrshim_dispatch_upscale(void* handle, unsigned long long cm
     // for ABI stability but ignored — FSR runs on color + depth + motion vectors only, which is the
     // stable combination. Exposure stays on AUTO_EXPOSURE.
     dispatch.exposure = makeImageResource(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, 0, 0, FFX_API_RESOURCE_STATE_COMMON);
-    dispatch.reactive = makeImageResource(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, 0, 0, FFX_API_RESOURCE_STATE_COMMON);
+    dispatch.reactive = reactiveImage != 0
+        ? makeImageResource((VkImage) reactiveImage, (VkFormat) reactiveFormat, renderWidth, renderHeight, FFX_API_RESOURCE_STATE_COMMON)
+        : makeImageResource(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, 0, 0, FFX_API_RESOURCE_STATE_COMMON);
     dispatch.transparencyAndComposition = makeImageResource(VK_NULL_HANDLE, VK_FORMAT_UNDEFINED, 0, 0,
             FFX_API_RESOURCE_STATE_COMMON);
     dispatch.output = makeImageResource((VkImage) outImage, (VkFormat) outFormat,
@@ -272,8 +302,14 @@ FSR_SHIM_EXPORT int fsrshim_dispatch_upscale(void* handle, unsigned long long cm
     VkCommandBuffer vkCmd = (VkCommandBuffer) cmd;
     PFN_vkCmdPipelineBarrier cmdPipelineBarrier =
             (PFN_vkCmdPipelineBarrier) g_deviceProcAddr(g_device, "vkCmdPipelineBarrier");
-    VkImage inputs[4] = { (VkImage) colorImage, (VkImage) depthImage, (VkImage) mvImage, (VkImage) reactiveImage };
-    int inputCount = reactiveImage != 0 ? 4 : 3;
+    VkImage inputs[4];
+    int inputCount = 0;
+    inputs[inputCount++] = (VkImage) colorImage;
+    inputs[inputCount++] = (VkImage) depthImage;
+    inputs[inputCount++] = (VkImage) mvImage;
+    if (reactiveImage != 0) {
+        inputs[inputCount++] = (VkImage) reactiveImage;
+    }
     VkImageMemoryBarrier barriers[4];
     for (int i = 0; i < inputCount; i++) {
         std::memset(&barriers[i], 0, sizeof(VkImageMemoryBarrier));
