@@ -213,6 +213,15 @@ public void resolveTransmissionGuide(float3 surfacePos, float3 transmittedDir,
         traceGuide(CULL_PRIMARY, ro, RAY_TMIN, direction, 10000.0,
                 rayConeWidth, rayConeSpread);
         if (payload.hitT <= 0.0) {
+            // A transmitted guide may only classify a miss as sky after it has crossed back out of
+            // water. At thin waterfall silhouettes and voxel corners the guide can miss an exit face;
+            // publishing that unresolved point as far-depth sky gives DLSS-RR a bright discontinuity
+            // even when the radiance path correctly contributes no sky. Keep the foreground water
+            // interface tuple captured by Pass A in that case. It gives RR local depth/normal, zero
+            // diffuse albedo, and no bogus refracted motion instead of a halo-producing sky guide.
+            if (medium.current.water) {
+                return;
+            }
             setTransmissionGuide((ro + direction * 1.0e6) - worldPush.camOffset,
                     float3(0.0, 0.0, 0.0), float3(0.0, 0.0, 0.0), 1.0,
                     guideFilter * SKY_DIFF_ALBEDO);

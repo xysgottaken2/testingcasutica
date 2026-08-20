@@ -151,7 +151,13 @@ public PathSegment tracePrimary(PathSegment seg,
             gv_spec = makeSpecSurface(gv_hitCamRel, n, previousNormal, geometricNormal,
                                       isWater ? float3(0.0, 0.0, 0.0) : float3(payload.motionPrev),
                                       gv_rough, float3(F, F, F));
-            if (dot(transmittedDir, transmittedDir) > 0.0) {
+            // A water pixel contains foreground reflection and a different refracted layer. DLSS-RR has
+            // only one ordinary depth/normal/albedo tuple, and trying to make that tuple follow the back
+            // layer produced halos and, when mixed with foreground depth, long black shards. Keep the
+            // complete ordinary tuple on the exact crystalline interface for EVERY water orientation.
+            // The physical reflection and transmission leaves below are unchanged. Other dielectrics keep
+            // their existing destination guide because they do not form Minecraft's connected fluid sheet.
+            if (dot(transmittedDir, transmittedDir) > 0.0 && !isWater) {
                 MediumStack guideMedium = medium;
                 if (entering) {
                     mediumPush(guideMedium, entered);

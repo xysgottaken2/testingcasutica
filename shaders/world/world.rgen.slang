@@ -155,6 +155,16 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         }
 
         if (payload.hitT < 0.0) {
+            // A path whose medium stack still says water must cross a water face before it can see the
+            // far-field sky. A miss here means the voxel volume was left open (most visibly at a thin
+            // falling-water edge, but also at a streamed terrain boundary). Treating that miss as air
+            // injects the bright sky into the transmitted branch and produces a glowing vertical halo.
+            // Let the unresolved in-water path contribute no radiance instead. Ordinary air and glass
+            // misses still resolve to the sky below.
+            if (medium.current.water) {
+                break;
+            }
+
             // world.rmiss writes sky radiance (gradient + sun/moon disc + stars) into payload.albedo. The
             // packed show-celestial flag decides whether this path segment may see the bright disc.
             float3 sky = payload.albedo;

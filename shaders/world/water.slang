@@ -23,6 +23,7 @@ public static const int   WAVE_COUNT = 10;            // λ = 14 m … 0.38 m (e
 public static const float WAVE_G = 9.81;
 public static const float2 WAVE_WIND = normalize(float2(1.0, 0.35)); // dominant travel direction
 public static const float WAVE_MEANDER = 1.1;         // crest phase-wobble amplitude (rad) on the long components
+
 public float waterWaveLodWeight(float wavelength, float footprint) {
     float cyclesPerPixel = max(footprint, 0.0) / max(wavelength, 1.0e-4);
     return 1.0 - smoothstep(0.25, 0.5, cyclesPerPixel);
