@@ -658,8 +658,16 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     //     of small and busy — width and height grow together, so it reads as heaped, not stretched;
     //   * erosion is concentrated at the extreme top and bottom, leaving the middle solid, which is
     //     what gives a cloud a dense core with a cauliflower crown rather than uniform fluff.
+    float2 warpUv = samplePos * CLOUD_VOLUMETRIC_SCALE / (CLOUD_CELL_BLOCKS * CLOUD_WARP_DIV);
     float base = cloudCoverageField(samplePos * CLOUD_VOLUMETRIC_SCALE);
     float threshold = 1.0 - clamp(push.clouds.x, 0.0, 1.0);
+    // LAYER WALL. The 2D coverage extruded along Y is a rectangle from the side. One extra 2D
+    // noise sample, offset by height, nudges the coverage threshold so the occupied edge walks
+    // in Z as Y changes — a vertical face with depth, not a paper-thin extrusion. Not a 3D voxel
+    // field: warpUv is already a power-of-two space, and hf is not an xz coordinate, so the
+    // anchor wrap cannot desync.
+    float wall = cloudNoise(warpUv + float2(7.0, 23.0) + float2(hf, 1.0 - hf) * 4.0);
+    threshold += (wall - 0.5) * CLOUD_EDGE_SOFTNESS * (0.35 + 0.85 * hf);
     float coverage = smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, base);
     if (coverage <= 0.0) {
         return 0.0;
@@ -688,7 +696,6 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     }
 
     // Domain warp, amplitude growing with height: bases stay flat, crowns curl into rounded lobes.
-    float2 warpUv = samplePos * CLOUD_VOLUMETRIC_SCALE / (CLOUD_CELL_BLOCKS * CLOUD_WARP_DIV);
     float2 warp = float2(cloudNoise(warpUv), cloudNoise(warpUv + float2(41.0, 17.0))) - 0.5;
     float2 warped = samplePos * CLOUD_VOLUMETRIC_SCALE
             + warp * CLOUD_CELL_BLOCKS * (1.0 + 3.0 * hf);

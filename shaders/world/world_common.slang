@@ -116,7 +116,7 @@ public struct WorldPush {
     public uint64_t cloudCellsAddr;
     // Shader-only Parallax Occlusion Mapping (LabPBR _n alpha height field). Geometry and BLASes are
     // never rebuilt; a zero relief depth disables the effect entirely.
-    public float4   parallaxParams;   // x relief depth, y height-march layer count, z unused, w max distance
+    public float4   parallaxParams;   // x relief depth, y height-march layer count, z reserved (layer walls are shader-only), w max distance
     public uint     dimension;        // DIMENSION_OVERWORLD / DIMENSION_NETHER / DIMENSION_END
     public uint     featureFlags;     // FEATURE_* toggles resolved from CausticaConfig
     // Analytic held-item light: xyz position in the same rebased space as camOffset, w packed
