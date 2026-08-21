@@ -26,12 +26,15 @@ public struct Reservoir {
 };
 
 public static const uint RESTIR_SPATIAL_SAMPLES = 4u;
-// Hard stability bounds. M=16 is split into four fresh candidates, four temporal effective samples,
-// and two from each of four spatial neighbours. ReSTIR therefore does less fresh-light work than the
-// default RIS M=8 and has an observable performance path, while history never grows with age.
-public static const uint RESTIR_FRESH_CANDIDATES = 4u;
-public static const float RESTIR_MAX_M = 16.0;
-public static const float RESTIR_CURRENT_M_CAP = 4.0;
+// Hard stability bounds. Keep a full default-RIS proposal set (eight fresh candidates) before
+// merging history. The previous four-candidate budget made a stale temporal winner dominate a
+// receiver for several frames: this looked like slow shadow/light updates around torches and lava,
+// and left especially visible Monte-Carlo boiling in dark interiors. Candidate evaluation is
+// unshadowed, so doubling this set is much cheaper than tracing a second shadow ray. History is still
+// bounded — it stabilizes the estimate without being allowed to freeze a changed light field.
+public static const uint RESTIR_FRESH_CANDIDATES = 8u;
+public static const float RESTIR_MAX_M = 24.0;
+public static const float RESTIR_CURRENT_M_CAP = 8.0;
 public static const float RESTIR_TEMPORAL_M_CAP = 4.0;
 public static const float RESTIR_SPATIAL_M_CAP = 2.0;
 public static const float RESTIR_MAX_W = 16.0;

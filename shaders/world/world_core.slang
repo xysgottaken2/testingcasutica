@@ -91,6 +91,12 @@ public float payloadActiveSss() { return sssEnabled() ? payloadSss() : 0.0; }
 // single worst artefact of the raw reference view at low SPP. Applied only when the denoiser is off,
 // which keeps the denoised path bit-identical to before this option existed.
 public static const float UNDENOISED_FIREFLY_MAX_LUMINANCE = 24.0;
+// RR temporally reconstructs the raw one-SPP input rather than accumulating an already filtered
+// signal. A rare high-weight RIS/indirect sample on a nearly black receiver otherwise survives long
+// enough to read as a "boiling" blob, particularly around lava and torches in the Nether. This is
+// deliberately looser than the raw-view ceiling so ordinary emissive highlights retain their energy,
+// while values that cannot form a stable temporal estimate are kept out of RR's history.
+public static const float RR_FIREFLY_MAX_LUMINANCE = 48.0;
 /**
  * Firefly bound for the per-lobe signals handed to NRD, as a MULTIPLE of the pixel's own combined
  * radiance rather than an absolute luminance. An absolute cap cannot work across a scene that spans
