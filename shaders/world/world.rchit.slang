@@ -161,21 +161,76 @@ float samplePageHeight(uint page, float2 uv, float lod) {
 }
 
 // Parallax Occlusion Mapping: trace a short view-space ray through the LabPBR height field and return
-// a displaced albedo UV. The configured camera distance keeps full relief through 80% of its range,
-// then fades continuously so the cutoff cannot visibly pop. Fade before the sprite boundary and reject
-// rays that leave it: clamping a marching ray to the edge stretches the last texel column into long
-// spikes and makes it pop as the camera moves.
-float2 parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geometricNormal,
+// a displaced albedo UV, plus an optional world-space wall normal.
+//
+// The march is still 2D layers (a per-texel voxel grid would blow the closest-hit budget). From above
+// those layers read as relief; from the side they are a stack of cards — a straight square going into
+// the face. The missing Z of each layer is a VERTICAL WALL: when the ray crosses a height cliff or
+// would leave the sprite, we stop on that wall instead of sampling another horizontal slice (or
+// aborting back to the flat quad). Geometry and BLASes stay untouched.
+struct ParallaxHit {
+    float2 uv;
+    float3 wallNormal; // world-space, zero when the hit is a layer top (or POM is off)
+};
+
+ParallaxHit parallaxNone(float2 atlasUv) {
+    ParallaxHit hit;
+    hit.uv = atlasUv;
+    hit.wallNormal = float3(0.0, 0.0, 0.0);
+    return hit;
+}
+
+float pomMapDepth(MaterialHeader header, uint page, float2 localUv, float materialLod) {
+    return 1.0 - samplePageHeight(page,
+            header.materialUv.xy + localUv * header.materialUv.zw, materialLod);
+}
+
+float3 pomWallWorldNormal(float3 T, float3 B, float3 viewTs) {
+    // Axis-aligned in tangent space so pixel-art cliffs read as box sides, not sheared ramps.
+    float2 ts = viewTs.xy;
+    if (dot(ts, ts) < 1.0e-8) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float2 wallTs = abs(ts.x) >= abs(ts.y) ? float2(sign(ts.x), 0.0) : float2(0.0, sign(ts.y));
+    return normalize(wallTs.x * T + wallTs.y * B);
+}
+
+float3 pomApplyWall(float3 n, float3 wallNormal, float3 vdir) {
+    if (dot(wallNormal, wallNormal) <= 1.0e-8) {
+        return n;
+    }
+    float3 wn = wallNormal;
+    if (dot(wn, vdir) < 0.0) {
+        wn = -wn;
+    }
+    float NoV = dot(wn, vdir);
+    if (NoV < 0.02) {
+        wn = normalize(wn + vdir * (0.02 - NoV));
+    }
+    return wn;
+}
+
+float2 pomSnapLocalUv(MaterialHeader header, uint page, float2 localUv, float materialLod) {
+    Sampler2D pageTex = materialNormalAoTex[NonUniformResourceIndex(page)];
+    uint w, h;
+    pageTex.GetDimensions(w, h);
+    float mip = floor(materialLod);
+    float2 pageSize = max(float2(1.0, 1.0), floor(float2(w, h) / exp2(mip)));
+    float2 localSize = max(float2(1.0, 1.0), pageSize * abs(header.materialUv.zw));
+    return (floor(localUv * localSize) + 0.5) / localSize;
+}
+
+ParallaxHit parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geometricNormal,
         float3 p0, float3 p1, float3 p2, float2 uv0, float2 uv1, float2 uv2, float3 vdir) {
     if ((header.features & MATERIAL_FEATURE_NORMAL) == 0u) {
-        return atlasUv;
+        return parallaxNone(atlasUv);
     }
 
     float2 g1 = uv1 - uv0;
     float2 g2 = uv2 - uv0;
     float det = g1.x * g2.y - g1.y * g2.x;
     if (abs(det) <= 1.0e-12) {
-        return atlasUv;
+        return parallaxNone(atlasUv);
     }
 
     float3 n = geometricNormal;
@@ -197,11 +252,11 @@ float2 parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geome
     float maxMaterialLod = float((header.features >> MATERIAL_MAX_LOD_SHIFT) & MATERIAL_MAX_LOD_MASK);
     // Only suppress the singular near-horizontal case; a wider fade would override the distance slider.
     float grazingFade = smoothstep(0.002, 0.006, rawNoV);
-    float edgeDistance = min(min(localUv.x, 1.0 - localUv.x), min(localUv.y, 1.0 - localUv.y));
-    float edgeFade = smoothstep(0.015, 0.09, edgeDistance);
-    float heightScale = parallaxParams.x * distanceFade * grazingFade * edgeFade;
+    // No edge fade: flattening the relief at the sprite border is exactly the "straight square going
+    // down" the wall path exists to hide. Rays that leave the sprite hit the border wall instead.
+    float heightScale = parallaxParams.x * distanceFade * grazingFade;
     if (heightScale <= 1.0e-5) {
-        return atlasUv;
+        return parallaxNone(atlasUv);
     }
 
     uint page = header.texturePage;
@@ -214,34 +269,56 @@ float2 parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geome
     float2 deltaUv = (viewTs.xy / viewTs.z) * (heightScale / float(layerCount));
     float2 currentUv = localUv;
     float currentDepth = 0.0;
-    float sampledDepth = 1.0 - samplePageHeight(page,
-            header.materialUv.xy + currentUv * header.materialUv.zw, materialLod);
+    float sampledDepth = pomMapDepth(header, page, currentUv, materialLod);
+    float3 wallNormal = float3(0.0, 0.0, 0.0);
+    bool hitWall = false;
 
     [loop]
     for (int stepIndex = 0; stepIndex < 32 && currentDepth < sampledDepth; ++stepIndex) {
         float2 nextUv = currentUv - deltaUv;
         if (any(nextUv < float2(0.0, 0.0)) || any(nextUv > float2(1.0, 1.0))) {
-            return atlasUv;
+            // Face-edge wall: the height field ends here, so the last layer gets a Z side rather than
+            // stretching the last texel column or popping back to the undisplaced quad.
+            currentUv = clamp(nextUv, float2(0.0, 0.0), float2(1.0, 1.0));
+            wallNormal = pomWallWorldNormal(T, B, viewTs);
+            hitWall = true;
+            break;
+        }
+        float nextDepth = currentDepth + layerDepth;
+        float nextSampled = pomMapDepth(header, page, nextUv, materialLod);
+        // Cliff wall: the ray is still between the two columns' surface depths, so it struck the
+        // vertical face connecting them — the Z of the 2D layer — not another horizontal card.
+        float lo = min(sampledDepth, nextSampled);
+        float hi = max(sampledDepth, nextSampled);
+        if ((hi - lo) > layerDepth * 0.65 && nextDepth > lo && currentDepth < hi) {
+            // Texture the wall with the taller column (shallower surface depth).
+            currentUv = nextSampled <= sampledDepth ? nextUv : currentUv;
+            if (!smoothing) {
+                currentUv = pomSnapLocalUv(header, page, currentUv, materialLod);
+            }
+            wallNormal = pomWallWorldNormal(T, B, viewTs);
+            hitWall = true;
+            break;
         }
         currentUv = nextUv;
-        currentDepth += layerDepth;
-        sampledDepth = 1.0 - samplePageHeight(page,
-                header.materialUv.xy + currentUv * header.materialUv.zw, materialLod);
+        currentDepth = nextDepth;
+        sampledDepth = nextSampled;
     }
 
-    // Smooth mode refines the crossing. Pixel mode intentionally keeps the discrete layer hit so it
-    // cannot reintroduce interpolated/rounded relief after the user disabled smoothing.
-    float2 frontUv = currentUv + deltaUv;
-    float frontDepth = max(0.0, currentDepth - layerDepth);
-    float2 backUv = currentUv;
-    float backDepth = currentDepth;
-    if (smoothing) {
+    // Smooth mode refines a TOP-face crossing only. Pixel mode keeps the discrete layer hit so it
+    // cannot reintroduce interpolated/rounded relief after the user disabled smoothing. Walls stay
+    // sharp in both modes — interpolating them would put the cardboard slope back.
+    float2 displacedLocalUv = currentUv;
+    if (!hitWall && smoothing) {
+        float2 frontUv = currentUv + deltaUv;
+        float frontDepth = max(0.0, currentDepth - layerDepth);
+        float2 backUv = currentUv;
+        float backDepth = currentDepth;
         [unroll]
         for (int refine = 0; refine < 4; ++refine) {
             float2 midUv = (frontUv + backUv) * 0.5;
             float midDepth = (frontDepth + backDepth) * 0.5;
-            float mapDepth = 1.0 - samplePageHeight(page,
-                    header.materialUv.xy + midUv * header.materialUv.zw, materialLod);
+            float mapDepth = pomMapDepth(header, page, midUv, materialLod);
             if (midDepth < mapDepth) {
                 frontUv = midUv;
                 frontDepth = midDepth;
@@ -250,9 +327,12 @@ float2 parallaxUv(MaterialHeader header, float2 atlasUv, float lod, float3 geome
                 backDepth = midDepth;
             }
         }
+        displacedLocalUv = (frontUv + backUv) * 0.5;
     }
-    float2 displacedLocalUv = smoothing ? (frontUv + backUv) * 0.5 : currentUv;
-    return header.albedoUv.xy + displacedLocalUv / header.albedoUv.zw;
+    ParallaxHit hit;
+    hit.uv = header.albedoUv.xy + displacedLocalUv / header.albedoUv.zw;
+    hit.wallNormal = wallNormal;
+    return hit;
 }
 
 // The sole terrain/entity material evaluation path. LabPBR categorical bytes have already been
@@ -567,9 +647,12 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
         }
         // POM on the opaque entity BLAS geometry only; cutout/translucent entities keep the exact UV
         // whose alpha the any-hit shader already validated (block-entity models like chests are opaque).
+        float3 entityPomWall = float3(0.0, 0.0, 0.0);
         if (GeometryIndex() == 0u && material == MATERIAL_OPAQUE) {
-            euvCoord = parallaxUv(header, euvCoord, entityLod, n, ep0, ep1, ep2,
+            ParallaxHit pom = parallaxUv(header, euvCoord, entityLod, n, ep0, ep1, ep2,
                     euv[e0], euv[e1], euv[e2], vdir);
+            euvCoord = pom.uv;
+            entityPomWall = pom.wallNormal;
         }
         float4 entityTexel = entityAlbedoTex[NonUniformResourceIndex(texSlot)].SampleLevel(euvCoord, entityLod);
         float3 baseAlbedo = srgbToLinear(entityTexel.rgb) * pr.tint.rgb;
@@ -578,7 +661,7 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
         Surface surface = evaluateMaterial(header, euvCoord, entityLod, albedo, n,
                 ep0, ep1, ep2, euv[e0], euv[e1], euv[e2], vdir,
                 header.params.x, header.params.y, pr.normal.w, material == MATERIAL_OPAQUE);
-        n = surface.normal;
+        n = pomApplyWall(surface.normal, entityPomWall, vdir);
 
         payload.albedo = half3(albedo * surface.ao);
         payload.normal = half3(n);
@@ -649,8 +732,11 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     // Parallax Occlusion Mapping: restrict relief to the opaque geometry bucket so leaves, plants,
     // grass overlays and translucent blocks cannot shade a different texel than the one that
     // established their any-hit coverage.
+    float3 pomWall = float3(0.0, 0.0, 0.0);
     if (GeometryIndex() == BUCKET_SOLID && materialHeader.model == MATERIAL_OPAQUE) {
-        uv = parallaxUv(materialHeader, uv, blockLod, n, tp0, tp1, tp2, uv0, uv1, uv2, vdir);
+        ParallaxHit pom = parallaxUv(materialHeader, uv, blockLod, n, tp0, tp1, tp2, uv0, uv1, uv2, vdir);
+        uv = pom.uv;
+        pomWall = pom.wallNormal;
     }
 
     // Stained glass / ice: a thin colored filter resolved in raygen
@@ -748,7 +834,7 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     Surface surface = evaluateMaterial(materialHeader, uv, blockLod, float3(payload.albedo), n,
             tp0, tp1, tp2, uv0, uv1, uv2, vdir,
             materialHeader.params.x, materialHeader.params.y, emission, nonSolid);
-    n = surface.normal;
+    n = pomApplyWall(surface.normal, pomWall, vdir);
     payload.albedo *= half(surface.ao);
     // Block-breaking overlay: opaque/cutout terrain (water skips — fluids aren't breakable). Evaluate
     // it after normal mapping so decal projection uses the same shading orientation as the old path.
