@@ -800,14 +800,15 @@ void main() {
     }
     radiance = clamp(radiance, 0.0, 65504.0);
 
-    // Firefly clamp for the raw (undenoised) view only — see UNDENOISED_FIREFLY_MAX_LUMINANCE. Scaling
-    // the whole colour by the luminance ratio preserves hue and saturation, so a clamped highlight
-    // desaturates toward nothing rather than shifting colour.
-    if (!denoiserEnabled()) {
-        float lum = luminance(radiance);
-        if (lum > UNDENOISED_FIREFLY_MAX_LUMINANCE) {
-            radiance *= UNDENOISED_FIREFLY_MAX_LUMINANCE / lum;
-        }
+    // Bound rare, high-weight samples before they enter a temporal history. Scaling the whole colour
+    // by the luminance ratio preserves hue and saturation. The raw reference needs the tighter bound
+    // because it has no history at all; RR gets a deliberately higher ceiling, but still must not be
+    // handed an isolated RIS/indirect outlier that it will reconstruct as boiling in a dark room.
+    float fireflyCeiling = denoiserEnabled()
+            ? RR_FIREFLY_MAX_LUMINANCE : UNDENOISED_FIREFLY_MAX_LUMINANCE;
+    float lum = luminance(radiance);
+    if (lum > fireflyCeiling) {
+        radiance *= fireflyCeiling / lum;
     }
     outImage[pix] = float4(radiance, 1.0);
 

@@ -11,7 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CPU reference checks for the bounded reservoir math implemented in lighting.slang. */
 final class RestirReservoirMathTest {
-    private static final double MAX_M = 16.0;
+    // Mirrors RESTIR_MAX_M in shaders/world/lighting.slang. Eight current candidates are retained
+    // before the bounded temporal/spatial transfers are merged.
+    private static final double MAX_M = 24.0;
     private static final double MAX_W = 16.0;
     private static final double MIN_PHAT = 1.0e-4;
     private static final double MAX_SAMPLE_LUMINANCE = 16.0;
@@ -22,12 +24,12 @@ final class RestirReservoirMathTest {
     void mergedReservoirCarriesEffectiveSamplesButNeverExceedsHardMCap() {
         Reservoir destination = new Reservoir(8.0, 12.0, 2.0);
 
-        // The source asks to contribute M=16, but only 8 fit below the hard M=16 cap. Its current
-        // receiver weight is pHat * W * acceptedM: 3 * 0.5 * 8 = 12.
+        // The source contributes its full M=16 below the hard M=24 cap. Its current receiver weight
+        // is pHat * W * acceptedM: 3 * 0.5 * 16 = 24, added to the destination's existing 12.
         merge(destination, 16.0, 0.5, 3.0, 0.0);
 
         assertEquals(MAX_M, destination.m, 0.0);
-        assertEquals(24.0, destination.weightSum, 1.0e-12);
+        assertEquals(36.0, destination.weightSum, 1.0e-12);
         assertEquals(3.0, destination.selectedTarget, 1.0e-12);
         double finalW = finalizeWeight(destination.weightSum,
                 destination.m, destination.selectedTarget);
