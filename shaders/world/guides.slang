@@ -37,6 +37,20 @@ public struct SpecSurface {
 };
 public static SpecSurface gv_spec = {};
 
+// DLSS-RR internally demodulates its noisy HDR input by the guide albedo textures. Very dark
+// resource-pack texels (common in LabPBR packs that bake cavity shadow into albedo) can quantize to
+// an almost-zero guide at night or in covered areas, which makes RR treat the pixel as an unstable
+// material boundary and either blur polished reflections back to the default lobe or draw thick dark
+// seams along block faces. Keep non-zero guide colours above a tiny FP16-safe floor; zero stays zero
+// for genuinely absent lobes such as pure diffuse/specular splits.
+public static const float GUIDE_ALBEDO_MIN = 2.0e-3;
+
+public float3 stabilizeGuideAlbedo(float3 albedo) {
+    return max(albedo.r, max(albedo.g, albedo.b)) > 0.0
+            ? max(albedo, float3(GUIDE_ALBEDO_MIN))
+            : albedo;
+}
+
 // Build the selective fog texture from camera depth and a deterministic vertical visibility query.
 // Covered Overworld receivers (caves, rooms, overhangs) store zero; an exposed receiver stores its full
 // primary depth, with glass/water tint naturally producing a partial mask. The Nether and End deliberately
@@ -69,7 +83,7 @@ public SpecSurface makeSpecSurface(float3 camRel, float3 normal, float3 previous
     s.biasNormal = biasNormal;
     s.motionPrev = motionPrev;
     s.roughness = roughness;
-    s.albedo = albedo;
+    s.albedo = stabilizeGuideAlbedo(albedo);
     return s;
 }
 
@@ -112,8 +126,9 @@ public float2 previousReflectionNdc(float3 surfacePos, float3 surfaceNormal, flo
 // would otherwise give RR a zero or recursively defined demodulation signal.
 public float2 resolveSpecularGuides(SpecSurface surface, float3 primaryDir,
                              float2 currentNdc, float2 size, float primaryConeSpread,
-                             out float3 specAlbedo) {
+                             out float3 specAlbedo, out float specHitDistance) {
     specAlbedo = surface.albedo;
+    specHitDistance = 0.0;
     if (length(surface.normal) < 0.5
             || max(surface.albedo.r, max(surface.albedo.g, surface.albedo.b)) <= 0.001
             || surface.roughness > SPEC_MOTION_ALPHA_MAX) {
@@ -135,6 +150,7 @@ public float2 resolveSpecularGuides(SpecSurface surface, float3 primaryDir,
     float3 reflectedMotionPrev;
     if (payload.hitT > 0.0) {
         reflectedHit = surfacePos + specDir * payload.hitT;
+        specHitDistance = payload.hitT;
         uint reflectedMaterial = payloadMaterial();
         // Closest-hit writes motionPrev for every material. Terrain/water are zero; dynamic opaque and
         // dielectric entities carry their per-vertex/object displacement.
@@ -147,7 +163,7 @@ public float2 resolveSpecularGuides(SpecSurface surface, float3 primaryDir,
                     ? float3(payload.albedo)
                     : float3(payload.albedo) * (1.0 - clamp(payloadMetalness(), 0.0, 1.0));
             if (max(reflectedDiffuse.r, max(reflectedDiffuse.g, reflectedDiffuse.b)) > 0.001) {
-                specAlbedo = surface.albedo * reflectedDiffuse;
+                specAlbedo = stabilizeGuideAlbedo(surface.albedo * reflectedDiffuse);
             }
         }
     } else {
@@ -170,7 +186,7 @@ public void setTransmissionGuide(float3 hitCamRel, float3 motionPrev, float3 nor
     gv_motionUseRefracted = true;
     gv_normal = normal;
     gv_rough = roughness;
-    gv_albedo = diffuseAlbedo;
+    gv_albedo = stabilizeGuideAlbedo(diffuseAlbedo);
 }
 
 // Per-channel floor for the transmittance folded into the transmitted diffuse-albedo guide. FP16
@@ -286,8 +302,9 @@ public void writeGuides(int2 pix, float3 primaryDir, float2 jndc, float2 size, f
     // Reflection remains owned by the foreground interface even when a dielectric replaced the ordinary
     // tuple with the transmitted destination.
     float3 specAlbedo;
+    float specHitDistance;
     float2 specMotion = resolveSpecularGuides(
-            gv_spec, primaryDir, jndc, size, primaryConeSpread, specAlbedo);
+            gv_spec, primaryDir, jndc, size, primaryConeSpread, specAlbedo, specHitDistance);
 
     // Hardware (non-linear, reversed-Z) depth for DLSS-RR + Frame Generation: project the camera-relative
     // primary hit through the forward view-projection and take ndc z/w — exactly the value a rasterizer
@@ -349,6 +366,7 @@ public void writeGuides(int2 pix, float3 primaryDir, float2 jndc, float2 size, f
     gMotion[pix] = motion;
     gSpecAlbedo[pix] = float4(specAlbedo, 1.0);
     gSpecMotion[pix] = specMotion;
+    gSpecHitDistance[pix] = specHitDistance;
     // R16 is ample for the ray tracer's 10,000-block finite trace range. Writing this in the primary
     // pass makes the fog mask a stable screen texture shared by every Pass B SPP/path leaf.
     gFogDepthMask[pix] = gv_fogDepth;

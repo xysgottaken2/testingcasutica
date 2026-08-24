@@ -19,7 +19,8 @@ import java.lang.foreign.ValueLayout;
 /**
  * DLSS Ray Reconstruction backend for the RT renderer. Runs the DLSSD (Ray Reconstruction) feature
  * over path-traced color + guide buffers (normals/roughness, diffuse/specular albedo, depth, motion
- * vectors, reflection motion vectors), denoising and upscaling (render res → display res) in one pass.
+ * vectors, reflection motion vectors and hit distance), denoising and upscaling (render res → display
+ * res) in one pass.
  */
 public final class RtDlssRr {
     public static final RtDlssRr INSTANCE = new RtDlssRr();
@@ -88,7 +89,7 @@ public final class RtDlssRr {
      */
     public boolean evaluate(long cmd, RtImage color, RtImage depth, RtImage motion,
                             RtImage diffuseAlbedo, RtImage specularAlbedo, RtImage normals,
-                            RtImage specularMotion, RtImage out,
+                            RtImage specularMotion, RtImage specularHitDistance, RtImage out,
                             int renderWidth, int renderHeight, int displayWidth, int displayHeight,
                             float jitterX, float jitterY, Matrix4fc worldToView, Matrix4fc viewToClip) {
         if (!isReady()) {
@@ -114,7 +115,7 @@ public final class RtDlssRr {
                         specularAlbedo.view, specularAlbedo.image, VK10.VK_FORMAT_R16G16B16A16_SFLOAT,
                         normals.view, normals.image, VK10.VK_FORMAT_R16G16B16A16_SFLOAT,
                         specularMotion.view, specularMotion.image, VK10.VK_FORMAT_R16G16_SFLOAT,
-                        0L, 0L, 0,
+                        specularHitDistance.view, specularHitDistance.image, VK10.VK_FORMAT_R16_SFLOAT,
                         out.view, out.image, VK10.VK_FORMAT_R16G16B16A16_SFLOAT,
                         renderWidth, renderHeight, displayWidth, displayHeight,
                         // jitter in render pixels; MVs are already in render-pixel units, so MV scale = 1.
