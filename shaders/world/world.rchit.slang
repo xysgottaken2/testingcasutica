@@ -177,6 +177,7 @@ float4 samplePageNormalAo(uint page, float2 uv, float lod) {
 struct ParallaxHit {
     float2 uv;      // atlas UV to shade with (displaced when the height field moved the hit)
     float3 normal;  // world-space normal of the surface that was actually hit
+    float tOffset;  // extra distance along the ray to the virtual POM surface behind the flat triangle
     bool wall;      // true when a column side wall was hit: `normal` is a tangent axis, not the face normal
 };
 
@@ -184,6 +185,7 @@ ParallaxHit parallaxFlat(float2 atlasUv, float3 geometricNormal) {
     ParallaxHit hit;
     hit.uv = atlasUv;
     hit.normal = geometricNormal;
+    hit.tOffset = 0.0;
     hit.wall = false;
     return hit;
 }
@@ -351,6 +353,11 @@ ParallaxHit parallaxTrace(MaterialHeader header, float2 atlasUv, float lod, floa
 
     ParallaxHit hit;
     hit.uv = header.albedoUv.xy + hitLocalUv / header.albedoUv.zw;
+    // The POM surface is not just a UV lookup: DLSS-RR gets depth/motion guides from payload.hitT.
+    // If hitT stays on the flat BLAS triangle while colour/normal come from a virtual surface behind
+    // it, RR reconstructs those relief edges as dark temporal seams (especially at night/in shadow).
+    // Move the reported hit point along the current ray by the same normal-depth the height walk hit.
+    hit.tOffset = (reliefDepth * hitDepth) / max(viewTs.z, 1.0e-4);
     hit.wall = wallAxis >= 0;
     hit.normal = geometricNormal;
     if (wallAxis >= 0) {
@@ -697,7 +704,7 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
 
         payload.albedo = half3(albedo * surface.ao);
         payload.normal = half3(n);
-        payload.hitT = RayTCurrent();
+        payload.hitT = RayTCurrent() + entityParallax.tOffset;
         // Per-vertex motion vector: interpolate the captured per-vertex displacement with the same
         // indices/barycentrics used for the UV above. Rotation and skeletal/lid animation use a
         // per-vertex buffer; pure whole-object translation is packed into rigidDisp with no buffer.
@@ -854,7 +861,7 @@ void main(inout Payload payload, in BuiltInTriangleIntersectionAttributes attr) 
     // Beer–Lambert absorption. Opaque terrain uses textured albedo.
     payload.albedo = half3(materialHeader.model == MATERIAL_WATER
             ? tint : srgbToLinear(blockAlbedoAtlas.SampleLevel(uv, blockLod).rgb) * tint);
-    payload.hitT = RayTCurrent();
+    payload.hitT = RayTCurrent() + terrainParallax.tOffset;
     payload.motionPrev = half3(0.0h, 0.0h, 0.0h); // static terrain: camera-only motion vector
     uint material = materialHeader.model == MATERIAL_WATER ? MATERIAL_WATER : MATERIAL_OPAQUE;
 

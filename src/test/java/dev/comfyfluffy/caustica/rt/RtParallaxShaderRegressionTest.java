@@ -99,6 +99,21 @@ final class RtParallaxShaderRegressionTest {
     }
 
     @Test
+    void parallaxHitDistanceMovesWithTheVirtualSurface() throws IOException {
+        String source = Files.readString(WORLD_RCHIT);
+        String trace = slice(source, "ParallaxHit parallaxTrace(", "\n}\n");
+
+        assertTrue(source.contains("float tOffset;  // extra distance along the ray to the virtual POM surface"),
+                "POM must report how far behind the flat triangle the virtual surface was hit");
+        assertTrue(trace.contains("hit.tOffset = (reliefDepth * hitDepth) / max(viewTs.z, 1.0e-4);"),
+                "the reported hit distance must follow the same depth solved by the height walk");
+        assertTrue(source.contains("payload.hitT = RayTCurrent() + entityParallax.tOffset;"),
+                "entity POM must move payload hitT so depth/motion guides match the displayed relief");
+        assertTrue(source.contains("payload.hitT = RayTCurrent() + terrainParallax.tOffset;"),
+                "terrain POM must move payload hitT so DLSS-RR does not reconstruct flat-face seams");
+    }
+
+    @Test
     void crossingBudgetFromJavaStaysInsideTheShaderBounds() throws IOException {
         int min = slangInt("PARALLAX_MIN_CROSSINGS");
         int max = slangInt("PARALLAX_MAX_CROSSINGS");
