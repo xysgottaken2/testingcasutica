@@ -9,7 +9,7 @@ import clouds;
 // them. It used to be binding 9 back when GUIDE_COUNT was 6; when the NRD guides (viewZ, per-lobe
 // radiance, reactive) grew the guide block, the atlas slid up here but this declaration stayed at
 // 9 — sampling the gViewZ storage image instead, which turned the sun and moon black ("evaporated").
-[[vk::binding(13, 0)]] Sampler2D celestialsAtlas;
+[[vk::binding(14, 0)]] Sampler2D celestialsAtlas;
 
 static const float PI = 3.14159265359;
 float pow2(float x) { return x * x; }

@@ -81,13 +81,13 @@ public PathSegment tracePrimary(PathSegment seg,
                 gv_motionUseRefracted = false;
                 gv_motionObjDisp = payload.motionPrev;
                 if (material == MATERIAL_PARTICLE) {
-                    gv_albedo = payload.albedo;
+                    gv_albedo = stabilizeGuideAlbedo(float3(payload.albedo));
                     gv_rough = 1.0;
                     gv_spec = makeSpecSurface(gv_hitCamRel, n, 1.0,
                                               float3(0.0, 0.0, 0.0));
                 } else {
                     float3 v = -rd;
-                    gv_albedo = diffAlb;
+                    gv_albedo = stabilizeGuideAlbedo(diffAlb);
                     gv_rough = rough;
                     gv_spec = makeSpecSurface(gv_hitCamRel, n, float3(payload.motionPrev), rough,
                                               rrSpecularAlbedo(payload.f0, rough, dot(n, v)));

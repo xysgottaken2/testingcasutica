@@ -124,10 +124,10 @@ public final class RtComposite {
     // Real inline push constants (fast constant-bank reads), separate from the WorldPush BDA ring above.
     // Hot addresses/frameIndex and raygen's debugView avoid unnecessary global-memory dereferences;
     // WorldPushConstantsData is generated from the same Slang module and owns this second ABI as well.
-    // RR guide buffers (bindings 3..8) + NRD signals (bindings 9..11: viewZ + per-lobe radiance/hit
-    // distance) + the selective fog depth mask (binding 12). The NRD images are only written when
-    // FEATURE_NRD is on, but the bindings always exist.
-    private static final int GUIDE_COUNT = 10;
+    // RR guide buffers (bindings 3..8, plus specular hit distance at binding 13) + NRD signals
+    // (bindings 9..11: viewZ + per-lobe radiance/hit distance) + the selective fog depth mask
+    // (binding 12). The NRD images are only written when FEATURE_NRD is on, but the bindings always exist.
+    private static final int GUIDE_COUNT = 11;
     private static final long PATH_RECORD_BYTES = 48L;
     // Reflected from PackedRestirReservoir's std430 array stride (world_layout_probe.slang).
     private static final long RESTIR_RECORD_BYTES = RestirReservoirData.BYTE_SIZE;
@@ -584,6 +584,7 @@ public final class RtComposite {
     private RtImage gMotion;
     private RtImage gSpecAlbedo;
     private RtImage gSpecMotion;
+    private RtImage gSpecHitDistance;
     // Primary-hit linear view depth (the denoisers' sky cutoff + NRD's IN_VIEWZ), plus the tracer's
     // per-lobe NRD signals (demodulated YCoCg radiance + normalized hit distance). The lobe images
     // are written only under FEATURE_NRD, but their bindings always exist in the pipeline layout.
@@ -1072,6 +1073,7 @@ public final class RtComposite {
         worldPipeline.setExtraStorageImage(3, gMotion.view);
         worldPipeline.setExtraStorageImage(4, gSpecAlbedo.view);
         worldPipeline.setExtraStorageImage(5, gSpecMotion.view);
+        worldPipeline.setExtraStorageImage(10, gSpecHitDistance.view);
         // NRD signals: always bound (the layout carries them); only written under FEATURE_NRD.
         worldPipeline.setExtraStorageImage(6, gViewZ.view);
         worldPipeline.setExtraStorageImage(7, gNrdDiff.view);
@@ -1104,6 +1106,10 @@ public final class RtComposite {
         if (gSpecMotion != null) {
             gSpecMotion.destroy();
             gSpecMotion = null;
+        }
+        if (gSpecHitDistance != null) {
+            gSpecHitDistance.destroy();
+            gSpecHitDistance = null;
         }
         if (gViewZ != null) {
             gViewZ.destroy();
@@ -1352,6 +1358,7 @@ public final class RtComposite {
         gMotion = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16_SFLOAT, "guide motion " + renderW + "x" + renderH);
         gSpecAlbedo = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "guide specular albedo " + renderW + "x" + renderH);
         gSpecMotion = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16_SFLOAT, "guide specular motion " + renderW + "x" + renderH);
+        gSpecHitDistance = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16_SFLOAT, "guide specular hit distance " + renderW + "x" + renderH);
         // gViewZ is live on every denoised path (SVGF's sky cutoff and NRD's IN_VIEWZ). The per-lobe
         // signal images are bound unconditionally because the world pipeline's descriptor layout
         // carries their bindings, but the tracer only writes them under FEATURE_NRD.
@@ -1812,7 +1819,7 @@ public final class RtComposite {
                 try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "DLSS-RR evaluate");
                      RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.dlssRr")) {
                     rrDone = RtDlssRr.INSTANCE.evaluate(cmd.address(), output, gDepth, gMotion, gAlbedo,
-                            gSpecAlbedo, gNormal, gSpecMotion, rrOutput, renderW, renderH, displayW, displayH,
+                            gSpecAlbedo, gNormal, gSpecMotion, gSpecHitDistance, rrOutput, renderW, renderH, displayW, displayH,
                             -jitterX, -jitterY, frameViewRotation, frameProjection);
                 }
             }

@@ -31,6 +31,7 @@ import world_common;
 // stores zero, which keeps caves/interiors clear and prevents emissive fog from being sampled inside
 // stochastic water/refraction branches.
 [[vk::binding(12, 0)]] [format("r16f")]    public RWTexture2D<float>  gFogDepthMask;
+[[vk::binding(13, 0)]] [format("r16f")]    public RWTexture2D<float>  gSpecHitDistance; // reflection-hit distance for DLSS-RR
 
 // Per-frame push data loaded once from the BDA buffer at the top of main() (same pattern as the GLSL
 // `worldPush` global). Layout constants generated from this module's SPIR-V — see world_common.WorldPush.
