@@ -391,8 +391,9 @@ public final class RtTerrain {
      */
     public static void requestFullClear() {
         RtTerrainOmm.clearCache();
-        // A full terrain/rebase clears the world-space cache too: SHaRC cells are keyed on the
-        // tracer's rebased coordinates, so a new rebase origin would otherwise read stale entries.
+        // A full invalidation can mean a dimension/world change, so discard radiance from the old
+        // scene. Ordinary coordinate rebases do not need this: WorldPush publishes the integer origin
+        // and SHaRC combines it with rebased hits into a stable world-space key.
         RtSharc.INSTANCE.requestClear();
         INSTANCE.fullClearRequested = true;
     }

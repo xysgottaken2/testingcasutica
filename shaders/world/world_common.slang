@@ -136,15 +136,16 @@ public struct WorldPush {
     // Material appearance controls: x is extra polish for authored metallic surfaces, 0..1.
     // It only changes the GGX roughness of metals; non-metals keep their authored response.
     public float4   materialParams;
-    // Experimental SHaRC (Spatially Hashed Radiance Cache). A single flat spatial-hash cache buffer
-    // is allocated by the host and published as a raw device address; the tracer warms it on early
-    // bounces and consults it for later diffuse bounces to shorten path tails and reduce noise.
-    // sharcParams: x = cell size (blocks), y = cache strength 0..1, z = temporal blend, w = query distance.
-    // sharcParams2: x = first bounce that may query the cache, y = update coverage 0..1,
-    //               z = frame lifetime, w = normal agreement threshold.
-    // sharcParams3: x = minimum frame age before a freshly written entry may be queried (warm-up
-    //               guard against a new noisy cell popping in as a flash), y/z/w reserved.
-    // sharcGridOrigin: w = cache entry count; xyz unused (cache is keyed in world coordinates).
+    // Experimental SHaRC (Spatially Hashed Radiance Cache). One flat buffer contains hash keys,
+    // atomic per-frame sums and resolved temporal history. Sparse full paths update; a post-trace
+    // compute pass resolves; all other paths query immutable history to shorten noisy tails.
+    // sharcParams: x = cell size (blocks), y = cache/traced blend 0..1, z = fresh-frame temporal
+    //              weight, w = maximum camera-to-query distance.
+    // sharcParams2: x = first bounce that may query the cache, y = fraction of full update paths,
+    //               z = stale-frame lifetime, w = normal agreement threshold.
+    // sharcParams3: x = sampled frames required before an entry may be queried, y/z/w reserved.
+    // sharcGridOrigin: xyz = integer terrain rebase origin, w = cache entry count. The split origin
+    // avoids both camera-relative key swimming and large-world float precision loss.
     public uint64_t sharcCacheAddr;
     public float4   sharcParams;
     public float4   sharcParams2;

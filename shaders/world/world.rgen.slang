@@ -91,6 +91,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     // produces independent lighting/BSDF paths from the shared terminal continuation.
     uint seed = seg.seed ^ sampleIndex * 2246822519u;
     seed = pcg(seed);
+    // SHaRC update and query paths are disjoint. A sparse, frame-varying subset traces the complete
+    // path and atomically feeds the cache; all other paths may terminate from the resolved cache.
+    // That gives query invocations a frame-stable read while still obtaining fresh training samples.
+    SharcPathState sharcPath;
+    sharcPathInit(worldPush, seed, sharcPath);
     float rayConeWidth = seg.rayConeWidth;
     float rayConeSpread = max(seg.rayConeSpread, RAY_CONE_MIN_SPREAD);
     int maxBounces = int(worldPush.maxBounces);
@@ -159,6 +164,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // world.rmiss writes sky radiance (gradient + sun/moon disc + stars) into payload.albedo. The
             // packed show-celestial flag decides whether this path segment may see the bright disc.
             float3 sky = payload.albedo;
+            // The far-field radiance completes every SHaRC vertex still in the propagation window.
+            // It extends those already-reserved path samples; it must not increment their sample count.
+            sharcPathAdd(worldPush, sharcPath, sky);
             // No ambient fog on an escaping ray. The medium is what the path travels THROUGH to reach
             // something; the sky is not a surface at a distance, it is the far field itself, and each
             // dimension's skybox is already written as the appearance of that far field (the Nether's
@@ -180,7 +188,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // lies within it), shifting the transmitted radiance with distance. Air's extinction is zero, so
         // the ordinary case costs one comparison.
         if (any(medium.current.extinction > 0.0)) {
-            throughput *= exp(-medium.current.extinction * payload.hitT);
+            float3 mediumTransmittance = exp(-medium.current.extinction * payload.hitT);
+            throughput *= mediumTransmittance;
+            sharcPathMultiply(sharcPath, mediumTransmittance);
         }
 
         // Dimension fog is intentionally absent from individual path segments. It is a selective
@@ -203,6 +213,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             CloudVolume segCloud = cloudSegment(worldPush, ro - worldPush.camOffset, rd,
                                                 payload.hitT, cloudSkyAmbient(worldPush),
                                                 showCelestial);
+            sharcPathAdd(worldPush, sharcPath, segCloud.scatter);
             L += throughput * segCloud.scatter;
             if (channel == 2) {
                 Lspec += throughput * segCloud.scatter;
@@ -210,6 +221,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 Ldiff += throughput * segCloud.scatter;
             }
             throughput *= segCloud.transmittance;
+            sharcPathMultiply(sharcPath, segCloud.transmittance);
         }
 
         float3 n = payload.normal; // oriented toward the incoming ray by the closest-hit
@@ -295,6 +307,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                     break;
                 }
                 throughput /= q;
+                sharcPathMultiply(sharcPath, float3(1.0 / q, 1.0 / q, 1.0 / q));
             }
             continue;
         }
@@ -432,9 +445,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         }
 
         float3 albedo = payload.albedo;
-        // SHaRC needs the surface's OWN incoming light (emission + NEE + RIS + hand light + SSS) to
-        // warm the cache, so capture the accumulated path radiance before the first local term lands.
-        // localAdded / throughput below recovers a path-independent environment estimate.
+        // SHaRC needs the surface's OWN outgoing direct radiance (emission + NEE + RIS + hand light +
+        // SSS), so capture accumulated path radiance before the first local term lands. Dividing the
+        // added terms by path throughput below removes the camera-side transport.
         float3 surfaceLightBaseline = L;
         // Boat interior fix: detect dynamic entity (boat, minecart) early for two-sided lighting
         bool isDynamicEntityEarly = payloadDynamicEntity();
@@ -456,6 +469,36 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         rough = exactSpecular ? 0.0 : rough;
         float3 diffAlb = albedo * (1.0 - metal);
         float3 F0 = payload.f0;
+
+        // Resolved SHaRC data stores the COMPLETE outgoing radiance at this surface, including its
+        // local emission/NEE and a short propagated tail. Query before adding any local term so a hit
+        // replaces that outgoing estimate rather than double-counting direct light. Sparse update paths
+        // never query: they must keep tracing to provide independent, complete cache samples.
+        int sharcStartBounce = int(worldPush.sharcParams2.x);
+        bool sharcQueryableSurface = !isDynamicEntityEarly && !exactSpecular
+                && luminance(diffAlb) > 1.0e-5;
+        if (!sharcPathIsUpdating(sharcPath) && sharcQueryableSurface
+                && bounce >= sharcStartBounce && worldPush.sharcParams.y > 0.0) {
+            float3 cachedRadiance;
+            if (sharcQuery(worldPush, hitPos, n, cachedRadiance)) {
+                // Strength is a deterministic blend between the stable cached estimator and the
+                // ordinary traced estimator. Unlike scaling a cache hit and then terminating, this
+                // cannot lose the (1-strength) fraction of path energy.
+                float cacheWeight = saturate(worldPush.sharcParams.y)
+                        * sharcRangeWeight(worldPush, hitPos);
+                float3 cachedContribution = throughput * cachedRadiance * cacheWeight;
+                L += cachedContribution;
+                if (channel == 2) {
+                    Lspec += cachedContribution;
+                } else {
+                    Ldiff += cachedContribution;
+                }
+                if (cacheWeight >= 0.999) {
+                    break;
+                }
+                throughput *= 1.0 - cacheWeight;
+            }
+        }
 
         // Emissive surfaces (lava, glowstone, torches, ...) add radiance directly, colored by albedo.
         // RIS emitter NEE: the direct-hit emission term is gated only for emitters RIS actually samples
@@ -661,40 +704,21 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             }
         }
 
-        // ---- Experimental SHaRC: spatially-hashed world-space radiance cache.
-        //
-        // Cache keys are WORLD coordinates, not camera-relative hitPos: hitPos shifts as the player
-        // walks (it is rebased onto the camera), so hashing it would smear entries across the world
-        // every frame and make the cached light flash as the camera moves. hitPos - camOffset is the
-        // rebased world-space position, which only changes when the terrain origin rebases.
-        //
-        // Early bounces (< startBounce) always trace and warm the cache from the surface's local
-        // radiance. Later diffuse bounces try the cache first: a warm entry is the cached environment
-        // light for this voxel, so it is used as the indirect ambient tail and the path stops. That
-        // shortens noisy multi-bounce tails and reuses nearby world-space light instead of re-tracing
-        // it every frame. Specular/glossy paths and exact mirrors are never replaced, so reflections
-        // keep their traced sharpness. A cache miss falls through to the ordinary continuation.
-        if (sharcEnabled() && sharcReady(worldPush)) {
-            float3 sharcPos = hitPos - worldPush.camOffset;
-            int sharcStartBounce = int(worldPush.sharcParams2.x);
-            if (bounce < sharcStartBounce) {
-                float3 localAdded = L - surfaceLightBaseline;
-                float3 localLight = localAdded / max(throughput,
-                        float3(1.0e-4, 1.0e-4, 1.0e-4));
-                sharcWrite(worldPush, sharcPos, n, localLight, sharcConfidence(localLight), seed);
-            } else if (channel != 2 && !exactSpecular && worldPush.sharcParams.y > 0.0) {
-                float3 cachedRadiance;
-                float cachedConfidence;
-                if (sharcQuery(worldPush, sharcPos, n, cachedRadiance, cachedConfidence)) {
-                    float3 sharcGi = throughput * diffAlb * INV_PI * cachedRadiance
-                            * worldPush.sharcParams.y * cachedConfidence;
-                    L += sharcGi;
-                    // Cached GI is a diffuse indirect-ambient estimate; it belongs in the diffuse lobe
-                    // even when this path had not classified yet (a cache hit at bounce >= 2 is always
-                    // from the diffuse continuation branch).
-                    Ldiff += sharcGi;
-                    break;
-                }
+        // Feed sparse SHaRC update paths after every local term has landed. `localAdded / throughput`
+        // recovers this surface's outgoing direct radiance; sharcPathRecordSurface propagates it to
+        // the previous cache vertices and reserves exactly one sample for this one. hitPos is the small
+        // terrain-rebased coordinate; sharcKey combines it with sharcGridOrigin.xyz using integer math,
+        // so the key is stable both while the camera moves and when the terrain origin rebases.
+        if (sharcPathIsUpdating(sharcPath)) {
+            float3 localAdded = L - surfaceLightBaseline;
+            float3 localLight = localAdded / max(throughput,
+                    float3(1.0e-4, 1.0e-4, 1.0e-4));
+            if (sharcQueryableSurface) {
+                sharcPathRecordSurface(worldPush, sharcPath, hitPos, n, localLight);
+            } else {
+                // Mirrors/metals/dynamic entities do not own cache records, but their observed light
+                // still completes diffuse cache vertices earlier in this update path.
+                sharcPathAdd(worldPush, sharcPath, localLight);
             }
         }
 
@@ -715,7 +739,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 // Authored zero is a delta distribution, not a narrow finite GGX lobe. This avoids the
                 // degenerate VNDF at alpha=0 and preserves a genuinely sharp reflection without a floor.
                 l = reflect(rd, n);
-                throughput *= fresnelSchlick(clamp(dot(n, v), 0.0, 1.0), F0) / ps;
+                float3 continuationWeight = fresnelSchlick(clamp(dot(n, v), 0.0, 1.0), F0) / ps;
+                throughput *= continuationWeight;
+                sharcPathMultiply(sharcPath, continuationWeight);
             } else {
                 float3 h = sampleGGXVNDF(n, v, rough, seed);
                 l = reflect(rd, h); // rd = -v: reflect the incoming ray about the microfacet normal
@@ -725,7 +751,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 }
                 // VNDF + separable Smith ⇒ weight = F · G2/G1(v) = F · G1(l); divide by the lobe pdf ps.
                 float3 F = fresnelSchlick(max(0.0, dot(v, h)), F0);
-                throughput *= F * ggxG1(ndl2, rough) / ps;
+                float3 continuationWeight = F * ggxG1(ndl2, rough) / ps;
+                throughput *= continuationWeight;
+                sharcPathMultiply(sharcPath, continuationWeight);
                 rayConeSpread = max(rayConeSpread, rough * RAY_CONE_GLOSSY_SPREAD_SCALE);
             }
             ro = p;
@@ -739,7 +767,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 pendingHitChannel = 2;
             }
         } else {
-            throughput *= diffAlb / (1.0 - ps);
+            float3 continuationWeight = diffAlb / (1.0 - ps);
+            throughput *= continuationWeight;
+            sharcPathMultiply(sharcPath, continuationWeight);
             ro = p;
             rd = cosineDir(n, seed);
             rayConeSpread = max(rayConeSpread, RAY_CONE_DIFFUSE_SPREAD);
@@ -758,6 +788,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 break;
             }
             throughput /= q;
+            sharcPathMultiply(sharcPath, float3(1.0 / q, 1.0 / q, 1.0 / q));
         }
     }
     // Every term was classified into exactly one accumulator, so the split is exact.

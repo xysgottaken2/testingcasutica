@@ -315,14 +315,18 @@ public final class RtComposite {
                 CausticaConfig.Rt.Sharc.NORMAL_THRESHOLD.value());
     }
 
-    /** WorldPush.sharcParams3: x = minimum age before a new entry may be queried, y/z/w reserved. */
+    /** WorldPush.sharcParams3: x = sampled update frames required before query, y/z/w reserved. */
     private static Float4 sharcParams3() {
         return new Float4(CausticaConfig.Rt.Sharc.STABLE_FRAMES.value(), 0.0f, 0.0f, 0.0f);
     }
 
-    /** WorldPush.sharcGridOrigin: xyz reserved, w cache entry count. */
-    private static Int4 sharcGridOrigin() {
-        return new Int4(0, 0, 0, RtSharc.INSTANCE.entryCount());
+    /**
+     * WorldPush.sharcGridOrigin: xyz is the integer terrain rebase origin, w is cache capacity.
+     * The shader combines this split origin with small rebased hit coordinates before quantizing, so
+     * cache keys remain world-stable without losing float precision near Minecraft's world border.
+     */
+    private static Int4 sharcGridOrigin(RtTerrain terrain) {
+        return new Int4(terrain.blockX, terrain.blockY, terrain.blockZ, RtSharc.INSTANCE.entryCount());
     }
 
     // Finite sun/moon angular sizes let NEE shadow rays sample the light disk (soft, contact-hardening
@@ -1689,7 +1693,7 @@ public final class RtComposite {
                     sharcParams(),
                     sharcParams2(),
                     sharcParams3(),
-                    sharcGridOrigin()
+                    sharcGridOrigin(terrain)
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -1745,7 +1749,15 @@ public final class RtComposite {
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.traceIndirect")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 1);
             }
-            VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT writes visible to the temporal/upscale reads
+            if (sharc.enabled() && sharc.entryCount() > 0) {
+                // Update rays touched only atomic accumulation lanes. Resolve must see every addition,
+                // and no later frame may query history until the compute writes are visible.
+                VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT cache updates -> SHaRC resolve
+                try (RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.sharcResolve")) {
+                    sharc.resolve(cmd, pushBuf.deviceAddress);
+                }
+            }
+            VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT/SHaRC writes -> temporal/upscale reads
             // A FOV change does NOT need to restart accumulation, so nothing here does.
             //
             // The history is fetched through the motion vectors, and the tracer builds those with

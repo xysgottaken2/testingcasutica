@@ -1,181 +1,455 @@
-// Experimental SHaRC (Spatially Hashed Radiance Cache) integration for Caustica.
+// Spatially hashed radiance cache used by Caustica's path tracer.
 //
-// This is Caustica's shader-side implementation of NVIDIA's Spatial Hash Radiance Cache idea: a
-// world-space, view-independent voxel cache of the local radiance observed at surfaces. The host
-// allocates one persistent storage buffer and publishes its device address in WorldPush; this module
-// implements the hash, the temporal blend and the query/update helpers the path tracer calls.
+// The cache deliberately separates data written by tracing from data read by rendering:
 //
-// The experimental contract is deliberately humble so it can ship while the real cache matures:
-//   * Cache entries store local environment radiance at a surface (emission + direct NEE + held-item
-//     light + emitter RIS + thin-surface SSS), already de-modulated from the path's throughput.
-//   * Early bounces (bounce < startBounce) still trace normally and WARM the cache; later diffuse
-//     bounces query it and, when a warm entry is found, use it as the indirect ambient tail and stop
-//     tracing. That is what cuts path length and therefore noise in multi-bounce GI.
-//   * Specular/glossy continuations and exact mirrors are never replaced — reflections keep their
-//     traced sharpness and dynamic behaviour.
-//   * Collisions, stale entries, normal mismatch and invalid data are all treated as "no cache data",
-//     so a bad entry can never turn a pixel black.
+//   * raygen inserts stable world-space keys and atomically accumulates fixed-point samples;
+//   * sharc_resolve.comp consumes those samples after the trace, updates temporal history and clears
+//     only the per-frame accumulator;
+//   * cache queries read the resolved lane, which no raygen invocation modifies during the trace.
 //
-// The cache is a single flat spatial hash: cell = floor(pos / cellSize), hash(cell) % entryCount.
-// An entry is valid only when its stored cell matches the query cell, its frame stamp is recent
-// enough, its stored normal is close enough to the query normal and its confidence is > 0.
+// Keeping those phases separate is essential. A float read/modify/write from every ray hitting a
+// voxel is a data race, and querying that same memory while peers rewrite it makes the answer depend
+// on GPU scheduling. Both failure modes show up as distant flicker rather than radiance reuse.
+module sharc;
 
 import world_common;
 
-// 48-byte entry (all float4/uint4 aligned, no tail padding):
-//   radiance.xyz = HDR local environment radiance, radiance.w = confidence (0 = empty/invalid)
-//   cellFrame.xyz = quantised integer cell coordinate, cellFrame.w = frame stamp
-//   normal.xyz = stored surface normal (used as an approximate directional gate)
+// One cache allocation is an array of these 64-byte records. Keep RtSharc.ENTRY_BYTES in lock-step.
+// `metadata.x` is the insertion state and is the only word used as a lock during tracing:
+//   0 = empty, 1 = being initialized, 2 = key ready.
+// Resolve is dispatched after a Vulkan memory barrier, so it is the sole writer of resolved/history
+// data and can recycle stale records without atomics.
 public struct SharcEntry {
-    public float4 radiance;
-    public uint4   cellFrame;
-    public float4  normal;
+    public uint4  key;           // signed cell xyz as raw bits; w = dominant-normal class
+    public uint4  accumulation;  // fixed-point radiance sum xyz; w = complete path sample count
+    public float4 resolved;      // temporally resolved outgoing radiance xyz; w = validity
+    public uint4  metadata;      // state, sampled-frame count, stale-frame count, packed reference normal
 };
 
-// A small, non-zero confidence for any genuinely lit sample. Pure-black entries are left invalid so
-// the query treats them as "no data" rather than as a lightless cache hit (which would darken GI).
-public float sharcConfidence(float3 radiance) {
-    float maxC = max(radiance.r, max(radiance.g, radiance.b));
-    return maxC > 1.0e-4 ? 0.75 : 0.0;
+public static const uint SHARC_ENTRY_EMPTY = 0u;
+public static const uint SHARC_ENTRY_LOCKED = 1u;
+public static const uint SHARC_ENTRY_READY = 2u;
+public static const uint SHARC_INVALID_INDEX = 0xffffffffu;
+public static const uint SHARC_PROBE_COUNT = 8u;
+public static const uint SHARC_INSERT_RETRIES = 4u;
+public static const uint SHARC_PROPAGATION_DEPTH = 2u;
+public static const uint SHARC_MAX_FRAME_SAMPLES = 2048u;
+// At propagation depth two, one reserved sample can receive several downstream terms. This leaves
+// enough uint32 headroom for an eight-bounce path while retaining ~0.002 radiance precision.
+public static const float SHARC_RADIANCE_SCALE = 512.0;
+public static const float SHARC_MAX_SAMPLE_CHANNEL = 128.0;
+
+// A sparse update path keeps the last two diffuse cache vertices. Direct radiance observed at the
+// current hit is propagated to older vertices with the BSDF/medium transport between them. Each
+// vertex increments its sample count exactly once; downstream contributions only extend that sample.
+public struct SharcPathState {
+    public uint cacheIndices[SHARC_PROPAGATION_DEPTH];
+    public float3 sampleWeights[SHARC_PROPAGATION_DEPTH];
+    public uint pathLength;
+    public uint updating;
+};
+
+public bool sharcReady(WorldPush push) {
+    return worldFeature(push, FEATURE_SHARC)
+        && push.sharcCacheAddr != 0
+        && push.sharcGridOrigin.w > 0
+        && push.sharcParams.x >= 1.0
+        && push.sharcParams2.z >= 1.0;
 }
 
-// The cache is only usable when the host has published a real buffer and sane parameters.
-public bool sharcReady(WorldPush push) {
-    if (push.sharcCacheAddr == 0) {
+public uint sharcMix(uint value) {
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+public uint sharcHashKey(uint4 key) {
+    uint h = sharcMix(key.x ^ 0x9e3779b9u);
+    h ^= sharcMix(key.y ^ 0x85ebca6bu);
+    h ^= sharcMix(key.z ^ 0xc2b2ae35u);
+    h ^= sharcMix(key.w ^ 0x27d4eb2fu);
+    return sharcMix(h);
+}
+
+public bool sharcKeyEquals(uint4 a, uint4 b) {
+    return all(a == b);
+}
+
+// Integer division in shader languages truncates toward zero. This version floors so a negative
+// terrain origin and a positive one quantize to one continuous block grid.
+public int sharcFloorDiv(int value, int divisor) {
+    int quotient = value / divisor;
+    int remainder = value - quotient * divisor;
+    return remainder < 0 ? quotient - 1 : quotient;
+}
+
+public int sharcCellAxis(float rebasedPosition, int worldOrigin, int cellSize) {
+    int originCell = sharcFloorDiv(worldOrigin, cellSize);
+    int originRemainder = worldOrigin - originCell * cellSize; // always [0, cellSize)
+    return originCell + int(floor((rebasedPosition + float(originRemainder)) / float(cellSize)));
+}
+
+// Payload normals include normal maps. Quantizing to the dominant signed axis keeps a stone normal
+// map from generating hundreds of keys while still separating floor, ceiling and wall radiance.
+public uint sharcNormalClass(float3 normal) {
+    float3 a = abs(normal);
+    if (a.x >= a.y && a.x >= a.z) {
+        return normal.x >= 0.0 ? 0u : 1u;
+    }
+    if (a.y >= a.z) {
+        return normal.y >= 0.0 ? 2u : 3u;
+    }
+    return normal.z >= 0.0 ? 4u : 5u;
+}
+
+public uint4 sharcKey(WorldPush push, float3 rebasedPosition, float3 normal) {
+    int cellSize = max(int(round(push.sharcParams.x)), 1);
+    // sharcGridOrigin.xyz is the integer terrain rebase origin. Combining it with the small rebased
+    // hit coordinate this way avoids converting a 30-million-block world coordinate to float first.
+    int3 cell = int3(
+        sharcCellAxis(rebasedPosition.x, push.sharcGridOrigin.x, cellSize),
+        sharcCellAxis(rebasedPosition.y, push.sharcGridOrigin.y, cellSize),
+        sharcCellAxis(rebasedPosition.z, push.sharcGridOrigin.z, cellSize));
+    return uint4(uint(cell.x), uint(cell.y), uint(cell.z), sharcNormalClass(normal));
+}
+
+public uint sharcPackNormal(float3 normal) {
+    float3 encoded = saturate(normalize(normal) * 0.5 + 0.5);
+    uint3 q = uint3(round(encoded * 255.0));
+    return q.x | (q.y << 8u) | (q.z << 16u);
+}
+
+public float3 sharcUnpackNormal(uint packed) {
+    float3 q = float3(float(packed & 255u),
+                      float((packed >> 8u) & 255u),
+                      float((packed >> 16u) & 255u));
+    return normalize(q / 255.0 * 2.0 - 1.0);
+}
+
+// MAX_DISTANCE is a camera-to-hit bound. The previous implementation compared it with distance to
+// the center of the voxel (at most sqrt(3)/2 voxels), making the default 96-block control inert and
+// allowing the sparsest far-field cells to be the only visible cache effect.
+public float sharcRangeWeight(WorldPush push, float3 rebasedPosition) {
+    float maxDistance = max(push.sharcParams.w, 0.0);
+    if (maxDistance <= 0.0) {
+        return 0.0;
+    }
+    float distanceToCamera = length(rebasedPosition - push.camOffset);
+    // Blend back to the traced estimator over the outer 20% instead of drawing a hard cache ring that
+    // pops as the camera crosses maxDistance.
+    return 1.0 - smoothstep(maxDistance * 0.8, maxDistance, distanceToCamera);
+}
+
+public bool sharcInRange(WorldPush push, float3 rebasedPosition) {
+    return sharcRangeWeight(push, rebasedPosition) > 0.0;
+}
+
+public uint sharcProbeIndex(uint baseIndex, uint probe, uint capacity) {
+    return (baseIndex + probe) % capacity;
+}
+
+public bool sharcFind(WorldPush push, uint4 key, out uint cacheIndex) {
+    cacheIndex = SHARC_INVALID_INDEX;
+    if (!sharcReady(push)) {
         return false;
     }
-    uint count = uint(push.sharcGridOrigin.w);
-    if (count == 0u || push.sharcParams.x <= 0.0 || push.sharcParams2.z <= 0.0) {
+    uint capacity = uint(push.sharcGridOrigin.w);
+    uint baseIndex = sharcHashKey(key) % capacity;
+    ConstPtr<SharcEntry> cache = ConstPtr<SharcEntry>(push.sharcCacheAddr);
+    for (uint probe = 0u; probe < SHARC_PROBE_COUNT; ++probe) {
+        uint index = sharcProbeIndex(baseIndex, probe, capacity);
+        SharcEntry entry = cache[index];
+        if (entry.metadata.x == SHARC_ENTRY_READY && sharcKeyEquals(entry.key, key)) {
+            cacheIndex = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Find an existing key or reserve the first empty slot in its bounded probe window. A bounded retry
+// replaces an unbounded spinlock: transient contention may drop an update, but can never hang a GPU.
+public bool sharcFindOrInsert(WorldPush push, uint4 key, float3 normal, out uint cacheIndex) {
+    cacheIndex = SHARC_INVALID_INDEX;
+    if (!sharcReady(push)) {
         return false;
     }
+    uint capacity = uint(push.sharcGridOrigin.w);
+    uint baseIndex = sharcHashKey(key) % capacity;
+    DevicePtr<SharcEntry> cache = DevicePtr<SharcEntry>(push.sharcCacheAddr);
+
+    for (uint retry = 0u; retry < SHARC_INSERT_RETRIES; ++retry) {
+        uint emptyIndex = SHARC_INVALID_INDEX;
+        bool initializerInFlight = false;
+        for (uint probe = 0u; probe < SHARC_PROBE_COUNT; ++probe) {
+            uint index = sharcProbeIndex(baseIndex, probe, capacity);
+            uint state = cache[index].metadata.x;
+            if (state == SHARC_ENTRY_READY && sharcKeyEquals(cache[index].key, key)) {
+                cacheIndex = index;
+                return true;
+            }
+            if (state == SHARC_ENTRY_LOCKED) {
+                initializerInFlight = true;
+            } else if (state == SHARC_ENTRY_EMPTY && emptyIndex == SHARC_INVALID_INDEX) {
+                emptyIndex = index;
+            }
+        }
+
+        // Do not leapfrog an initializer: paths for the same new key would otherwise create duplicate
+        // records in adjacent probe slots. Retrying is cheap and remains strictly bounded.
+        if (initializerInFlight || emptyIndex == SHARC_INVALID_INDEX) {
+            continue;
+        }
+
+        uint previousState;
+        InterlockedCompareExchange(cache[emptyIndex].metadata.x,
+                                   SHARC_ENTRY_EMPTY, SHARC_ENTRY_LOCKED, previousState);
+        if (previousState != SHARC_ENTRY_EMPTY) {
+            continue;
+        }
+
+        SharcEntry initialized;
+        initialized.key = key;
+        initialized.accumulation = uint4(0u, 0u, 0u, 0u);
+        initialized.resolved = float4(0.0, 0.0, 0.0, 0.0);
+        initialized.metadata = uint4(SHARC_ENTRY_LOCKED, 0u, 0u, sharcPackNormal(normal));
+        cache[emptyIndex] = initialized;
+        DeviceMemoryBarrier();
+        uint ignored;
+        InterlockedExchange(cache[emptyIndex].metadata.x, SHARC_ENTRY_READY, ignored);
+        cacheIndex = emptyIndex;
+        return true;
+    }
+    return false;
+}
+
+// Atomically reserves one complete path sample. RGB contributions belonging to that sample may be
+// added at later bounces, but they do not increment accumulation.w again.
+public bool sharcReserveSample(DevicePtr<SharcEntry> cache, uint cacheIndex) {
+    for (uint retry = 0u; retry < 8u; ++retry) {
+        uint count = cache[cacheIndex].accumulation.w;
+        if (count >= SHARC_MAX_FRAME_SAMPLES) {
+            return false;
+        }
+        uint observed;
+        InterlockedCompareExchange(cache[cacheIndex].accumulation.w, count, count + 1u, observed);
+        if (observed == count) {
+            return true;
+        }
+    }
+    return false;
+}
+
+public float3 sharcSanitizeSample(float3 radiance) {
+    if (any(isnan(radiance)) || any(isinf(radiance))) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    radiance = max(radiance, float3(0.0, 0.0, 0.0));
+    float peak = max(radiance.x, max(radiance.y, radiance.z));
+    if (peak > SHARC_MAX_SAMPLE_CHANNEL) {
+        radiance *= SHARC_MAX_SAMPLE_CHANNEL / peak;
+    }
+    return radiance;
+}
+
+public void sharcAtomicAdd(DevicePtr<SharcEntry> cache, uint cacheIndex, float3 radiance) {
+    float3 clean = sharcSanitizeSample(radiance);
+    uint3 fixedPoint = uint3(round(clean * SHARC_RADIANCE_SCALE));
+    uint ignored;
+    if (fixedPoint.x != 0u) {
+        InterlockedAdd(cache[cacheIndex].accumulation.x, fixedPoint.x, ignored);
+    }
+    if (fixedPoint.y != 0u) {
+        InterlockedAdd(cache[cacheIndex].accumulation.y, fixedPoint.y, ignored);
+    }
+    if (fixedPoint.z != 0u) {
+        InterlockedAdd(cache[cacheIndex].accumulation.z, fixedPoint.z, ignored);
+    }
+}
+
+public bool sharcBeginSample(WorldPush push, uint cacheIndex, float3 radiance) {
+    DevicePtr<SharcEntry> cache = DevicePtr<SharcEntry>(push.sharcCacheAddr);
+    if (!sharcReserveSample(cache, cacheIndex)) {
+        return false;
+    }
+    sharcAtomicAdd(cache, cacheIndex, radiance);
     return true;
 }
 
-// Integer spatial hash (xorshift-multiply over the cell coordinate).
-public uint sharcHash(uint3 cell) {
-    uint h = cell.x * 0x9E3779B1u;
-    h ^= cell.y * 0x85EBCA77u;
-    h ^= cell.z * 0xC2B2AE3Du;
-    h ^= h >> 16u;
-    h *= 0x7FEB352Du;
-    h ^= h >> 15u;
-    h *= 0x846CA68Bu;
-    h ^= h >> 16u;
-    return h;
-}
-
-public uint3 sharcCell(WorldPush push, float3 pos) {
-    float cellSize = push.sharcParams.x;
-    float3 floored = floor(pos / cellSize);
-    return uint3(uint(floored.x), uint(floored.y), uint(floored.z));
-}
-
-// Looks up an entry for `pos`/`n` and returns the cached radiance scaled by the normal agreement.
-// Returns false for any stale, colliding or unconfident entry — callers must treat that as "trace
-// normally" rather than clamp/blacken the cached value.
-public bool sharcQuery(WorldPush push, float3 pos, float3 n,
-                       out float3 radiance, out float confidence) {
-    radiance = float3(0.0, 0.0, 0.0);
-    confidence = 0.0;
-    if (!sharcReady(push)) {
-        return false;
-    }
-    uint count = uint(push.sharcGridOrigin.w);
-    float cellSize = push.sharcParams.x;
-    uint3 cell = sharcCell(push, pos);
-    uint index = sharcHash(cell) % count;
-
-    SharcEntry entry = ConstPtr<SharcEntry>(push.sharcCacheAddr)[index];
-    if (entry.cellFrame.x != cell.x || entry.cellFrame.y != cell.y || entry.cellFrame.z != cell.z) {
-        return false; // spatial-hash collision
-    }
-    if (entry.cellFrame.w == 0u) {
-        return false; // empty
-    }
-    uint age = push.frameIndex - entry.cellFrame.w;
-    if (age > uint(push.sharcParams2.z)) {
-        return false; // stale
-    }
-    // Warm-up guard: a cell written this frame (or only a frame ago) still holds a very noisy
-    // estimate. Letting that estimate pop into the image right away is what produced the bright
-    // flashes when the camera entered a previously unseen voxel. Wait for the entry to age a few
-    // frames before the tracer is allowed to use it.
-    if (age < uint(push.sharcParams3.x)) {
-        return false;
-    }
-    if (entry.radiance.w <= 0.0) {
-        return false; // invalid/empty confidence
-    }
-    float3 storedNormal = normalize(entry.normal.xyz + float3(1.0e-6, 1.0e-6, 1.0e-6));
-    float nd = saturate(dot(storedNormal, n));
-    if (nd < push.sharcParams2.w) {
-        return false; // surface orientation differs too much
-    }
-    float3 center = (float3(cell.x, cell.y, cell.z) + float3(0.5, 0.5, 0.5)) * cellSize;
-    float distance = length(pos - center);
-    if (distance > push.sharcParams.w) {
-        return false; // too far from the cell the cache describes
-    }
-    radiance = entry.radiance.xyz * nd;
-    confidence = entry.radiance.w;
-    return confidence > 0.0;
-}
-
-// Warms / refreshes a cache entry with the local environment radiance observed at a surface. The
-// caller passes `seed` so the update-coverage gate can be varied per path without making the same
-// cell flicker between adjacent pixels. Reads the current entry, blends it and writes it back.
-public void sharcWrite(WorldPush push, float3 pos, float3 n, float3 radiance,
-                       float confidence, uint seed) {
-    if (!sharcReady(push)) {
-        return;
-    }
-    // A single non-finite sample must never poison a cache entry: it would spread through the
-    // temporal blend and then through every query that hits the cell.
-    if (any(isnan(radiance)) || any(isinf(radiance))) {
-        return;
-    }
-    if (confidence <= 0.0) {
-        return; // a truly unlit sample would only normalize a warm entry toward black
-    }
-    uint count = uint(push.sharcGridOrigin.w);
-    float cellSize = push.sharcParams.x;
-    uint3 cell = sharcCell(push, pos);
-
-    // Update coverage: only a fraction of the paths that see a cell actually write it. Deterministic
-    // per cell+frame (plus the path seed) so a visible cell is refreshed evenly rather than gating on
-    // a per-path coin flip that would starve the same cell in half the frames.
-    uint coverageThresh = uint(clamp(push.sharcParams2.y, 0.0, 1.0) * 1000.0);
-    uint coverageHash = sharcHash(cell) ^ (push.frameIndex * 0x9E3779B1u) ^ seed;
-    if (coverageHash % 1000u >= coverageThresh) {
-        return;
-    }
-
-    uint index = sharcHash(cell) % count;
+public void sharcAddContribution(WorldPush push, uint cacheIndex, float3 radiance) {
     DevicePtr<SharcEntry> cache = DevicePtr<SharcEntry>(push.sharcCacheAddr);
-    SharcEntry entry = cache[index];
-    bool sameCell = entry.cellFrame.x == cell.x
-            && entry.cellFrame.y == cell.y
-            && entry.cellFrame.z == cell.z;
-    bool occupied = sameCell && entry.cellFrame.w != 0u;
-    bool stale = occupied && (push.frameIndex - entry.cellFrame.w > uint(push.sharcParams2.z));
-    // A different live cell owns this hash slot: leave it alone (an aggressive overwrite would make
-    // the cache churn between near misses and destroy temporal reuse).
-    if (!sameCell && entry.cellFrame.w != 0u && !stale) {
+    sharcAtomicAdd(cache, cacheIndex, radiance);
+}
+
+public void sharcPathInit(WorldPush push, uint seed, out SharcPathState state) {
+    state.pathLength = 0u;
+    state.updating = 0u;
+    for (uint i = 0u; i < SHARC_PROPAGATION_DEPTH; ++i) {
+        state.cacheIndices[i] = SHARC_INVALID_INDEX;
+        state.sampleWeights[i] = float3(0.0, 0.0, 0.0);
+    }
+    if (!sharcReady(push)) {
+        return;
+    }
+    float coverage = saturate(push.sharcParams2.y);
+    float randomValue = float(sharcMix(seed) & 0x00ffffffu) / 16777216.0;
+    state.updating = randomValue < coverage ? 1u : 0u;
+}
+
+public bool sharcPathIsUpdating(SharcPathState state) {
+    return state.updating != 0u;
+}
+
+// Adds radiance produced after all currently tracked vertices. It does not create another sample;
+// every tracked vertex already reserved its one count when that path first hit it.
+public void sharcPathAdd(WorldPush push, SharcPathState state, float3 radiance) {
+    if (!sharcPathIsUpdating(state)) {
+        return;
+    }
+    for (uint i = 0u; i < state.pathLength; ++i) {
+        sharcAddContribution(push, state.cacheIndices[i], radiance * state.sampleWeights[i]);
+    }
+}
+
+public void sharcPathMultiply(inout SharcPathState state, float3 transport) {
+    if (!sharcPathIsUpdating(state)) {
+        return;
+    }
+    float3 clean = any(isnan(transport)) || any(isinf(transport))
+        ? float3(0.0, 0.0, 0.0) : max(transport, float3(0.0, 0.0, 0.0));
+    for (uint i = 0u; i < state.pathLength; ++i) {
+        state.sampleWeights[i] *= clean;
+    }
+}
+
+// Complete one cache vertex: propagate this hit's direct outgoing radiance to older vertices, reserve
+// one sample for this vertex, then retain it for up to SHARC_PROPAGATION_DEPTH downstream events.
+public void sharcPathRecordSurface(WorldPush push, inout SharcPathState state,
+                                   float3 rebasedPosition, float3 normal, float3 directRadiance) {
+    if (!sharcPathIsUpdating(state)) {
         return;
     }
 
-    float blend = clamp(push.sharcParams.z, 0.0, 0.99);
-    if (!occupied || stale) {
-        blend = 1.0;
+    // A path can leave the configured cache radius after starting inside it. Its radiance still
+    // completes older in-range samples even though this new surface does not get its own entry.
+    sharcPathAdd(push, state, directRadiance);
+    if (!sharcInRange(push, rebasedPosition)) {
+        return;
     }
-    float3 oldRadiance = entry.radiance.xyz;
-    float oldConfidence = entry.radiance.w;
 
-    SharcEntry updated;
-    updated.radiance = float4(lerp(oldRadiance, clamp(radiance,
-                              float3(0.0, 0.0, 0.0), float3(65504.0, 65504.0, 65504.0)), blend),
-                              lerp(oldConfidence, confidence, blend));
-    updated.cellFrame = uint4(cell.x, cell.y, cell.z, push.frameIndex);
-    updated.normal = float4(normalize(n + float3(1.0e-6, 1.0e-6, 1.0e-6)), 0.0);
-    cache[index] = updated;
+    uint4 key = sharcKey(push, rebasedPosition, normal);
+    uint cacheIndex;
+    if (!sharcFindOrInsert(push, key, normal, cacheIndex)
+            || !sharcBeginSample(push, cacheIndex, directRadiance)) {
+        return;
+    }
+
+    uint last = min(state.pathLength, SHARC_PROPAGATION_DEPTH - 1u);
+    for (uint i = last; i > 0u; --i) {
+        state.cacheIndices[i] = state.cacheIndices[i - 1u];
+        state.sampleWeights[i] = state.sampleWeights[i - 1u];
+    }
+    state.cacheIndices[0] = cacheIndex;
+    state.sampleWeights[0] = float3(1.0, 1.0, 1.0);
+    state.pathLength = min(state.pathLength + 1u, SHARC_PROPAGATION_DEPTH);
+}
+
+// Query only temporally resolved data. `stableFrames` counts frames that actually supplied samples;
+// refreshing a visible cell therefore makes it more trustworthy instead of resetting its age to zero.
+public bool sharcQuery(WorldPush push, float3 rebasedPosition, float3 normal, out float3 radiance) {
+    radiance = float3(0.0, 0.0, 0.0);
+    if (!sharcReady(push) || !sharcInRange(push, rebasedPosition)) {
+        return false;
+    }
+
+    uint cacheIndex;
+    if (!sharcFind(push, sharcKey(push, rebasedPosition, normal), cacheIndex)) {
+        return false;
+    }
+    SharcEntry entry = ConstPtr<SharcEntry>(push.sharcCacheAddr)[cacheIndex];
+    uint requiredFrames = max(uint(push.sharcParams3.x), 1u);
+    if (entry.metadata.y < requiredFrames || entry.resolved.w <= 0.0) {
+        return false;
+    }
+    float3 storedNormal = sharcUnpackNormal(entry.metadata.w);
+    if (dot(storedNormal, normalize(normal)) < push.sharcParams2.w) {
+        return false;
+    }
+    if (any(isnan(entry.resolved.xyz)) || any(isinf(entry.resolved.xyz))) {
+        return false;
+    }
+    radiance = max(entry.resolved.xyz, float3(0.0, 0.0, 0.0));
+    return true;
+}
+
+// One compute invocation owns one entry. The ray-tracing -> compute Vulkan barrier makes all atomic
+// additions visible before this function runs; the following frame cannot query until queue order makes
+// this resolve visible. No raygen invocation ever reads accumulation or writes resolved.
+public void sharcResolveEntry(WorldPush push, uint entryIndex) {
+    uint capacity = uint(max(push.sharcGridOrigin.w, 0));
+    if (!sharcReady(push) || entryIndex >= capacity) {
+        return;
+    }
+
+    DevicePtr<SharcEntry> cache = DevicePtr<SharcEntry>(push.sharcCacheAddr);
+    SharcEntry entry = cache[entryIndex];
+    if (entry.metadata.x != SHARC_ENTRY_READY) {
+        // A bounded insertion can only leave LOCKED behind after an interrupted/invalid invocation.
+        // Recover it here so one bad path cannot permanently consume a probe slot.
+        if (entry.metadata.x == SHARC_ENTRY_LOCKED) {
+            SharcEntry empty;
+            empty.key = uint4(0u, 0u, 0u, 0u);
+            empty.accumulation = uint4(0u, 0u, 0u, 0u);
+            empty.resolved = float4(0.0, 0.0, 0.0, 0.0);
+            empty.metadata = uint4(0u, 0u, 0u, 0u);
+            cache[entryIndex] = empty;
+        }
+        return;
+    }
+
+    uint sampleCount = entry.accumulation.w;
+    if (sampleCount == 0u) {
+        uint staleFrames = entry.metadata.z + 1u;
+        uint lifetime = max(uint(push.sharcParams2.z), 1u);
+        if (staleFrames >= lifetime) {
+            SharcEntry empty;
+            empty.key = uint4(0u, 0u, 0u, 0u);
+            empty.accumulation = uint4(0u, 0u, 0u, 0u);
+            empty.resolved = float4(0.0, 0.0, 0.0, 0.0);
+            empty.metadata = uint4(0u, 0u, 0u, 0u);
+            cache[entryIndex] = empty;
+        } else {
+            cache[entryIndex].metadata.z = staleFrames;
+        }
+        return;
+    }
+
+    float normalization = rcp(float(sampleCount) * SHARC_RADIANCE_SCALE);
+    float3 frameRadiance = float3(entry.accumulation.xyz) * normalization;
+    uint sampledFrames = entry.metadata.y;
+    float3 history = entry.resolved.xyz;
+    float3 resolvedRadiance;
+    if (sampledFrames == 0u || entry.resolved.w <= 0.0) {
+        resolvedRadiance = frameRadiance;
+    } else {
+        // During warm-up use an unbiased running mean: a newly claimed slot may receive only its CAS
+        // winner's sample in frame one, so letting that frame dominate would bake one noisy outlier into
+        // the cache just as it becomes queryable. After warm-up, TEMPORAL_BLEND controls responsiveness.
+        uint warmupFrames = max(uint(push.sharcParams3.x), 1u);
+        float freshWeight = sampledFrames < warmupFrames
+            ? rcp(float(sampledFrames + 1u))
+            : clamp(push.sharcParams.z, 0.0, 0.99);
+        resolvedRadiance = lerp(history, frameRadiance, freshWeight);
+    }
+    if (any(isnan(resolvedRadiance)) || any(isinf(resolvedRadiance))) {
+        resolvedRadiance = sampledFrames > 0u ? history : float3(0.0, 0.0, 0.0);
+    }
+
+    cache[entryIndex].resolved = float4(max(resolvedRadiance, float3(0.0, 0.0, 0.0)), 1.0);
+    cache[entryIndex].accumulation = uint4(0u, 0u, 0u, 0u);
+    cache[entryIndex].metadata.y = min(sampledFrames + 1u, 65535u);
+    cache[entryIndex].metadata.z = 0u;
 }
