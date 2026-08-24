@@ -48,7 +48,10 @@ public final class RtDlssRr {
     private static final int FEATURE_FLAG_AUTO_EXPOSURE = 1 << 6;
     private static final int FEATURE_FLAGS = FEATURE_FLAG_IS_HDR | FEATURE_FLAG_MV_LOW_RES
             | FEATURE_FLAG_DEPTH_INVERTED | FEATURE_FLAG_AUTO_EXPOSURE;
-    // 0 = let the RR DLL pick its per-mode default preset.
+    // NVSDK_NGX_RayReconstruction_Hint_Render_Preset: 0 = Default (the SDK/driver's current model),
+    // 4 = D (standard transformer), 5 = E (latest transformer). Presets A/B/C were removed in NGX SDK
+    // 310.4.0 and every value above E reverts to the default behavior, so only these three are
+    // meaningful — see the DLSS-RR Integration Guide §3.13.
     private static int renderPreset() {
         return CausticaConfig.Rt.DlssRr.PRESET.value();
     }

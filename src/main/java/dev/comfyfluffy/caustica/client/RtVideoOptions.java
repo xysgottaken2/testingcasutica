@@ -536,7 +536,11 @@ public final class RtVideoOptions {
             position -> setting.set(DLSS_QUALITY_ORDER.get(position)));
     }
 
-    private static final List<Integer> DLSS_PRESET_ORDER = List.of(0, 6);
+    // DLSS-RR presets are per-scaling-ratio model hints. As of NGX SDK 310.4.0 the A/B/C presets were
+    // removed; the only choices are Default (the SDK/driver's current model, recommended by NVIDIA) and
+    // the two transformer variants D (standard) and E (latest). The bundled DLSS 4.5 runtime ignores
+    // every other value (F..O revert to the default behavior), so only these are exposed.
+    private static final List<Integer> DLSS_PRESET_ORDER = List.of(0, 4, 5);
 
     private static OptionInstance<Integer> dlssPreset() {
         IntSetting setting = CausticaConfig.Rt.DlssRr.PRESET;
