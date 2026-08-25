@@ -198,7 +198,7 @@ public final class CausticaConfig {
                         + " displayed surfaces keep local lighting exact and may replace their noisy next ray.\n"
                         + " cell-size is the voxel edge in blocks; cache-entries is the probed hash capacity;\n"
                         + " update-coverage is the fraction of full update paths; temporal-blend is the fresh\n"
-                        + " frame's history weight; start-bounce is the first continuation replaced; strength\n
+                        + " frame's history weight; start-bounce is the first continuation replaced; strength\n"
                         + " blends cached and traced estimators (100% terminates on a hit); max-distance is the\n"
                         + " camera-space range; frame-lifetime recycles entries without updates; normal-threshold\n"
                         + " rejects differently oriented surfaces; stable-frames is the number of sampled frames\n"
