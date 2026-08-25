@@ -141,7 +141,7 @@ public struct WorldPush {
     // compute pass resolves, then every displayed path may query immutable history to shorten tails.
     // sharcParams: x = cell size (blocks), y = cache/traced blend 0..1, z = fresh-frame temporal
     //              weight, w = maximum camera-to-query distance.
-    // sharcParams2: x = first bounce that may query the cache, y = fraction of full update paths,
+    // sharcParams2: x = first surface whose indirect continuation may be cached, y = update coverage,
     //               z = stale-frame lifetime, w = normal agreement threshold.
     // sharcParams3: x = sampled frames until an entry reaches full query confidence, y/z/w reserved.
     // sharcGridOrigin: xyz = integer terrain rebase origin, w = cache entry count. The split origin

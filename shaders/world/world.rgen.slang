@@ -477,38 +477,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex, bool sharc
         float3 diffAlb = albedo * (1.0 - metal);
         float3 F0 = payload.f0;
 
-        // Resolved SHaRC data stores the COMPLETE outgoing radiance at this surface, including its
-        // local emission/NEE and a short propagated tail. Query before adding any local term so a hit
-        // replaces that outgoing estimate rather than double-counting direct light. Sparse update paths
-        // never query: they must keep tracing to provide independent, complete cache samples.
+        // Only non-delta surfaces with a real diffuse lobe own cache tails. Dynamic entities move
+        // independently of the world-space grid and therefore only contribute to earlier cached paths.
         int sharcStartBounce = int(worldPush.sharcParams2.x);
         bool sharcQueryableSurface = !isDynamicEntityEarly && !exactSpecular
                 && luminance(diffAlb) > 1.0e-5;
-        if (!sharcPathIsUpdating(sharcPath) && sharcQueryableSurface
-                && bounce >= sharcStartBounce && worldPush.sharcParams.y > 0.0) {
-            gv_sharcQueryAttempted = true;
-            float3 cachedRadiance;
-            float cachedConfidence;
-            if (sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)) {
-                gv_sharcQueryHit = true;
-                // Strength is a deterministic blend between the stable cached estimator and the
-                // ordinary traced estimator. New/sparse cells ramp in through cachedConfidence, so a
-                // rare first hit cannot replace the whole tail or flash against neighbouring misses.
-                float cacheWeight = saturate(worldPush.sharcParams.y)
-                        * sharcRangeWeight(worldPush, hitPos) * cachedConfidence;
-                float3 cachedContribution = throughput * cachedRadiance * cacheWeight;
-                L += cachedContribution;
-                if (channel == 2) {
-                    Lspec += cachedContribution;
-                } else {
-                    Ldiff += cachedContribution;
-                }
-                if (cacheWeight >= 0.999) {
-                    break;
-                }
-                throughput *= 1.0 - cacheWeight;
-            }
-        }
 
         // Emissive surfaces (lava, glowstone, torches, ...) add radiance directly, colored by albedo.
         // RIS emitter NEE: the direct-hit emission term is gated only for emitters RIS actually samples
@@ -714,11 +687,35 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex, bool sharc
             }
         }
 
-        // Feed sparse SHaRC update paths after every local term has landed. `localAdded / throughput`
-        // recovers this surface's outgoing direct radiance; sharcPathRecordSurface propagates it to
-        // the previous cache vertices and reserves exactly one sample for this one. hitPos is the small
-        // terrain-rebased coordinate; sharcKey combines it with sharcGridOrigin.xyz using integer math,
-        // so the key is stable both while the camera moves and when the terrain origin rebases.
+        // Resolved SHaRC data is ONLY the continuation after this surface; all local emission and NEE
+        // above remain exact. Querying here can therefore start at bounce zero and replace the noisy
+        // first indirect direction without blurring the visible material's local lighting.
+        if (!sharcPathIsUpdating(sharcPath) && sharcQueryableSurface
+                && bounce >= sharcStartBounce && worldPush.sharcParams.y > 0.0) {
+            gv_sharcQueryAttempted = true;
+            float3 cachedRadiance;
+            float cachedConfidence;
+            if (sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)) {
+                gv_sharcQueryHit = true;
+                float cacheWeight = saturate(worldPush.sharcParams.y)
+                        * sharcRangeWeight(worldPush, hitPos) * cachedConfidence;
+                float3 cachedContribution = throughput * cachedRadiance * cacheWeight;
+                L += cachedContribution;
+                if (channel == 2) {
+                    Lspec += cachedContribution;
+                } else {
+                    Ldiff += cachedContribution;
+                }
+                if (cacheWeight >= 0.999) {
+                    break;
+                }
+                throughput *= 1.0 - cacheWeight;
+            }
+        }
+
+        // Feed sparse SHaRC update paths after every local term has landed. The local term is propagated
+        // into OLDER vertices, while this surface reserves a zero-valued sample that receives only future
+        // continuation radiance. hitPos plus sharcGridOrigin forms the stable world-space cache key.
         if (sharcPathIsUpdating(sharcPath)) {
             float3 localAdded = L - surfaceLightBaseline;
             float3 localLight = localAdded / max(throughput,

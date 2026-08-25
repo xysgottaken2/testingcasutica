@@ -129,17 +129,21 @@ final class RtSharcShaderRegressionTest {
     }
 
     @Test
-    void cacheStoresOutgoingRadianceWithoutDoubleApplyingTheMaterial() throws IOException {
+    void cacheStoresOnlyTheIndirectTailAfterExactLocalLighting() throws IOException {
+        String sharc = Files.readString(SHARC);
         String raygen = Files.readString(RAYGEN);
+        int localLighting = raygen.indexOf("// Emissive surfaces");
         int query = raygen.indexOf("sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)");
-        int localLighting = raygen.indexOf("// Emissive surfaces", query);
 
-        assertTrue(query >= 0 && localLighting > query,
-                "complete outgoing radiance must be queried before this surface adds direct lighting");
+        assertTrue(localLighting >= 0 && query > localLighting,
+                "local texture/emission/NEE must land before SHaRC replaces the indirect continuation");
         assertFalse(raygen.contains("diffAlb * INV_PI * cachedRadiance"),
-                "the cached value is already outgoing radiance; another BRDF darkens it twice");
+                "the cached tail already contains the sampled continuation transport");
         assertTrue(raygen.contains("throughput *= 1.0 - cacheWeight;"),
                 "a partial-strength hit must trace the residual instead of dropping that path energy");
+        assertTrue(sharc.contains("sharcBeginSample(push, cacheIndex)")
+                        && !sharc.contains("sharcBeginSample(push, cacheIndex, directRadiance)"),
+                "a new cache vertex must start black; its own local lighting is not part of its tail");
         assertTrue(raygen.contains("sharcPathRecordSurface(worldPush, sharcPath, hitPos, n, localLight)"),
                 "sparse full paths must continue supplying cache samples at opaque surfaces");
     }
@@ -161,12 +165,12 @@ final class RtSharcShaderRegressionTest {
     void legacyInertDefaultsMigrateToSparseFirstIndirectQueries() throws IOException {
         String config = Files.readString(CONFIG);
 
-        assertTrue(config.contains("sharc.start-bounce\", 1, 1, 6"),
-                "new installs must query at the first indirect hit, not the low-energy second tail");
+        assertTrue(config.contains("sharc.start-bounce\", 0, 0, 6"),
+                "new installs must be able to replace the primary hit's noisy indirect continuation");
         assertTrue(config.contains("migrateLegacySharcDefaults()")
-                        && config.contains("Rt.Sharc.START_BOUNCE.set(1)")
+                        && config.contains("Rt.Sharc.START_BOUNCE.set(0)")
                         && config.contains("Rt.Sharc.UPDATE_COVERAGE.set(0.05f)"),
-                "the exact old 50%-update/bounce-2 tuple must be migrated for existing users");
+                "older resolved-radiance tuples must migrate to primary indirect-tail caching");
     }
 
     @Test

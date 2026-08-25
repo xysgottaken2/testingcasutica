@@ -21,8 +21,8 @@ import world_common;
 // data and can recycle stale records without atomics.
 public struct SharcEntry {
     public uint4  key;           // signed cell xyz as raw bits; w = dominant-normal class
-    public uint4  accumulation;  // fixed-point radiance sum xyz; w = complete path sample count
-    public float4 resolved;      // temporally resolved outgoing radiance xyz; w = validity
+    public uint4  accumulation;  // fixed-point indirect-tail sum xyz; w = continuation sample count
+    public float4 resolved;      // temporally resolved indirect continuation xyz; w = validity
     public uint4  metadata;      // state, sampled-frame count, stale-frame count, packed reference normal
 };
 
@@ -39,9 +39,9 @@ public static const uint SHARC_MAX_FRAME_SAMPLES = 2048u;
 public static const float SHARC_RADIANCE_SCALE = 512.0;
 public static const float SHARC_MAX_SAMPLE_CHANNEL = 128.0;
 
-// A sparse update path keeps the last two diffuse cache vertices. Direct radiance observed at the
-// current hit is propagated to older vertices with the BSDF/medium transport between them. Each
-// vertex increments its sample count exactly once; downstream contributions only extend that sample.
+// A sparse update path keeps the last two diffuse cache vertices. Local radiance at the current hit
+// is propagated only to OLDER vertices with the BSDF/medium transport between them. The new vertex
+// reserves one black continuation sample; downstream hits/misses extend it without counting again.
 public struct SharcPathState {
     public uint cacheIndices[SHARC_PROPAGATION_DEPTH];
     public float3 sampleWeights[SHARC_PROPAGATION_DEPTH];
@@ -284,13 +284,11 @@ public void sharcAtomicAdd(DevicePtr<SharcEntry> cache, uint cacheIndex, float3 
     }
 }
 
-public bool sharcBeginSample(WorldPush push, uint cacheIndex, float3 radiance) {
+public bool sharcBeginSample(WorldPush push, uint cacheIndex) {
     DevicePtr<SharcEntry> cache = DevicePtr<SharcEntry>(push.sharcCacheAddr);
-    if (!sharcReserveSample(cache, cacheIndex)) {
-        return false;
-    }
-    sharcAtomicAdd(cache, cacheIndex, radiance);
-    return true;
+    // Reserve one complete continuation sample, initially black. Only radiance observed AFTER this
+    // surface is propagated into it, so resolved data is an indirect tail rather than local lighting.
+    return sharcReserveSample(cache, cacheIndex);
 }
 
 public void sharcAddContribution(WorldPush push, uint cacheIndex, float3 radiance) {
@@ -342,8 +340,8 @@ public void sharcPathMultiply(inout SharcPathState state, float3 transport) {
     }
 }
 
-// Complete one cache vertex: propagate this hit's direct outgoing radiance to older vertices, reserve
-// one sample for this vertex, then retain it for up to SHARC_PROPAGATION_DEPTH downstream events.
+// Complete one cache vertex: propagate this hit's local radiance to older vertices, reserve a ZERO
+// indirect-tail sample for this vertex, then retain it for downstream continuation events.
 public void sharcPathRecordSurface(WorldPush push, inout SharcPathState state,
                                    float3 rebasedPosition, float3 normal, float3 directRadiance) {
     if (!sharcPathIsUpdating(state)) {
@@ -360,7 +358,7 @@ public void sharcPathRecordSurface(WorldPush push, inout SharcPathState state,
     uint4 key = sharcKey(push, rebasedPosition, normal);
     uint cacheIndex;
     if (!sharcFindOrInsert(push, key, normal, cacheIndex)
-            || !sharcBeginSample(push, cacheIndex, directRadiance)) {
+            || !sharcBeginSample(push, cacheIndex)) {
         return;
     }
 

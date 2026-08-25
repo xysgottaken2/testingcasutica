@@ -1054,8 +1054,8 @@ public final class RtVideoOptions {
             "caustica.options.sharc.startBounce",
             OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.sharc.startBounce.tooltip")),
             (caption, value) -> Options.genericValueLabel(caption, value),
-            new OptionInstance.IntRange(1, 6),
-            Math.clamp(setting.value(), 1, 6),
+            new OptionInstance.IntRange(0, 6),
+            Math.clamp(setting.value(), 0, 6),
             setting::set);
     }
 
