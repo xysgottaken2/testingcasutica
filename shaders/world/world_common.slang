@@ -143,7 +143,7 @@ public struct WorldPush {
     //              weight, w = maximum camera-to-query distance.
     // sharcParams2: x = first bounce that may query the cache, y = fraction of full update paths,
     //               z = stale-frame lifetime, w = normal agreement threshold.
-    // sharcParams3: x = sampled frames required before an entry may be queried, y/z/w reserved.
+    // sharcParams3: x = sampled frames until an entry reaches full query confidence, y/z/w reserved.
     // sharcGridOrigin: xyz = integer terrain rebase origin, w = cache entry count. The split origin
     // avoids both camera-relative key swimming and large-world float precision loss.
     public uint64_t sharcCacheAddr;

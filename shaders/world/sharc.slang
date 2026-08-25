@@ -105,14 +105,28 @@ public uint sharcNormalClass(float3 normal) {
     return normal.z >= 0.0 ? 4u : 5u;
 }
 
+public float3 sharcKeySurfaceBias(float3 normal) {
+    // Triangle hits lie exactly on integer block planes. Tiny intersection round-off otherwise puts
+    // the same face on opposite sides of a voxel boundary in update and query paths. Bias only along
+    // the dominant face axis (not the normal-map tangent) toward the side the incoming ray sees.
+    uint normalClass = sharcNormalClass(normal);
+    if (normalClass == 0u) return float3( 0.02,  0.0,   0.0);
+    if (normalClass == 1u) return float3(-0.02,  0.0,   0.0);
+    if (normalClass == 2u) return float3( 0.0,   0.02,  0.0);
+    if (normalClass == 3u) return float3( 0.0,  -0.02,  0.0);
+    if (normalClass == 4u) return float3( 0.0,   0.0,   0.02);
+    return float3(0.0, 0.0, -0.02);
+}
+
 public uint4 sharcKey(WorldPush push, float3 rebasedPosition, float3 normal) {
     int cellSize = max(int(round(push.sharcParams.x)), 1);
     // sharcGridOrigin.xyz is the integer terrain rebase origin. Combining it with the small rebased
     // hit coordinate this way avoids converting a 30-million-block world coordinate to float first.
+    float3 stablePosition = rebasedPosition + sharcKeySurfaceBias(normal);
     int3 cell = int3(
-        sharcCellAxis(rebasedPosition.x, push.sharcGridOrigin.x, cellSize),
-        sharcCellAxis(rebasedPosition.y, push.sharcGridOrigin.y, cellSize),
-        sharcCellAxis(rebasedPosition.z, push.sharcGridOrigin.z, cellSize));
+        sharcCellAxis(stablePosition.x, push.sharcGridOrigin.x, cellSize),
+        sharcCellAxis(stablePosition.y, push.sharcGridOrigin.y, cellSize),
+        sharcCellAxis(stablePosition.z, push.sharcGridOrigin.z, cellSize));
     return uint4(uint(cell.x), uint(cell.y), uint(cell.z), sharcNormalClass(normal));
 }
 
@@ -360,10 +374,13 @@ public void sharcPathRecordSurface(WorldPush push, inout SharcPathState state,
     state.pathLength = min(state.pathLength + 1u, SHARC_PROPAGATION_DEPTH);
 }
 
-// Query only temporally resolved data. `stableFrames` counts frames that actually supplied samples;
-// refreshing a visible cell therefore makes it more trustworthy instead of resetting its age to zero.
-public bool sharcQuery(WorldPush push, float3 rebasedPosition, float3 normal, out float3 radiance) {
+// Query only temporally resolved data. `stableFrames` is a confidence ramp, not a hard gate: a
+// sparsely reached cell contributes 1/N after its first sampled frame and keeps the traced remainder.
+// Refreshing the cell raises confidence monotonically instead of resetting an age timer.
+public bool sharcQuery(WorldPush push, float3 rebasedPosition, float3 normal,
+                       out float3 radiance, out float confidence) {
     radiance = float3(0.0, 0.0, 0.0);
+    confidence = 0.0;
     if (!sharcReady(push) || !sharcInRange(push, rebasedPosition)) {
         return false;
     }
@@ -373,8 +390,7 @@ public bool sharcQuery(WorldPush push, float3 rebasedPosition, float3 normal, ou
         return false;
     }
     SharcEntry entry = ConstPtr<SharcEntry>(push.sharcCacheAddr)[cacheIndex];
-    uint requiredFrames = max(uint(push.sharcParams3.x), 1u);
-    if (entry.metadata.y < requiredFrames || entry.resolved.w <= 0.0) {
+    if (entry.metadata.y == 0u || entry.resolved.w <= 0.0) {
         return false;
     }
     float3 storedNormal = sharcUnpackNormal(entry.metadata.w);
@@ -384,8 +400,11 @@ public bool sharcQuery(WorldPush push, float3 rebasedPosition, float3 normal, ou
     if (any(isnan(entry.resolved.xyz)) || any(isinf(entry.resolved.xyz))) {
         return false;
     }
+    uint confidenceFrames = max(uint(push.sharcParams3.x), 1u);
+    confidence = push.sharcParams3.x <= 0.0
+        ? 1.0 : saturate(float(entry.metadata.y) / float(confidenceFrames));
     radiance = max(entry.resolved.xyz, float3(0.0, 0.0, 0.0));
-    return true;
+    return confidence > 0.0;
 }
 
 // One compute invocation owns one entry. The ray-tracing -> compute Vulkan barrier makes all atomic

@@ -318,7 +318,7 @@ public final class RtComposite {
                 CausticaConfig.Rt.Sharc.NORMAL_THRESHOLD.value());
     }
 
-    /** WorldPush.sharcParams3: x = sampled update frames required before query, y/z/w reserved. */
+    /** WorldPush.sharcParams3: x = sampled update frames to full query confidence, y/z/w reserved. */
     private static Float4 sharcParams3() {
         return new Float4(CausticaConfig.Rt.Sharc.STABLE_FRAMES.value(), 0.0f, 0.0f, 0.0f);
     }

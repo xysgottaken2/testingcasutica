@@ -184,7 +184,7 @@ public final class CausticaConfig {
                         + " blends cached and traced estimators (100% terminates on a hit); max-distance is the\n"
                         + " camera-space range; frame-lifetime recycles entries without updates; normal-threshold\n"
                         + " rejects differently oriented surfaces; stable-frames is the number of sampled frames\n"
-                        + " required before query. Debug logs state transitions and periodic parameters.");
+                        + " used to ramp an entry to full confidence. Debug logs state transitions and parameters.");
         FILE.setComment("reflex",
                 " NVIDIA Reflex (VK_NV_low_latency2). Default off; gated additionally by device support.\n"
                         + " minimum-interval-us: 0 = no framerate cap (Reflex just paces submission).");
@@ -1149,8 +1149,8 @@ public final class CausticaConfig {
             public static final FloatSetting NORMAL_THRESHOLD =
                     clampedFloat("caustica.rt.sharc.normalThreshold", "sharc.normal-threshold", 0.35f, 0.0f, 1.0f);
             /**
-             * Number of independently resolved update frames required before a cache entry can be
-             * queried. Refreshing a visible cell increases this count; it does not reset an age timer.
+             * Number of independently resolved update frames over which cache confidence ramps from
+             * partial to full. Refreshing a visible cell increases confidence; it never resets an age timer.
              */
             public static final IntSetting STABLE_FRAMES =
                     clampedInt("caustica.rt.sharc.stableFrames", "sharc.stable-frames", 3, 0, 30);

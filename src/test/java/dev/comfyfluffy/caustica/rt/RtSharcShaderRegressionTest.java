@@ -40,11 +40,12 @@ final class RtSharcShaderRegressionTest {
         String raygen = Files.readString(RAYGEN);
         String composite = Files.readString(COMPOSITE);
 
-        assertTrue(sharc.contains("sharcCellAxis(rebasedPosition.x, push.sharcGridOrigin.x, cellSize)"),
-                "the key must combine the small hit coordinate with the integer world origin");
+        assertTrue(sharc.contains("float3 stablePosition = rebasedPosition + sharcKeySurfaceBias(normal)")
+                        && sharc.contains("sharcCellAxis(stablePosition.x, push.sharcGridOrigin.x, cellSize)"),
+                "the key must combine a consistently biased hit with the integer world origin");
         assertTrue(composite.contains("new Int4(terrain.blockX, terrain.blockY, terrain.blockZ,"),
                 "the host must publish the terrain rebase origin, not three reserved zeroes");
-        assertTrue(raygen.contains("sharcQuery(worldPush, hitPos, n, cachedRadiance)"),
+        assertTrue(raygen.contains("sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)"),
                 "hitPos is already terrain-rebased; subtracting the camera makes the cache swim");
         assertFalse(raygen.contains("float3 sharcPos = hitPos - worldPush.camOffset"),
                 "camera-relative SHaRC keys recreate the reported motion flicker");
@@ -95,10 +96,12 @@ final class RtSharcShaderRegressionTest {
         String query = slice(sharc, "public bool sharcQuery(", "\n}\n");
         String resolve = slice(sharc, "public void sharcResolveEntry(", "\n}\n");
 
-        assertTrue(query.contains("entry.metadata.y < requiredFrames"),
-                "query warm-up must use the number of frames that actually contributed samples");
-        assertFalse(query.contains("push.frameIndex -"),
-                "last-update age resets on every visible frame and therefore never warms nearby cells");
+        assertTrue(query.contains("entry.metadata.y == 0u")
+                        && query.contains("float(entry.metadata.y) / float(confidenceFrames)"),
+                "sampled frames must ramp cache confidence instead of hard-rejecting sparse cells");
+        assertFalse(query.contains("entry.metadata.y < requiredFrames")
+                        || query.contains("push.frameIndex -"),
+                "warm-up may neither hard-starve sparse cells nor reset whenever they refresh");
         assertTrue(resolve.contains("metadata.y = min(sampledFrames + 1u, 65535u)"),
                 "resolve must advance confidence after a non-empty accumulation");
         assertTrue(resolve.contains("sampledFrames < warmupFrames")
@@ -128,7 +131,7 @@ final class RtSharcShaderRegressionTest {
     @Test
     void cacheStoresOutgoingRadianceWithoutDoubleApplyingTheMaterial() throws IOException {
         String raygen = Files.readString(RAYGEN);
-        int query = raygen.indexOf("sharcQuery(worldPush, hitPos, n, cachedRadiance)");
+        int query = raygen.indexOf("sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)");
         int localLighting = raygen.indexOf("// Emissive surfaces", query);
 
         assertTrue(query >= 0 && localLighting > query,

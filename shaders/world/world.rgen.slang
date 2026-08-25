@@ -488,13 +488,14 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex, bool sharc
                 && bounce >= sharcStartBounce && worldPush.sharcParams.y > 0.0) {
             gv_sharcQueryAttempted = true;
             float3 cachedRadiance;
-            if (sharcQuery(worldPush, hitPos, n, cachedRadiance)) {
+            float cachedConfidence;
+            if (sharcQuery(worldPush, hitPos, n, cachedRadiance, cachedConfidence)) {
                 gv_sharcQueryHit = true;
                 // Strength is a deterministic blend between the stable cached estimator and the
-                // ordinary traced estimator. Unlike scaling a cache hit and then terminating, this
-                // cannot lose the (1-strength) fraction of path energy.
+                // ordinary traced estimator. New/sparse cells ramp in through cachedConfidence, so a
+                // rare first hit cannot replace the whole tail or flash against neighbouring misses.
                 float cacheWeight = saturate(worldPush.sharcParams.y)
-                        * sharcRangeWeight(worldPush, hitPos);
+                        * sharcRangeWeight(worldPush, hitPos) * cachedConfidence;
                 float3 cachedContribution = throughput * cachedRadiance * cacheWeight;
                 L += cachedContribution;
                 if (channel == 2) {

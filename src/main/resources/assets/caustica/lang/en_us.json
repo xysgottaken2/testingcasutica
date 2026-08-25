@@ -28,7 +28,7 @@
 	"caustica.options.sharc.normalThreshold": "Normal Threshold",
 	"caustica.options.sharc.normalThreshold.tooltip": "Minimum agreement (cosine) between the stored surface normal and the query normal for a cache hit. Lower allows hits on differently-oriented surfaces (more reuse, more bias); higher restricts hits to similarly-oriented surfaces.",
 	"caustica.options.sharc.stableFrames": "Stable Frames",
-	"caustica.options.sharc.stableFrames.tooltip": "How many independently sampled update frames a cache cell needs before queries may use it. Visible cells gain confidence when refreshed instead of resetting an age timer. Higher is steadier but warms more slowly.",
+	"caustica.options.sharc.stableFrames.tooltip": "How many independently sampled update frames a cache cell takes to reach full confidence. It is usable from the first resolved frame while the traced remainder fades out. Higher ramps in more smoothly but takes longer.",
 	"caustica.options.sharc.debug": "Debug Logging",
 	"caustica.options.sharc.debug.tooltip": "Print a periodic SHaRC summary (cell size, entries, update coverage, blend, start bounce, strength, query distance, lifetime, normal threshold, stable frames) to the console while SHaRC is active. State transitions and cache resets are always logged.",
 	"caustica.options.sharc.reset": "Reset SHaRC Cache",

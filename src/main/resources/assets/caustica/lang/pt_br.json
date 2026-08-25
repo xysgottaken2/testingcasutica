@@ -28,7 +28,7 @@
 	"caustica.options.sharc.normalThreshold": "Limiar de Normal",
 	"caustica.options.sharc.normalThreshold.tooltip": "Concordância mínima (cosseno) entre a normal armazenada e a normal da consulta para considerar um hit. Valores menores permitem hits em superfícies com orientações diferentes (mais reuso, mais viés); valores maiores restringem a superfícies com orientações parecidas.",
 	"caustica.options.sharc.stableFrames": "Quadros Estáveis",
-	"caustica.options.sharc.stableFrames.tooltip": "Quantos quadros de atualização com amostras independentes uma célula precisa antes de poder ser consultada. Células visíveis ganham confiança quando atualizadas, em vez de reiniciar um contador de idade. Valores maiores são mais estáveis, mas aquecem mais devagar.",
+	"caustica.options.sharc.stableFrames.tooltip": "Quantos quadros de atualização com amostras independentes uma célula leva para atingir confiança total. Ela já pode ser usada desde o primeiro resolve, enquanto o restante tracejado desaparece gradualmente. Valores maiores entram mais suavemente, mas demoram mais.",
 	"caustica.options.sharc.debug": "Registro de depuração",
 	"caustica.options.sharc.debug.tooltip": "Imprime um resumo periódico do SHaRC (tamanho do voxel, entradas, cobertura de atualização, mistura, rebote inicial, força, distância de consulta, vida útil, limiar de normal e quadros estáveis) no console enquanto o SHaRC estiver ativo. Transições de estado e resets de cache sempre são registrados.",
 	"caustica.options.sharc.reset": "Redefinir Cache SHaRC",
