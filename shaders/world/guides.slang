@@ -163,11 +163,45 @@ public float2 resolveSpecularGuides(SpecSurface surface, float3 primaryDir,
     return prevValid ? (prevNdc - currentNdc) * 0.5 * size : float2(0.0, 0.0);
 }
 
-public void setTransmissionGuide(float3 hitCamRel, float3 motionPrev, float3 normal,
+// Max distance (blocks) from the first interface to the transmission destination for which that
+// destination may still be treated as a fixed physical point worth anchoring the guide's depth +
+// motion vector to. Beyond it the destination is a viewing-direction-dependent virtual point, and
+// anchoring the motion vector to it misaligns the reprojection (see setTransmissionGuide).
+public static const float TRANSMIT_GUIDE_MAX_LEVER_ARM = 6.0;
+
+// Report the transmission guide. The destination's normal + absorption-folded albedo are always kept:
+// the albedo carries the water absorption that keeps the demodulated signal continuous with the dry
+// land beside the water (the halo fix — see the resolveTransmissionGuide comment), and the normal is
+// the edge-stop input the denoiser already uses today.
+//
+// The GEOMETRIC anchor (depth + motion vector, both derived from gv_hitCamRel) follows the destination
+// ONLY while it is a nearby, stable physical point. A far destination is NOT a fixed point: it is where
+// a viewing-direction-dependent refracted ray happens to land, so between frames (camera rotation + the
+// per-frame jitter changing the incident direction) it shifts by roughly leverArm x deltaTheta. That is
+// small for a shallow lake's floor (the lever arm is just the water depth) but large for a thin sheet
+// with a distant background behind it — a cave cascade. Reprojecting such a destination with a
+// fixed-point motion vector hands DLSS-RR a vector that is off by that whole shift, so it integrates
+// history against the wrong feature and the pixel boils. That is the boiling/halo ring players see at
+// water edges and on cascades: it is a temporal (motion-vector) error, which is why dimming the
+// transmitted lobe (the water-opacity option) reduced the halo but never stopped the boiling.
+//
+// When the destination is far, anchor the depth + motion to the FIRST interface instead: it is the
+// pixel's true primary hit and it is static geometry, so its motion vector is the exact camera motion
+// (bit-exact, like the opaque path) and its depth is the true primary-hit depth. The reprojection then
+// tracks a real, stable surface and converges. The albedo is still the destination's, so the
+// demodulation — and therefore the halo fix — is unchanged.
+public void setTransmissionGuide(float3 firstInterfaceCamRel, float3 destinationCamRel,
+                          float3 destinationMotionPrev, float3 normal,
                           float roughness, float3 diffuseAlbedo) {
-    gv_hitCamRel = hitCamRel;
-    gv_motionObjDisp = motionPrev;
-    gv_motionUseRefracted = true;
+    if (length(destinationCamRel - firstInterfaceCamRel) > TRANSMIT_GUIDE_MAX_LEVER_ARM) {
+        gv_hitCamRel = firstInterfaceCamRel;
+        gv_motionObjDisp = float3(0.0, 0.0, 0.0);
+        gv_motionUseRefracted = false;
+    } else {
+        gv_hitCamRel = destinationCamRel;
+        gv_motionObjDisp = destinationMotionPrev;
+        gv_motionUseRefracted = true;
+    }
     gv_normal = normal;
     gv_rough = roughness;
     gv_albedo = diffuseAlbedo;
@@ -213,7 +247,11 @@ public void resolveTransmissionGuide(float3 surfacePos, float3 transmittedDir,
         traceGuide(CULL_PRIMARY, ro, RAY_TMIN, direction, 10000.0,
                 rayConeWidth, rayConeSpread);
         if (payload.hitT <= 0.0) {
-            setTransmissionGuide((ro + direction * 1.0e6) - worldPush.camOffset,
+            // Sky destination: it sits 1e6 blocks out, so the lever-arm test always trips and the
+            // depth + motion anchor to the first interface (the sky direction is itself a
+            // viewing-direction-dependent feature, the extreme case of the instability above).
+            setTransmissionGuide(surfacePos - worldPush.camOffset,
+                    (ro + direction * 1.0e6) - worldPush.camOffset,
                     float3(0.0, 0.0, 0.0), float3(0.0, 0.0, 0.0), 1.0,
                     guideFilter * SKY_DIFF_ALBEDO);
             return;
@@ -238,8 +276,8 @@ public void resolveTransmissionGuide(float3 surfacePos, float3 transmittedDir,
             float3 endpointAlbedo = material == MATERIAL_PARTICLE
                     ? payload.albedo
                     : payload.albedo * (1.0 - endpointMetalness);
-            setTransmissionGuide(interfacePos - worldPush.camOffset, payload.motionPrev,
-                    payload.normal, endpointRoughness, guideFilter * endpointAlbedo);
+            setTransmissionGuide(surfacePos - worldPush.camOffset, interfacePos - worldPush.camOffset,
+                    payload.motionPrev, payload.normal, endpointRoughness, guideFilter * endpointAlbedo);
             return;
         }
         if (material != MATERIAL_WATER && material != MATERIAL_DIELECTRIC) return;
@@ -263,7 +301,7 @@ public void resolveTransmissionGuide(float3 surfacePos, float3 transmittedDir,
         float3 nextDirection = refract(direction, interfaceNormal, medium.current.ior / etaT);
         if (dot(nextDirection, nextDirection) <= 0.0) {
             // Never let a TIR reflection become ordinary diffuse/depth.
-            setTransmissionGuide(interfacePos - worldPush.camOffset,
+            setTransmissionGuide(surfacePos - worldPush.camOffset, interfacePos - worldPush.camOffset,
                     isWater ? float3(0.0, 0.0, 0.0) : float3(payload.motionPrev),
                     interfaceNormal, 0.0, float3(0.0, 0.0, 0.0));
             return;
