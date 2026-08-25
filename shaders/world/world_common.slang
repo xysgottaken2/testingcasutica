@@ -168,6 +168,7 @@ public static const uint FEATURE_WEATHER_LIGHTING = 2u;  // rain/storm sky darke
 public static const uint FEATURE_DENOISER = 4u;          // temporal/spatial denoising filter is active
 public static const uint FEATURE_CLOUDS = 8u;            // cloud deck in the sky + its sun shadow
 public static const uint FEATURE_CLOUDS_VOLUMETRIC = 16u; // clouds are ray-marched, not a flat deck
+public static const uint FEATURE_CLOUDS_CIRRUS = 1024u;   // thin cirrostratus veil above the volumetric deck
 public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial emitter-reservoir reuse
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)

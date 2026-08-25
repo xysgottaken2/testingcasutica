@@ -704,12 +704,13 @@ public final class CausticaConfig {
              *
              * <p>{@code classic} reproduces vanilla's flat, blocky deck: coverage is quantised to the
              * 12-block cell grid so the silhouette is genuinely square-edged, and the slab is shaded
-             * with vanilla's distinct top/side/bottom faces. {@code volumetric} extrudes the same
-             * coverage map into a ray-marched slab with self-shadowing and forward scattering — the
-             * look heavy shaderpacks produce, at a real GPU cost.
+             * with vanilla's distinct top/side/bottom faces. {@code volumetric} ray-marches each cloud
+             * as an INDIVIDUAL 3D shape: every cloud gets its own hash-derived size, height and shape
+             * (small puffs, wide sheets, tall towers) from a cellular field, with a thin cirrostratus
+             * layer floating above the deck — the look of a real sky, at a real GPU cost.
              *
-             * <p>Both styles read one shared coverage field, so switching does not move the clouds and
-             * the cloud shadows stay identical between them.
+             * <p>Volumetric thickness is fixed (see {@link #CLOUD_THICKNESS}); the two styles no longer
+             * share a coverage field, so switching styles changes the cloudscape.
              */
             public static final StringSetting CLOUD_STYLE =
                     string("caustica.rt.cloudStyle", "composite.cloud-style", "classic",
@@ -717,10 +718,16 @@ public final class CausticaConfig {
             /**
              * Cloud thickness, 0..1, as a fraction of {@link #CLOUD_MAX_THICKNESS_BLOCKS}.
              *
-             * <p>Volumetric: 0 is a flat sheet (the deck collapses to a plane and takes the cheap
-             * non-marched path); 1 is a deep bank. Classic: the slider scales the HEIGHT of vanilla's
-             * authored cell boxes, floored at vanilla's own 4-block extrusion — classic clouds are
-             * always real boxes with lit tops and shaded sides, never thinner than the game draws them.
+             * <p>CLASSIC ONLY: the slider scales the HEIGHT of vanilla's authored cell boxes, floored
+             * at vanilla's own 4-block extrusion — classic clouds are always real boxes with lit tops
+             * and shaded sides, never thinner than the game draws them. 0 collapses the classic deck
+             * to the flat plane.
+             *
+             * <p>For the volumetric style this value is LOCKED and ignored: the deck is authored as
+             * individual clouds with per-cell heights plus a cirrostratus layer above, and both need a
+             * known, fixed slab depth to stay consistent (a player-sized slab would clip tower crowns;
+             * an oversized one would shove the cirrus gap out of view). See
+             * {@code RtComposite.CLOUD_VOLUMETRIC_THICKNESS_BLOCKS}.
              */
             public static final FloatSetting CLOUD_THICKNESS =
                     clampedFloat("caustica.rt.cloudThickness", "composite.cloud-thickness", 0.5f, 0.0f, 1.0f);
@@ -758,6 +765,18 @@ public final class CausticaConfig {
              */
             public static final FloatSetting CLOUD_COVERAGE =
                     clampedFloat("caustica.rt.cloudCoverage", "composite.cloud-coverage", 0.55f, 0.0f, 1.0f);
+            /**
+             * Thin cirrostratus layer above the volumetric cloud deck.
+             *
+             * <p>Volumetric clouds render a second, higher layer of thin wide sheets — the
+             * cirrostratus of a real sky, floating above the cumulus with clear air between. It is
+             * nearly transparent, softly dims the light passing through it, and is organised into
+             * systems by its own field, so some skies have it and some do not. Only the volumetric
+             * style draws it; the classic deck is a single authored layer and ignores this toggle.
+             * Disabling it saves a little march cost in volumetric mode.
+             */
+            public static final BooleanSetting CLOUD_CIRRUS =
+                    bool("caustica.rt.cirrusClouds", "composite.cirrus-clouds", true);
             public static final FloatSetting SUN_ANGULAR_RADIUS =
                     radians("caustica.rt.sunAngularRadius", "composite.sun-angular-radius-deg", 0.6f);
             public static final FloatSetting MOON_ANGULAR_RADIUS =

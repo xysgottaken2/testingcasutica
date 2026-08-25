@@ -156,15 +156,27 @@ public final class RtVideoOptions {
         };
     }
 
-    public static OptionInstance<?>[] cloudOptions() {
-        return new OptionInstance<?>[] {
-            clouds(),
-            cloudStyle(),
-            cloudHeight(),
-            cloudThickness(),
-            cloudShadowStrength(),
-            cloudOpacity(),
-        };
+    // Mirrors clouds.slang / RtComposite's CLOUD_STYLE_* constants (volumetric = 1).
+    private static final int CLOUD_STYLE_VOLUMETRIC = 1;
+
+    /**
+     * Clouds section rows. {@code onStyleChange} rebuilds the screen when the style selector changes:
+     * the thickness row exists only for the classic style (volumetric thickness is fixed by the
+     * renderer), so the row list must be rebuilt around the new selection — the same pattern the
+     * upscaler selector uses for its dependent rows.
+     */
+    public static OptionInstance<?>[] cloudOptions(Runnable onStyleChange) {
+        List<OptionInstance<?>> options = new ArrayList<>();
+        options.add(clouds());
+        options.add(cloudStyle(onStyleChange));
+        options.add(cloudHeight());
+        if (CausticaConfig.Rt.Composite.cloudStyleIndex() != CLOUD_STYLE_VOLUMETRIC) {
+            options.add(cloudThickness());
+        }
+        options.add(cloudShadowStrength());
+        options.add(cloudOpacity());
+        options.add(cirrusClouds());
+        return options.toArray(OptionInstance<?>[]::new);
     }
 
     public static OptionInstance<?>[] hdrOptions() {
@@ -426,15 +438,21 @@ public final class RtVideoOptions {
     private static final int CLOUD_HEIGHT_MAX = 1024;
     private static final int CLOUD_HEIGHT_STEP = 8;
 
-    /**
-     * Cloud rendering style: vanilla's flat blocky deck, or a ray-marched volumetric slab.
-     *
-     * <p>Both styles are two readings of one shared coverage field, so switching does not move the
-     * clouds — the same cloud is simply drawn flat or with depth — and the cloud shadows are unchanged
-     * between them. Volumetric costs real GPU time (it marches the slab and light-marches for
-     * self-shadowing); classic is nearly free.
-     */
+    /** Legacy no-callback overload, kept for {@link #runtimeOptions()} (which never rebuilds). */
     private static OptionInstance<String> cloudStyle() {
+        return cloudStyle(() -> { });
+    }
+
+    /**
+     * Cloud rendering style: vanilla's flat blocky deck, or a ray-marched volumetric slab of
+     * individual clouds.
+     *
+     * <p>Changing the style rebuilds the screen through {@code onStyleChange}: the Cloud Thickness row
+     * only applies to the classic style (volumetric thickness is fixed by the renderer — see
+     * {@link #cloudThickness()}), so the dependent rows must switch together with the selection, the
+     * same pattern the upscaler selector uses.
+     */
+    private static OptionInstance<String> cloudStyle(Runnable onStyleChange) {
         StringSetting setting = CausticaConfig.Rt.Composite.CLOUD_STYLE;
         return new OptionInstance<>(
             "caustica.options.rt.cloudStyle",
@@ -444,7 +462,10 @@ public final class RtVideoOptions {
             (caption, value) -> Component.translatable("caustica.options.rt.cloudStyle." + value),
             new OptionInstance.Enum<>(CLOUD_STYLES, Codec.STRING),
             CLOUD_STYLES.contains(setting.get()) ? setting.get() : "classic",
-            setting::set);
+            value -> {
+                setting.set(value);
+                onStyleChange.run();
+            });
     }
 
     /**
@@ -471,14 +492,24 @@ public final class RtVideoOptions {
     }
 
     /**
-     * Cloud thickness, as a percentage of the maximum deck depth. Applies to both styles: 0% is a flat
-     * sheet, 100% is a deep bank you can fly into. Classic clouds become real boxes with lit tops and
-     * darker sides, the way vanilla's cloud geometry looks; volumetric clouds gain the depth their
-     * shading needs. Thicker clouds cost more to march.
+     * Cloud thickness, as a percentage of the maximum deck depth. CLASSIC ONLY: 0% is a flat sheet,
+     * 100% is a deep bank you can fly into, and the boxes keep vanilla's lit-top/darker-side look.
+     * The volumetric style uses a FIXED, authored deck depth instead (every cloud gets its own
+     * individual height and a cirrostratus layer hangs above — see {@code cloudOptions()}), so this
+     * row is not shown while volumetric is selected.
      */
     private static OptionInstance<Integer> cloudThickness() {
         return percent("caustica.options.rt.cloudThickness",
                 CausticaConfig.Rt.Composite.CLOUD_THICKNESS);
+    }
+
+    /**
+     * Thin cirrostratus layer above the volumetric cloud deck. Only the volumetric style draws it;
+     * the classic deck ignores the setting entirely, so the row stays visible but is a no-op there
+     * (a classic player can just leave it on).
+     */
+    private static OptionInstance<Boolean> cirrusClouds() {
+        return bool("caustica.options.rt.cirrusClouds", CausticaConfig.Rt.Composite.CLOUD_CIRRUS);
     }
 
     /**

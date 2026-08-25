@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Caustica独自エンジンによるフレーム生成：このGPUにはDLSS Frame Generationがないため（RTX 40/50シリーズのみ）、Causticaのネイティブなモーションベクトル補間エンジンが引き継ぎます — 同じトグルで、倍率は最大4x。GPU負荷と遅延がわずかに増えます。",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex低遅延モード：ドライバーがフレーム提出を制御し、ディスプレイに間に合うちょうどそのタイミングでフレームが完成するようにします — 入力から画面までの遅延が減ります。フレーム生成と特に相性が良いです（FGは約1フレーム分の遅延を増やしますが、Reflexはキューの残りを除去します）。最大FPSがわずかに下がることがあります — 遅延とスループットのトレードオフです。",
-	"caustica.options.rt.reflex.unsupported.tooltip": "利用できません：このデバイスではVK_NV_low_latency2拡張が有効になっていません（新しいNVIDIAドライバーが必要です）。"
+	"caustica.options.rt.reflex.unsupported.tooltip": "利用できません：このデバイスではVK_NV_low_latency2拡張が有効になっていません（新しいNVIDIAドライバーが必要です）。",
+	"caustica.options.rt.cloudStyle.tooltip": "雲の描画方法です。Classic は Minecraft の平らなブロック状の雲を再現します。Volumetric は個々の雲を独立した3D形状としてレイマーチします。雲は一つとして同じものはありません。小さな積雲、幅広い層雲、高い塔雲がそれぞれ独自のサイズと高さを持ち、その上に薄い巻層雲がかかることもあります。見た目ははるかに良くなりますが、負荷もかなり増えます。ボリュメトリックの厚さは固定です。雲の厚さスライダーは Classic のみに適用されます。",
+	"caustica.options.rt.cloudThickness.tooltip": "雲の高さです。0% は平らなシートになり、値が高いほど実際に飛び込める立体的な深さになります。Classic の雲は、バニラのように明るい上面と暗い側面を持つ固い箱になります。ボリュメトリックの雲は常に固定の調整済みの深さを使うため、個々の雲はそれぞれ独自の高さを保ちます。このスライダーは Classic のみに適用されます。厚い雲ほどパフォーマンスを消費します。",
+	"caustica.options.rt.cirrusClouds": "巻層雲レイヤー",
+	"caustica.options.rt.cirrusClouds.tooltip": "ボリュメトリックな雲のはるか上に、実際の空を覆う薄いベールのような巻層雲を描画します。ほぼ透明で、下の光をほんのわずかに弱めるだけです。また、システムとしてまとまって現れるため、ある空にはあり、別の空にはありません。わずかにマーチングコストが増えます。"
 }

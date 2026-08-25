@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "通过 Caustica 自有引擎的帧生成：此 GPU 没有 DLSS Frame Generation（仅限 RTX 40/50 系列），因此由 Caustica 的原生运动矢量插值引擎接管 —— 同一开关，倍率最高 4x。会多消耗一点 GPU 和延迟。",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex 低延迟模式：驱动会调度帧提交，让帧恰好赶在显示前完成——减少输入到画面之间的延迟。与帧生成特别搭配（帧生成会增加约一帧的延迟，Reflex 则消除其余的队列延迟）。可能会略微降低最高 FPS——这是延迟与吞吐的权衡。",
-	"caustica.options.rt.reflex.unsupported.tooltip": "不可用：此设备未启用 VK_NV_low_latency2 扩展（需要较新的 NVIDIA 驱动）。"
+	"caustica.options.rt.reflex.unsupported.tooltip": "不可用：此设备未启用 VK_NV_low_latency2 扩展（需要较新的 NVIDIA 驱动）。",
+	"caustica.options.rt.cloudStyle.tooltip": "云的绘制方式。Classic 还原 Minecraft 平坦的块状云层。Volumetric 将每朵云作为独立的 3D 形状进行光线步进：没有两朵云是一样的——小碎云、宽云层和高耸的云塔各有自己的大小和高度，上方还可能挂着一层薄薄的卷层云。画面好得多，但对性能的要求也明显更高。体积云的厚度是固定的；云厚度滑块仅适用于 Classic。",
+	"caustica.options.rt.cloudThickness.tooltip": "云的高度。0% 是平坦的一层；数值越高，云就越有可以飞进去的真实 3D 深度。Classic 云会变成实心方块，顶部明亮、侧面较暗，与原版一致。体积云始终使用固定的内置深度，使每朵云都保持各自独立的高度——此滑块仅适用于 Classic。云越厚，性能开销越大。",
+	"caustica.options.rt.cirrusClouds": "卷层云层",
+	"caustica.options.rt.cirrusClouds.tooltip": "在体积云上方的高空绘制一层薄薄的、如轻纱般的卷层云，就像覆盖真实天空的云幔。它几乎透明，只会轻微压暗下方的光线，并且以系统形式分布——有的天空有，有的没有。会略微增加一点步进开销。"
 }

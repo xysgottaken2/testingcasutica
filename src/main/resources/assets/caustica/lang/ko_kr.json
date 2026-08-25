@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Caustica 자체 엔진을 통한 프레임 생성: 이 GPU에는 DLSS Frame Generation이 없으므로(RTX 40/50 시리즈 전용), Caustica의 네이티브 모션 벡터 보간 엔진이 대신합니다 — 동일한 토글, 배율은 최대 4x. GPU 부하와 지연이 약간 늘어납니다.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex 저지연 모드: 드라이버가 프레임 제출을 조율하여 디스플레이에 딱 맞춰 프레임이 끝나도록 합니다 — 입력과 화면 사이의 지연이 줄어듭니다. 프레임 생성과 특히 잘 어울립니다(FG는 렌더링된 프레임 하나 정도의 지연을 더하고, Reflex는 나머지 큐를 제거합니다). 최대 FPS가 약간 줄어들 수 있습니다 — 지연/처리량의 교환입니다.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "사용 불가: 이 기기에서 VK_NV_low_latency2 확장이 활성화되지 않았습니다(최신 NVIDIA 드라이버 필요)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "사용 불가: 이 기기에서 VK_NV_low_latency2 확장이 활성화되지 않았습니다(최신 NVIDIA 드라이버 필요).",
+	"caustica.options.rt.cloudStyle.tooltip": "구름을 그리는 방식입니다. Classic은 Minecraft의 납작하고 블록 같은 구름 층을 재현합니다. Volumetric은 각 구름을 개별 3D 형태로 레이마칭합니다. 똑같은 구름은 둘도 없습니다. 작은 뭉게구름, 넓은 층, 높은 탑 구름이 각자 고유한 크기와 높이를 가지며, 그 위에 얇은 권층운이 걸쳐질 수도 있습니다. 훨씬 보기 좋지만 부담도 확실히 큽니다. 볼류메트릭 구름의 두께는 고정되어 있으며, 구름 두께 슬라이더는 Classic에만 적용됩니다.",
+	"caustica.options.rt.cloudThickness.tooltip": "구름의 높이입니다. 0%는 평평한 판이고, 값이 높을수록 실제로 날아들 수 있는 입체적인 깊이가 생깁니다. Classic 구름은 바닐라처럼 밝은 윗면과 어두운 옆면을 가진 단단한 상자가 됩니다. 볼류메트릭 구름은 항상 고정된 제작 깊이를 사용하므로 각 구름이 고유한 높이를 유지합니다. 이 슬라이더는 Classic에만 적용됩니다. 두꺼운 구름일수록 성능을 더 소모합니다.",
+	"caustica.options.rt.cirrusClouds": "권층운 레이어",
+	"caustica.options.rt.cirrusClouds.tooltip": "볼류메트릭 구름 위 높은 곳에 실제 하늘을 덮는 얇은 베일 같은 권층운을 그립니다. 거의 투명하며 그 아래 빛을 아주 약하게만 흐리게 하고, 시스템 단위로 나타나 어떤 하늘에는 있고 어떤 하늘에는 없습니다. 마칭 비용이 조금 더 듭니다."
 }

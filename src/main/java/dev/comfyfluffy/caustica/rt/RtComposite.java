@@ -183,6 +183,9 @@ public final class RtComposite {
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_FOG = 256;
     private static final int FEATURE_SHARC = 512;
+    // Thin cirrostratus veil above the volumetric deck (see clouds.slang). Only ever set together with
+    // FEATURE_CLOUDS_VOLUMETRIC, so the shader reads it without needing the style check itself.
+    private static final int FEATURE_CLOUDS_CIRRUS = 1024;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -219,6 +222,9 @@ public final class RtComposite {
             // player-facing effect toggles, and an integer bit survives every float quirk.
             if (CausticaConfig.Rt.Composite.cloudStyleIndex() == CLOUD_STYLE_VOLUMETRIC) {
                 flags |= FEATURE_CLOUDS_VOLUMETRIC;
+                if (CausticaConfig.Rt.Composite.CLOUD_CIRRUS.value()) {
+                    flags |= FEATURE_CLOUDS_CIRRUS;
+                }
             }
         }
         // Reports what the pipeline is ACTUALLY doing, not just what the option asks for:
@@ -382,22 +388,15 @@ public final class RtComposite {
     private static final float NRD_DENOISING_RANGE = 500000.0f;
     // ---- Cloud deck. These mirror clouds.slang and must stay in lock-step with it.
     //
-    // The classic field repeats every CLOUD_CELL_BLOCKS * CLOUD_PERIOD_CELLS = 12 * 512 = 6144 blocks,
-    // but the VOLUMETRIC field samples the same hash at CLOUD_VOLUMETRIC_SCALE (0.5), so in its own
-    // sampled space 6144 blocks is only half a period. Wrapping the anchor there landed mid-period and
-    // snapped the entire cloudscape to a different pattern — clouds visibly changing shape while
-    // walking, in the volumetric style only.
-    //
-    // The wrap must therefore be a whole period in EVERY space the field is sampled in: the base
-    // octaves, the domain warp, and both billow layers. The binding constraint is the largest octave
-    // divisor (CLOUD_WARP_DIV = 2.0 in clouds.slang):
-    //
-    //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) / scale(0.5) = 24576 blocks
-    //
-    // Every divisor there is a power of two, so all of these multiplies are exact in binary floating
-    // point and the wrap identity holds bit-for-bit rather than approximately. Verified: the full
-    // density function (base octaves + warp + billow) is now identical across a wrap to 0.0.
-    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0 / 0.5;
+    // The anchor is wrapped to this period, which must be a whole period in EVERY space the shader
+    // samples the cloud field in, or the sky visibly snaps to a different pattern at the wrap. The
+    // classic authored map repeats at 12 * 256 = 3072 blocks; the classic noise fallback at 12 * 512 =
+    // 6144; the volumetric cellular lattices repeat at exactly this period (256 cells * 96 blocks for
+    // cumulus, 128 cells * 192 blocks for cirrus); and the volumetric warp/billow/veil detail scales
+    // (cloudNoise has a 512-cell period at 12 blocks/cell, so /48 -> 24576, /24 -> 12288, /12 -> 6144,
+    // /6 -> 3072, /3 -> 1536) all divide it. So 24576 is the binding constraint and the only period
+    // that keeps every path seamless at once.
+    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 256.0 * 96.0;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
     // Deck thickness at the slider's 100%. Both styles march a real slab now, so this is the depth the
@@ -410,9 +409,15 @@ public final class RtComposite {
     private static final float CLOUD_MAX_THICKNESS_BLOCKS = 110.0f;
     // Classic boxes never get thinner than vanilla's own 4-block extrusion (CloudRenderer's
     // putVec3(12, 4, 12)): the thickness slider scales the box HEIGHT from that baseline up, per the
-    // classic rework's "vanilla shapes, slider-driven depth" decision. Volumetric keeps the full
-    // 0..110 range, including the flat-sheet collapse at zero.
+    // classic rework's "vanilla shapes, slider-driven depth" decision.
     private static final float CLOUD_CLASSIC_MIN_THICKNESS = 4.0f;
+    // Volumetric deck depth is FIXED (the thickness slider is locked for that style — see
+    // cloudState): the deck is now a system of individual clouds with per-cell heights plus a
+    // cirrostratus layer above, and both are authored against a known slab. A player-sized slab
+    // would clip tower crowns, an oversized one would shove the cirrus gap out of the pushed view,
+    // and the two would interact in ways the classic boxes never did. 100 blocks comfortably spans
+    // tiny puffs to tall towers; cirrus floats CLOUD_CIRRUS_GAP_BLOCKS above this slab's top.
+    private static final float CLOUD_VOLUMETRIC_THICKNESS_BLOCKS = 100.0f;
     // Vanilla offsets the deck half a cell minus a sliver in Z (CloudRenderer.render: cameraZ + 3.96),
     // so the camera sits asymmetrically inside the cell grid. Matched for shape-parity with vanilla;
     // the x offset is the wind scroll itself.
@@ -2529,13 +2534,19 @@ public final class RtComposite {
         double anchorZ = camZ + CLOUD_Z_OFFSET_BLOCKS;
         // Player-controlled thickness. At 0 the shader takes its flat-plane path (see
         // CLOUD_FLAT_EPSILON in clouds.slang), so the slider bottoming out is genuinely a flat deck
-        // rather than a degenerate zero-length march — that stays true for the volumetric style. The
-        // classic style floors at vanilla's own 4-block box height instead: its shapes come from the
-        // authored clouds.png cells, and the slider scales box HEIGHT from the vanilla baseline up.
-        float thickness = Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
-                * CLOUD_MAX_THICKNESS_BLOCKS;
-        if (CausticaConfig.Rt.Composite.cloudStyleIndex() != CLOUD_STYLE_VOLUMETRIC) {
-            thickness = Math.max(CLOUD_CLASSIC_MIN_THICKNESS, thickness);
+        // rather than a degenerate zero-length march — for the CLASSIC style. Volumetric thickness is
+        // FIXED (see CLOUD_VOLUMETRIC_THICKNESS_BLOCKS): the deck is authored as individual clouds
+        // with per-cell heights plus a cirrostratus layer above, and both need a known slab depth —
+        // the slider is locked for that style to keep them consistent and bug-free. The classic style
+        // floors at vanilla's own 4-block box height instead: its shapes come from the authored
+        // clouds.png cells, and the slider scales box HEIGHT from the vanilla baseline up.
+        float thickness;
+        if (CausticaConfig.Rt.Composite.cloudStyleIndex() == CLOUD_STYLE_VOLUMETRIC) {
+            thickness = CLOUD_VOLUMETRIC_THICKNESS_BLOCKS;
+        } else {
+            thickness = Math.max(CLOUD_CLASSIC_MIN_THICKNESS,
+                    Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
+                            * CLOUD_MAX_THICKNESS_BLOCKS);
         }
         // The slider sets the deck's BASE, but the shader's slab is centred on the pushed height, so the
         // half-thickness is added back here. Pushing the base directly would make the clouds appear to

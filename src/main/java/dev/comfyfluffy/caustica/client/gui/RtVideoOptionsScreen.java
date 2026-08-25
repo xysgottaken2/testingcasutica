@@ -20,7 +20,7 @@ import net.minecraft.network.chat.Component;
  *
  * <p>The Quality section starts with the upscaler selector, whose dependent rows (the quality slider and
  * the Frame Generation toggle) are rebuilt around the selected upscaler: changing the selector reopens
- * this screen ({@link #rebuildForUpscalerChange}) instead of leaving stale rows behind.
+ * this screen ({@link #rebuildForDependentChange}) instead of leaving stale rows behind.
  *
  * <p>Config persistence: on removed() we call CausticaConfig.save() (same as VideoSettingsScreenMixin did).
  */
@@ -54,11 +54,12 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
     }
 
     /**
-     * The upscaler selection changes which dependent rows exist (quality slider, Frame Generation
-     * toggle): reopen this screen so the OptionsList rebuilds around the new mode. Config persistence
-     * rides on removed(), which the reopen triggers, so the new selection is saved as well.
+     * Some selectors change which dependent rows exist — the upscaler (quality slider, Frame
+     * Generation toggle) and the cloud style (thickness row, which only applies to classic clouds):
+     * reopen this screen so the OptionsList rebuilds around the new mode. Config persistence rides on
+     * removed(), which the reopen triggers, so the new selection is saved as well.
      */
-    private void rebuildForUpscalerChange() {
+    private void rebuildForDependentChange() {
         // In 26.2, setScreen moved from Minecraft to Gui (same call VideoSettingsScreenMixin uses).
         this.minecraft.gui.setScreen(new RtVideoOptionsScreen(this.rtParent, this.rtOptions));
     }
@@ -78,9 +79,9 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
         // greyed out with a tooltip on unsupported GPUs) follows it only while DLSS is selected —
         // it rides on the selected upscaler and switches together with it.
         list.addHeader(QUALITY_HEADER);
-        list.addSmall(RtVideoOptions.qualityOptions(this::rebuildForUpscalerChange));
+        list.addSmall(RtVideoOptions.qualityOptions(this::rebuildForDependentChange));
         net.minecraft.client.gui.components.Button frameGeneration =
-                RtVideoOptions.frameGenerationButton(this::rebuildForUpscalerChange);
+                RtVideoOptions.frameGenerationButton(this::rebuildForDependentChange);
         if (frameGeneration != null) {
             list.addBig(frameGeneration);
         }
@@ -94,7 +95,7 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
         // Two big buttons: one to flip the experimental SHaRC on/off, one to open the full tuning
         // sub-screen. This mirrors how "Ray Tracing Settings..." opens this screen from Video Settings.
         list.addHeader(SHARC_HEADER);
-        list.addBig(RtVideoOptions.sharcToggleButton(this::rebuildForUpscalerChange));
+        list.addBig(RtVideoOptions.sharcToggleButton(this::rebuildForDependentChange));
         list.addBig(RtVideoOptions.sharcSettingsButton(this));
 
         // --- General ---
@@ -111,7 +112,7 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
 
         // --- Clouds ---
         list.addHeader(CLOUDS_HEADER);
-        list.addSmall(RtVideoOptions.cloudOptions());
+        list.addSmall(RtVideoOptions.cloudOptions(this::rebuildForDependentChange));
 
         // --- HDR ---
         list.addHeader(HDR_HEADER);
