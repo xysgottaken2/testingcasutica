@@ -32,6 +32,13 @@ import lighting;
 import clouds;
 import sharc;
 
+// The host records an extra indirect dispatch with this private debugView sentinel. It updates SHaRC
+// but writes no image; ordinary user debug ids remain small positive values.
+public static const uint SHARC_UPDATE_PASS = 0x80000000u;
+public static const uint SHARC_QUERY_DEBUG_VIEW = 13u;
+public static bool gv_sharcQueryAttempted = false;
+public static bool gv_sharcQueryHit = false;
+
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
 // radiance L, accumulates per-lobe radiance (outLdiff/outLspec) and the first-bounce hit distance
 // per lobe (0 = lobe not traced / no data, REBLUR's convention). Every term added to L lands in
@@ -39,7 +46,7 @@ import sharc;
 // ordinary (non-NRD) output is untouched. The lobe a path belongs to is decided once: dielectric
 // segments are specular from the start; an opaque shading point classifies by its chosen
 // continuation lobe; until then (camera prefix, sky) the diffuse bucket is the catch-all.
-public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
+public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex, bool sharcUpdatePath,
                  bool restirEligiblePath, bool restirOwner, float restirSampleScale,
                  uint2 dimensions,
                  out float3 outLdiff, out float3 outLspec,
@@ -91,11 +98,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     // produces independent lighting/BSDF paths from the shared terminal continuation.
     uint seed = seg.seed ^ sampleIndex * 2246822519u;
     seed = pcg(seed);
-    // SHaRC update and query paths are disjoint. A sparse, frame-varying subset traces the complete
-    // path and atomically feeds the cache; all other paths may terminate from the resolved cache.
-    // That gives query invocations a frame-stable read while still obtaining fresh training samples.
+    // Update and render now run in separate dispatches. The sparse update pass always traces the
+    // complete path into atomic accumulation lanes; the displayed render pass never writes cache data
+    // and may terminate from the resolved history produced immediately before it.
     SharcPathState sharcPath;
-    sharcPathInit(worldPush, seed, sharcPath);
+    sharcPathInit(worldPush, sharcUpdatePath, sharcPath);
     float rayConeWidth = seg.rayConeWidth;
     float rayConeSpread = max(seg.rayConeSpread, RAY_CONE_MIN_SPREAD);
     int maxBounces = int(worldPush.maxBounces);
@@ -479,8 +486,10 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 && luminance(diffAlb) > 1.0e-5;
         if (!sharcPathIsUpdating(sharcPath) && sharcQueryableSurface
                 && bounce >= sharcStartBounce && worldPush.sharcParams.y > 0.0) {
+            gv_sharcQueryAttempted = true;
             float3 cachedRadiance;
             if (sharcQuery(worldPush, hitPos, n, cachedRadiance)) {
+                gv_sharcQueryHit = true;
                 // Strength is a deterministic blend between the stable cached estimator and the
                 // ordinary traced estimator. Unlike scaling a cache hit and then terminating, this
                 // cannot lose the (1-strength) fraction of path energy.
@@ -645,7 +654,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 float3 ris = throughput * shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
                         twoSidedEmitter, activeSss) * estimatorScale;
                 L += ris;
-                if (nrdEnabled()) {
+                if (!sharcUpdatePath && nrdEnabled()) {
                     if (channel == 0) {
                         // Unclassified primary hit: split the reservoir estimate by BRDF lobe. Costs a
                         // second shadow ray, so it only runs on the NRD path.
@@ -799,19 +808,55 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     return L;
 }
 
+// Sparse cache-training dispatch. It reuses Pass A's continuation queue, traces one independent path
+// per selected pixel (rather than the display SPP count), and deliberately discards image/lobe output.
+// The following compute resolve makes these atomic samples queryable before the displayed pass runs.
+public void runSharcUpdatePass(uint2 dispatchIndex, uint2 dimensions) {
+    uint pixelIndex = dispatchIndex.y * dimensions.x + dispatchIndex.x;
+    uint selectionSeed = sharcMix(pixelIndex ^ worldPush.frameIndex * 0x9e3779b9u);
+    if (!sharcSelectUpdatePath(worldPush, selectionSeed)) {
+        return;
+    }
+
+    ConstPtr<PackedPathSegment> queue = ConstPtr<PackedPathSegment>(pc.pathQueueAddr);
+    uint recordIndex = pixelIndex;
+    for (uint leaf = 0u; leaf < MAX_PATH_SEGMENTS; ++leaf) {
+        PackedPathSegment packed = queue[recordIndex];
+        PathSegment segment = unpackPathSegment(packed);
+        float3 ignoredDiff;
+        float3 ignoredSpec;
+        float ignoredHitDiff;
+        float ignoredHitSpec;
+        tracePath(segment, dispatchIndex, 0x9e37u + leaf, true,
+                false, false, 1.0, dimensions,
+                ignoredDiff, ignoredSpec, ignoredHitDiff, ignoredHitSpec);
+        if (packed.nextRecord == PATH_NO_NEXT) {
+            break;
+        }
+        recordIndex = packed.nextRecord;
+    }
+}
+
 [shader("raygeneration")]
 void main() {
     worldPush = ConstPtr<WorldPush>(pc.worldPushAddr)[0];
     uint2 dispatchIndex = DispatchRaysIndex().xy;
     uint2 dimensions = DispatchRaysDimensions().xy;
+    if (pc.debugView == SHARC_UPDATE_PASS) {
+        runSharcUpdatePass(dispatchIndex, dimensions);
+        return;
+    }
+
+    gv_sharcQueryAttempted = false;
+    gv_sharcQueryHit = false;
     uint pixelIndex = dispatchIndex.y * dimensions.x + dispatchIndex.x;
     if (restirEnabled()) {
         // Every pixel owns exactly one record. Invalidate first so sky, a terminal dielectric, a debug
         // frame, or a frame with no emitters cannot leave stale current-buffer history behind.
         restirInvalidate(pixelIndex);
     }
-    if (pc.debugView != 0u) {
-        return; // pass A owns guide visualization output
+    if (pc.debugView != 0u && pc.debugView != SHARC_QUERY_DEBUG_VIEW) {
+        return; // pass A owns ordinary guide visualization output
     }
     int2 pix = int2(dispatchIndex);
     uint spp = max(worldPush.spp, 1u);
@@ -832,7 +877,7 @@ void main() {
             float3 sampleSpec;
             float sampleHitDiff;
             float sampleHitSpec;
-            frameRadiance += tracePath(segment, uint2(pix), s + leaf * spp,
+            frameRadiance += tracePath(segment, uint2(pix), s + leaf * spp, false,
                     leaf == 0u, leaf == 0u && s == 0u, float(spp), dimensions,
                     sampleDiff, sampleSpec, sampleHitDiff, sampleHitSpec);
             frameDiff += sampleDiff;
@@ -848,6 +893,15 @@ void main() {
             break;
         }
         recordIndex = packed.nextRecord;
+    }
+    if (pc.debugView == SHARC_QUERY_DEBUG_VIEW) {
+        // Green: at least one displayed path used resolved cache data. Red: an eligible lookup missed
+        // (empty/colliding/not warmed). Dark blue: no eligible non-primary surface was reached.
+        float3 debugColor = gv_sharcQueryHit
+                ? float3(0.05, 1.0, 0.1)
+                : (gv_sharcQueryAttempted ? float3(1.0, 0.05, 0.02) : float3(0.01, 0.02, 0.08));
+        outImage[pix] = float4(debugColor, 1.0);
+        return;
     }
     float3 radiance = frameRadiance / float(spp);
 

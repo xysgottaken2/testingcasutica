@@ -183,6 +183,9 @@ public final class RtComposite {
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_FOG = 256;
     private static final int FEATURE_SHARC = 512;
+    // Private WorldPushConstants.debugView sentinel used only by the cache-training indirect dispatch.
+    // User-facing debug ids are small positive integers; Integer.MIN_VALUE mirrors world.rgen.slang.
+    private static final int SHARC_UPDATE_PASS = Integer.MIN_VALUE;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -327,6 +330,18 @@ public final class RtComposite {
      */
     private static Int4 sharcGridOrigin(RtTerrain terrain) {
         return new Int4(terrain.blockX, terrain.blockY, terrain.blockZ, RtSharc.INSTANCE.entryCount());
+    }
+
+    /** Copy the generated hot constants while selecting a private raygen pass/debug mode. */
+    private static WorldPushConstantsData withTraceMode(
+            WorldPushConstantsData source, int debugView, int restirMode) {
+        return new WorldPushConstantsData(
+                source.worldPushAddr(), source.tableAddr(), source.entityTableAddr(),
+                source.dhTableAddr(), source.dhReadyMaskAddr(), source.materialTableAddr(),
+                source.lightBufAddr(), source.lightAliasAddr(), source.lightLocalAliasAddr(),
+                source.lightGridCellAddr(), source.lightGridSpanAddr(), source.pathQueueAddr(),
+                source.restirPreviousAddr(), source.restirCurrentAddr(), source.frameIndex(), debugView,
+                source.lightGeneration(), restirMode);
     }
 
     // Finite sun/moon angular sizes let NEE shadow rays sample the light disk (soft, contact-hardening
@@ -1728,7 +1743,8 @@ public final class RtComposite {
             // WorldPush at all, and the RIS light buffers are read from world.rgen's hot inner loop, so
             // none of them should cost an extra BDA dereference to find.
             ByteBuffer pushConstants = stack.malloc(WorldPushConstantsData.BYTE_SIZE);
-            new WorldPushConstantsData(pushBuf.deviceAddress, terrain.tableAddress(), fe.geomTableAddr(),
+            WorldPushConstantsData frameConstants = new WorldPushConstantsData(
+                    pushBuf.deviceAddress, terrain.tableAddress(), fe.geomTableAddr(),
                     RtDistantHorizonsTerrain.INSTANCE.tableAddress(), readyMaskAddress,
                     RtMaterialRegistry.INSTANCE.tableAddress(),
                     terrain.lightBufferAddress(), terrain.lightAliasBufferAddress(),
@@ -1739,25 +1755,33 @@ public final class RtComposite {
                     // them would make the raygen paint a guide overlay over the very image we are
                     // trying to inspect. The tracer sees 0 (normal shading) for those.
                     (int) frameCounter, svgfDebugView ? 0 : debugView,
-                    terrain.lightGeneration(), restirMode()).write(pushConstants);
+                    terrain.lightGeneration(), restirMode());
+            frameConstants.write(pushConstants);
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world primary trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.tracePrimary")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 0);
             }
             VulkanCommandEncoder.memoryBarrier(cmd, stack); // continuation/guide writes visible to pass B
+            if (sharc.enabled() && sharc.entryCount() > 0) {
+                // Real three-phase cache ordering: sparse full paths train without touching the image,
+                // resolve publishes immutable history, then every displayed path may query it below.
+                ByteBuffer sharcUpdateConstants = stack.malloc(WorldPushConstantsData.BYTE_SIZE);
+                withTraceMode(frameConstants, SHARC_UPDATE_PASS, 0).write(sharcUpdateConstants);
+                try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "SHaRC sparse update trace");
+                     RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.sharcUpdate")) {
+                    active.trace(cmd, renderW, renderH, sharcUpdateConstants, 1);
+                }
+                VulkanCommandEncoder.memoryBarrier(cmd, stack); // atomic updates -> SHaRC resolve
+                try (RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.sharcResolve")) {
+                    sharc.resolve(cmd, pushBuf.deviceAddress);
+                }
+                VulkanCommandEncoder.memoryBarrier(cmd, stack); // resolved history -> displayed trace
+            }
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world indirect trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.traceIndirect")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 1);
             }
-            if (sharc.enabled() && sharc.entryCount() > 0) {
-                // Update rays touched only atomic accumulation lanes. Resolve must see every addition,
-                // and no later frame may query history until the compute writes are visible.
-                VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT cache updates -> SHaRC resolve
-                try (RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.sharcResolve")) {
-                    sharc.resolve(cmd, pushBuf.deviceAddress);
-                }
-            }
-            VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT/SHaRC writes -> temporal/upscale reads
+            VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT writes -> temporal/upscale reads
             // A FOV change does NOT need to restart accumulation, so nothing here does.
             //
             // The history is fetched through the motion vectors, and the tracer builds those with

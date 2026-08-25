@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 public final class CausticaConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("Caustica");
     private static final List<RuntimeSetting<?>> SETTINGS = new CopyOnWriteArrayList<>();
+    private static final int SHARC_ALGORITHM_REVISION = 2;
 
     private static final Path CONFIG_PATH = resolveConfigPath();
     private static final CommentedFileConfig FILE = loadFile(CONFIG_PATH);
@@ -77,6 +78,8 @@ public final class CausticaConfig {
         ensureRegistered();
         if (FILE.valueMap().isEmpty()) {
             save();
+        } else {
+            migrateLegacySharcDefaults();
         }
     }
 
@@ -87,6 +90,45 @@ public final class CausticaConfig {
         for (RuntimeSetting<?> setting : SETTINGS) {
             setting.writeToFile(FILE);
         }
+        FILE.set("sharc.algorithm-revision", SHARC_ALGORITHM_REVISION);
+        FILE.save();
+    }
+
+    /**
+     * The inert single-dispatch prototype shipped very aggressive defaults: half of displayed paths
+     * trained instead of querying, queries started at bounce two, and the two-frame-ish temporal blend
+     * retained visible noise. Migrate only the exact old tuple, and never override a command-line tune.
+     */
+    private static synchronized void migrateLegacySharcDefaults() {
+        Number revision = fileNumber("sharc.algorithm-revision");
+        if (revision != null && revision.intValue() >= SHARC_ALGORITHM_REVISION) {
+            return;
+        }
+        boolean hasOverride = System.getProperty("caustica.rt.sharc.cacheEntries") != null
+                || System.getProperty("caustica.rt.sharc.updateCoverage") != null
+                || System.getProperty("caustica.rt.sharc.temporalBlend") != null
+                || System.getProperty("caustica.rt.sharc.startBounce") != null
+                || System.getProperty("caustica.rt.sharc.strength") != null;
+        boolean exactLegacyTuple = !hasOverride
+                && Rt.Sharc.CACHE_ENTRIES.value() == (1 << 15)
+                && Math.abs(Rt.Sharc.UPDATE_COVERAGE.value() - 0.5f) < 1.0e-6f
+                && Math.abs(Rt.Sharc.TEMPORAL_BLEND.value() - 0.5f) < 1.0e-6f
+                && Rt.Sharc.START_BOUNCE.value() == 2
+                && Math.abs(Rt.Sharc.STRENGTH.value() - 0.75f) < 1.0e-6f;
+        if (exactLegacyTuple) {
+            Rt.Sharc.CACHE_ENTRIES.set(1 << 17);
+            Rt.Sharc.UPDATE_COVERAGE.set(0.05f);
+            Rt.Sharc.TEMPORAL_BLEND.set(0.1f);
+            Rt.Sharc.START_BOUNCE.set(1);
+            Rt.Sharc.STRENGTH.set(1.0f);
+            FILE.set(Rt.Sharc.CACHE_ENTRIES.tomlPath(), Rt.Sharc.CACHE_ENTRIES.value());
+            FILE.set(Rt.Sharc.UPDATE_COVERAGE.tomlPath(), Rt.Sharc.UPDATE_COVERAGE.value());
+            FILE.set(Rt.Sharc.TEMPORAL_BLEND.tomlPath(), Rt.Sharc.TEMPORAL_BLEND.value());
+            FILE.set(Rt.Sharc.START_BOUNCE.tomlPath(), Rt.Sharc.START_BOUNCE.value());
+            FILE.set(Rt.Sharc.STRENGTH.tomlPath(), Rt.Sharc.STRENGTH.value());
+            LOGGER.info("Migrated legacy SHaRC defaults to the separate update/resolve/query pipeline");
+        }
+        FILE.set("sharc.algorithm-revision", SHARC_ALGORITHM_REVISION);
         FILE.save();
     }
 
@@ -133,9 +175,9 @@ public final class CausticaConfig {
                         + " mutually exclusive with both DLSS and the built-in denoiser.\n"
                         + " validation: REBLUR's diagnostic overlay; replaces the image with NRD's debug grid.");
         FILE.setComment("sharc",
-                " Experimental SHaRC (Spatial Hash Radiance Cache). Sparse full paths atomically\n"
-                        + " accumulate outgoing radiance; a post-trace compute pass resolves temporal history;\n"
-                        + " remaining paths query that immutable history to shorten noisy continuations.\n"
+                " Experimental SHaRC (Spatial Hash Radiance Cache). A separate sparse RT pass atomically\n"
+                        + " accumulates outgoing radiance; a compute pass resolves temporal history; then every\n"
+                        + " displayed path can query that immutable history to shorten noisy continuations.\n"
                         + " cell-size is the voxel edge in blocks; cache-entries is the probed hash capacity;\n"
                         + " update-coverage is the fraction of full update paths; temporal-blend is the fresh\n"
                         + " frame's history weight; start-bounce is the first bounce allowed to query; strength\n"
@@ -1069,9 +1111,9 @@ public final class CausticaConfig {
         /**
          * Experimental SHaRC (NVIDIA Spatial Hash Radiance Cache) integration.
          *
-         * <p>SHaRC is a world-space radiance cache: a sparse subset of complete paths atomically
-         * accumulates outgoing radiance into a voxel hash, a compute pass resolves temporal history,
-         * and later bounces on the remaining paths query that stable history instead of tracing another
+         * <p>SHaRC is a world-space radiance cache: a separate sparse pass atomically accumulates
+         * complete outgoing-radiance paths into a voxel hash, a compute pass resolves temporal history,
+         * and later bounces in the displayed pass query that stable history instead of tracing another
          * noisy continuation. The result is shorter path tails and less multi-bounce noise. It is
          * deliberately experimental and off by default, with every tuning knob exposed in the SHaRC
          * settings sub-screen.
@@ -1085,15 +1127,15 @@ public final class CausticaConfig {
             public static final IntSetting CACHE_ENTRIES =
                     clampedInt("caustica.rt.sharc.cacheEntries", "sharc.cache-entries", 1 << 17,
                             2048, 1 << 18);
-            /** Fraction of paths reserved for full tracing and atomic cache updates. */
+            /** Fraction of pixels fully traced by the separate atomic cache-update pass. */
             public static final FloatSetting UPDATE_COVERAGE =
                     clampedFloat("caustica.rt.sharc.updateCoverage", "sharc.update-coverage", 0.05f, 0.0f, 1.0f);
             /** Weight of this frame's spatially averaged samples in the resolved temporal history. */
             public static final FloatSetting TEMPORAL_BLEND =
                     clampedFloat("caustica.rt.sharc.temporalBlend", "sharc.temporal-blend", 0.1f, 0.0f, 0.99f);
-            /** First bounce that may consult the cache. Earlier bounces still warm it. */
+            /** First displayed bounce that may consult the cache; training happens in its own pass. */
             public static final IntSetting START_BOUNCE =
-                    clampedInt("caustica.rt.sharc.startBounce", "sharc.start-bounce", 2, 1, 6);
+                    clampedInt("caustica.rt.sharc.startBounce", "sharc.start-bounce", 1, 1, 6);
             /** Cached/traced estimator blend; one fully terminates on a warm cache hit. */
             public static final FloatSetting STRENGTH =
                     clampedFloat("caustica.rt.sharc.strength", "sharc.strength", 1.0f, 0.0f, 1.0f);

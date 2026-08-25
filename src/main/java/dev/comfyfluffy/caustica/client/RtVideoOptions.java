@@ -820,10 +820,10 @@ public final class RtVideoOptions {
             // CycleButton (used for Enum values) already prepends "caption: " itself (DisplayState.
             // NAME_AND_VALUE), so this must return only the value's text, not caption + value again.
             (caption, value) -> Component.translatable("caustica.options.rt.debugView." + value),
-            // 10-12 inspect the SVGF denoiser's internal state and, unlike 1-7, leave the denoiser
-            // running (see RtComposite.SVGF_DEBUG_FIRST). 8/9 are not exposed here.
-            new OptionInstance.Enum<>(List.of(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12), Codec.INT),
-            Math.clamp(setting.value(), 0, 12),
+            // 10-12 inspect SVGF internals; 13 is the SHaRC query hit/miss mask produced by Pass B.
+            // 8/9 remain internal and are not exposed here.
+            new OptionInstance.Enum<>(List.of(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13), Codec.INT),
+            Math.clamp(setting.value(), 0, 13),
             setting::set);
     }
 

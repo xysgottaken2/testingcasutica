@@ -27,6 +27,10 @@ final class RtSharcShaderRegressionTest {
     private static final Path HOST = ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/RtSharc.java");
     private static final Path COMPOSITE =
             ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
+    private static final Path CONFIG =
+            ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/CausticaConfig.java");
+    private static final Path VIDEO_OPTIONS =
+            ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/client/RtVideoOptions.java");
     private static final Path PIPELINE = ROOT.resolve(
             "src/main/java/dev/comfyfluffy/caustica/rt/pipeline/RtSharcResolvePipeline.java");
 
@@ -61,6 +65,7 @@ final class RtSharcShaderRegressionTest {
     void updateResolveAndQueryTouchDifferentLanes() throws IOException {
         String sharc = Files.readString(SHARC);
         String resolve = Files.readString(RESOLVE);
+        String raygen = Files.readString(RAYGEN);
         String composite = Files.readString(COMPOSITE);
 
         assertTrue(sharc.contains("public uint4  accumulation;")
@@ -71,11 +76,17 @@ final class RtSharcShaderRegressionTest {
                 "raygen updates need atomic RGB sums and an atomic complete-sample reservation");
         assertTrue(resolve.contains("sharcResolveEntry(push, dispatchId.x);"),
                 "a post-trace compute dispatch must own temporal history updates");
+        assertTrue(raygen.contains("tracePath(segment, dispatchIndex, 0x9e37u + leaf, true,")
+                        && raygen.contains("s + leaf * spp, false,"),
+                "training paths and displayed paths must run as distinct raygen modes");
         assertInOrder(composite,
-                "active.trace(cmd, renderW, renderH, pushConstants, 1);",
-                "VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT cache updates -> SHaRC resolve",
+                "withTraceMode(frameConstants, SHARC_UPDATE_PASS, 0).write(sharcUpdateConstants);",
+                "active.trace(cmd, renderW, renderH, sharcUpdateConstants, 1);",
+                "VulkanCommandEncoder.memoryBarrier(cmd, stack); // atomic updates -> SHaRC resolve",
                 "sharc.resolve(cmd, pushBuf.deviceAddress);",
-                "VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT/SHaRC writes -> temporal/upscale reads");
+                "VulkanCommandEncoder.memoryBarrier(cmd, stack); // resolved history -> displayed trace",
+                "active.trace(cmd, renderW, renderH, pushConstants, 1);",
+                "VulkanCommandEncoder.memoryBarrier(cmd, stack); // RT writes -> temporal/upscale reads");
     }
 
     @Test
@@ -128,6 +139,31 @@ final class RtSharcShaderRegressionTest {
                 "a partial-strength hit must trace the residual instead of dropping that path energy");
         assertTrue(raygen.contains("sharcPathRecordSurface(worldPush, sharcPath, hitPos, n, localLight)"),
                 "sparse full paths must continue supplying cache samples at opaque surfaces");
+    }
+
+    @Test
+    void cacheHitDebugViewMakesTheIntegrationMeasurable() throws IOException {
+        String raygen = Files.readString(RAYGEN);
+        String options = Files.readString(VIDEO_OPTIONS);
+
+        assertTrue(raygen.contains("SHARC_QUERY_DEBUG_VIEW = 13u")
+                        && raygen.contains("gv_sharcQueryHit")
+                        && raygen.contains("gv_sharcQueryAttempted"),
+                "debug view 13 must distinguish cache hits, misses and ineligible paths");
+        assertTrue(options.contains("List.of(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13)"),
+                "the SHaRC cache-hit mask must be selectable from video settings");
+    }
+
+    @Test
+    void legacyInertDefaultsMigrateToSparseFirstIndirectQueries() throws IOException {
+        String config = Files.readString(CONFIG);
+
+        assertTrue(config.contains("sharc.start-bounce\", 1, 1, 6"),
+                "new installs must query at the first indirect hit, not the low-energy second tail");
+        assertTrue(config.contains("migrateLegacySharcDefaults()")
+                        && config.contains("Rt.Sharc.START_BOUNCE.set(1)")
+                        && config.contains("Rt.Sharc.UPDATE_COVERAGE.set(0.05f)"),
+                "the exact old 50%-update/bounce-2 tuple must be migrated for existing users");
     }
 
     @Test

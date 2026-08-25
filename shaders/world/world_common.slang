@@ -137,8 +137,8 @@ public struct WorldPush {
     // It only changes the GGX roughness of metals; non-metals keep their authored response.
     public float4   materialParams;
     // Experimental SHaRC (Spatially Hashed Radiance Cache). One flat buffer contains hash keys,
-    // atomic per-frame sums and resolved temporal history. Sparse full paths update; a post-trace
-    // compute pass resolves; all other paths query immutable history to shorten noisy tails.
+    // atomic per-frame sums and resolved temporal history. A separate sparse RT pass updates, a
+    // compute pass resolves, then every displayed path may query immutable history to shorten tails.
     // sharcParams: x = cell size (blocks), y = cache/traced blend 0..1, z = fresh-frame temporal
     //              weight, w = maximum camera-to-query distance.
     // sharcParams2: x = first bounce that may query the cache, y = fraction of full update paths,

@@ -284,19 +284,22 @@ public void sharcAddContribution(WorldPush push, uint cacheIndex, float3 radianc
     sharcAtomicAdd(cache, cacheIndex, radiance);
 }
 
-public void sharcPathInit(WorldPush push, uint seed, out SharcPathState state) {
+public bool sharcSelectUpdatePath(WorldPush push, uint seed) {
+    if (!sharcReady(push)) {
+        return false;
+    }
+    float coverage = saturate(push.sharcParams2.y);
+    float randomValue = float(sharcMix(seed) & 0x00ffffffu) / 16777216.0;
+    return randomValue < coverage;
+}
+
+public void sharcPathInit(WorldPush push, bool updatePath, out SharcPathState state) {
     state.pathLength = 0u;
-    state.updating = 0u;
+    state.updating = sharcReady(push) && updatePath ? 1u : 0u;
     for (uint i = 0u; i < SHARC_PROPAGATION_DEPTH; ++i) {
         state.cacheIndices[i] = SHARC_INVALID_INDEX;
         state.sampleWeights[i] = float3(0.0, 0.0, 0.0);
     }
-    if (!sharcReady(push)) {
-        return;
-    }
-    float coverage = saturate(push.sharcParams2.y);
-    float randomValue = float(sharcMix(seed) & 0x00ffffffu) / 16777216.0;
-    state.updating = randomValue < coverage ? 1u : 0u;
 }
 
 public bool sharcPathIsUpdating(SharcPathState state) {
