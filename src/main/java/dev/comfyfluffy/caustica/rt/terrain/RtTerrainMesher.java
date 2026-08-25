@@ -57,6 +57,13 @@ import org.lwjgl.system.MemoryUtil;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Tessellates resident sections into the section-local terrain mesh the BLAS/TLAS trace against.
+ * Every emitted face quad is additionally <em>sealed</em> ({@link #FACE_SEAL_EPS}): its corners are
+ * extended a sub-millimetre amount in the face plane so faces that share an edge overlap, closing
+ * the hardware ray-triangle epsilon gap at every block corner that otherwise lets rays miss the
+ * terrain and leak sky light (bright by day, invisible at night).
+ */
 final class RtTerrainMesher {
     /** {@code TerrainPrim.flags} bit 0: this emissive quad is in the RIS light buffer. Mirrored in
      *  {@code world_common.slang} (TERRAIN_PRIM_IN_LIGHT_BUFFER); RtLightCollector ORs it in. */
@@ -74,6 +81,116 @@ final class RtTerrainMesher {
             Identifier.withDefaultNamespace("block/nether_portal");
     private static final Identifier END_PORTAL_SPRITE =
             Identifier.withDefaultNamespace("block/end_portal");
+
+    /**
+     * In-plane epsilon (blocks) by which every emitted face quad is extended past its original
+     * edges, sealing the mesh against the hardware ray-triangle intersection epsilon.
+     *
+     * <p><b>The corner light leak.</b> The terrain is an open surface of per-block face quads. At
+     * every shared edge or corner — i.e. at every block corner — the triangles that meet there only
+     * touch: a ray travelling through that band can be rejected by <em>all</em> of them by the
+     * driver's ray-triangle epsilon and "miss" the terrain, falling into the sky miss shader. The
+     * sky is bright by day and nearly black by night, so the leak reads as a thin line of light at
+     * block corners, most visible in dark places, and it vanishes with {@code /time set midnight}.
+     *
+     * <p><b>The seal.</b> Extending every face edge by this amount (in the face plane only) makes
+     * faces that share an edge overlap by a 2×EPS band: the shared edge then lies strictly inside
+     * the extended triangles, so a ray in the band always hits the interior of a face — a hit, never
+     * a miss. Where two extended faces are coplanar (two adjacent blocks in the same wall), the
+     * overlap resolves to one of the two boundary textures: the right texture at a sub-millimetre
+     * scale.
+     *
+     * <p><b>Untouched invariants.</b> The extension is in-plane only: the normal-direction constants
+     * (the translucent inset {@code 2e-4} and the coplanar-resolve nudge {@code 2e-4}) keep their
+     * full effect, and the corner UVs are unchanged — the texture stretches by a negligible
+     * 2×EPS, OMM classification (UV-only) is unaffected, and the light collector's area rectangles
+     * stay self-consistent (bigger rectangle, same total power).
+     *
+     * <p><b>The value.</b> It must dominate the driver's ray-triangle epsilon and the f32 rounding
+     * band of section-local vertices after the TLAS translation (ULP ≈ 1.5e-5 at the default
+     * 128-block rebase, ≈ 1.2e-4 at 1024 blocks). 1e-3 blocks (1 mm) covers both with room to spare
+     * and stays sub-pixel beyond a couple of blocks.
+     */
+    static final float FACE_SEAL_EPS = 1.0e-3f;
+
+    /** Verts this close are "the same" point — shared by the coplanar resolve and the seal. */
+    static final float COINCIDENT_EPS = 1.0e-4f;
+
+    /** 0 = flat (one value), 1 = span (exactly two distinct values, within f32 noise), 2 = anything else. */
+    private static int axisKind(float[] c) {
+        float lo = c[0], hi = c[0];
+        for (int i = 1; i < 4; i++) {
+            if (c[i] < lo) lo = c[i];
+            if (c[i] > hi) hi = c[i];
+        }
+        if (hi - lo <= COINCIDENT_EPS) {
+            return 0;
+        }
+        for (int i = 0; i < 4; i++) {
+            if (c[i] > lo + COINCIDENT_EPS && c[i] < hi - COINCIDENT_EPS) {
+                return 2;
+            }
+        }
+        return 1;
+    }
+
+    /** Push each corner of a span axis outward from the axis midpoint by {@link #FACE_SEAL_EPS}. */
+    private static void extendSpan(float[] c) {
+        float mid = 0.25f * (c[0] + c[1] + c[2] + c[3]);
+        for (int i = 0; i < 4; i++) {
+            c[i] += c[i] >= mid ? FACE_SEAL_EPS : -FACE_SEAL_EPS;
+        }
+    }
+
+    /**
+     * Seal a block face quad: extend each corner by {@link #FACE_SEAL_EPS} along both in-plane axes.
+     * Block faces are axis-aligned rectangles — exactly one flat axis (the face plane) and two span
+     * axes; anything else (a non-rectangular model quad, none today) is left untouched rather than
+     * extended along a partial axis. Corners keep their UVs; the corner order and winding are
+     * preserved (every corner only moves outward, a scale about the centre).
+     */
+    static void sealBlockQuad(float[] x, float[] y, float[] z) {
+        float[][] p = {x, y, z};
+        int[] kind = new int[3];
+        int flat = -1;
+        int spans = 0;
+        for (int a = 0; a < 3; a++) {
+            kind[a] = axisKind(p[a]);
+            if (kind[a] == 0) {
+                if (flat >= 0) {
+                    return; // two flat axes: a line, not a face
+                }
+                flat = a;
+            } else if (kind[a] == 1) {
+                spans++;
+            } else {
+                return; // not an axis-aligned rectangle: leave it alone
+            }
+        }
+        if (flat < 0 || spans != 2) {
+            return;
+        }
+        for (int a = 0; a < 3; a++) {
+            if (kind[a] == 1) {
+                extendSpan(p[a]);
+            }
+        }
+    }
+
+    /**
+     * Seal a fluid face quad: extend each corner by {@link #FACE_SEAL_EPS} along whichever of the
+     * horizontal axes is a span. The water heights (y) stay exact — the fluid mesher is
+     * deliberately inset-free (see its class doc), and the waterline is sealed by the top face's
+     * horizontal extension instead of by lifting the surface.
+     */
+    static void sealFluidQuad(float[] x, float[] y, float[] z) {
+        if (axisKind(x) == 1) {
+            extendSpan(x);
+        }
+        if (axisKind(z) == 1) {
+            extendSpan(z);
+        }
+    }
 
     /**
      * Reusable per-worker-thread meshing state. The mesh + captures are reset between tasks so their
@@ -439,9 +556,9 @@ final class RtTerrainMesher {
         // but the first member of each coincident group outward along its own normal so each lands on its
         // own plane (base stays, overlay moves in front so its cutout reveals the base; cross back-face
         // separates from the front). Pooled — reset each block, never reallocated steady-state.
+        // (COINCIDENT_EPS lives on the enclosing class: the watertight seal shares the same tolerance.)
         private static final float OFFSET = 2.0e-4f;         // outward nudge (blocks) to break coplanar depth ties
         private static final float TRANSLUCENT_INSET = 2.0e-4f; // inward recess (blocks) for glass/ice vs coplanar neighbours
-        private static final float COINCIDENT_EPS = 1.0e-4f; // verts this close are "the same" point
         private static final int RESOLVE_CAP = 128;          // skip the O(n^2) resolve for pathological blocks
         private final List<PendingQuad> pending = new ArrayList<>(8);
         private int pendingCount;
@@ -663,6 +780,9 @@ final class RtTerrainMesher {
             if (q.translucent) {
                 offset(q, -TRANSLUCENT_INSET);
             }
+            // Watertight seal (see FACE_SEAL_EPS): run after the normal-direction adjustments above —
+            // the in-plane extension leaves the inset/nudge distances and the precomputed normal intact.
+            sealBlockQuad(q.x, q.y, q.z);
             Geom g = q.translucent ? cur.translucent() : (q.cutout ? cur.cutout() : cur.opaque());
             int base = g.verts.size() / 3;
             for (int k = 0; k < 4; k++) {
@@ -713,11 +833,18 @@ final class RtTerrainMesher {
             Geom g = cur.opaque();
             int base = g.verts.size() / 3;
             float x0 = lx, x1 = lx + 1.0f, z0 = lz, z1 = lz + 1.0f, y = ly;
+            float[] px = {x0, x1, x1, x0};
+            float[] py = {y, y, y, y};
+            float[] pz = {z0, z0, z1, z1};
+            // Same watertight seal as the model quads, so the abyss plane shares the mesh's corner
+            // coverage (adjacent end-portal proxies overlap by the seal band, hit not miss).
+            sealBlockQuad(px, py, pz);
             FloatArrayList verts = g.verts;
-            verts.add(x0); verts.add(y); verts.add(z0);
-            verts.add(x1); verts.add(y); verts.add(z0);
-            verts.add(x1); verts.add(y); verts.add(z1);
-            verts.add(x0); verts.add(y); verts.add(z1);
+            for (int i = 0; i < 4; i++) {
+                verts.add(px[i]);
+                verts.add(py[i]);
+                verts.add(pz[i]);
+            }
             IntArrayList idx = g.idx;
             idx.add(base); idx.add(base + 1); idx.add(base + 2);
             idx.add(base); idx.add(base + 2); idx.add(base + 3);
@@ -825,6 +952,23 @@ final class RtTerrainMesher {
         }
 
         private void emitQuad() {
+            // Geometric normal from the ORIGINAL corners: the watertight seal below extends the quad in
+            // the face plane, which does not change an axis-aligned face's normal, and a sloped water
+            // top face keeps the normal the flat-surface average it was computed from.
+            float ex1 = qx[1] - qx[0], ey1 = qy[1] - qy[0], ez1 = qz[1] - qz[0];
+            float ex2 = qx[2] - qx[0], ey2 = qy[2] - qy[0], ez2 = qz[2] - qz[0];
+            float nx = ey1 * ez2 - ez1 * ey2;
+            float ny = ez1 * ex2 - ex1 * ez2;
+            float nz = ex1 * ey2 - ey1 * ex2;
+            float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+            if (len > 1.0e-6f) {
+                nx /= len;
+                ny /= len;
+                nz /= len;
+            }
+            // Watertight seal (see FACE_SEAL_EPS): a ray through the water edge/corner band must cross
+            // the dielectric instead of slipping past it into the sky. Heights (y) stay exact.
+            sealFluidQuad(qx, qy, qz);
             // Water gets its own geometry → water bucket: its any-hit only passes shadow rays through (the
             // closest-hit does the dielectric), classified by geometry index with no memory load. Lava is an
             // opaque emitter → opaque bucket (no any-hit at all).
@@ -847,17 +991,6 @@ final class RtTerrainMesher {
             addTriUv(g, qu[0], qv[0], qu[1], qv[1], qu[2], qv[2]);
             addTriUv(g, qu[0], qv[0], qu[2], qv[2], qu[3], qv[3]);
 
-            float ex1 = qx[1] - qx[0], ey1 = qy[1] - qy[0], ez1 = qz[1] - qz[0];
-            float ex2 = qx[2] - qx[0], ey2 = qy[2] - qy[0], ez2 = qz[2] - qz[0];
-            float nx = ey1 * ez2 - ez1 * ey2;
-            float ny = ez1 * ex2 - ex1 * ez2;
-            float nz = ex1 * ey2 - ey1 * ex2;
-            float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-            if (len > 1.0e-6f) {
-                nx /= len;
-                ny /= len;
-                nz /= len;
-            }
             int materialId = water ? materials.waterId() : materials.lavaId();
             // Biome water tint: vanilla's FluidRenderer bakes BiomeColors.getAverageWaterColor into the
             // per-vertex colour, so the average of the quad's four colours is this water body's tint. The
