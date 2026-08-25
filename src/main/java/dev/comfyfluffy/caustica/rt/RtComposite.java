@@ -391,12 +391,12 @@ public final class RtComposite {
     // The anchor is wrapped to this period, which must be a whole period in EVERY space the shader
     // samples the cloud field in, or the sky visibly snaps to a different pattern at the wrap. The
     // classic authored map repeats at 12 * 256 = 3072 blocks; the classic noise fallback at 12 * 512 =
-    // 6144; the volumetric cellular lattices repeat at exactly this period (256 cells * 96 blocks for
-    // cumulus, 128 cells * 192 blocks for cirrus); and the volumetric warp/billow/veil detail scales
+    // 6144; the volumetric cellular lattices repeat at exactly this period (128 cells * 192 blocks for
+    // cumulus, 64 cells * 384 blocks for cirrus); and the volumetric warp/billow/veil detail scales
     // (cloudNoise has a 512-cell period at 12 blocks/cell, so /48 -> 24576, /24 -> 12288, /12 -> 6144,
     // /6 -> 3072, /3 -> 1536) all divide it. So 24576 is the binding constraint and the only period
     // that keeps every path seamless at once.
-    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 256.0 * 96.0;
+    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 128.0 * 192.0;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
     // Deck thickness at the slider's 100%. Both styles march a real slab now, so this is the depth the
