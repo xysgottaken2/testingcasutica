@@ -58,7 +58,7 @@ final class RtSharcShaderRegressionTest {
 
         assertTrue(sharc.contains("smoothstep(maxDistance * 0.8, maxDistance, distanceToCamera)"),
                 "the query-distance boundary needs a transition band, not a hard moving ring");
-        assertTrue(raygen.contains("* sharcRangeWeight(worldPush, hitPos);"),
+        assertTrue(raygen.contains("* sharcRangeWeight(worldPush, hitPos) * cachedConfidence;"),
                 "range confidence must become traced residual rather than darkening cached radiance");
     }
 
