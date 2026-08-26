@@ -67,7 +67,8 @@ public final class CausticaConfig {
             Rt.Sharc.TEMPORAL_BLEND, Rt.Sharc.START_BOUNCE, Rt.Sharc.STRENGTH, Rt.Sharc.MAX_DISTANCE,
             Rt.Sharc.FRAME_LIFETIME, Rt.Sharc.NORMAL_THRESHOLD, Rt.Sharc.STABLE_FRAMES, Rt.Sharc.DEBUG,
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
-            Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
+            Rt.Lights.RESTIR_SAMPLING, Rt.Restir.FRESH_CANDIDATES, Rt.Restir.TEMPORAL_M_CAP, Rt.Restir.STICKINESS,
+            Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
@@ -154,6 +155,15 @@ public final class CausticaConfig {
                         + " projection, isolated from the FOV setting. true scales that projection to the\n"
                         + " configured FOV instead, so raising the FOV pushes the arm away and lowering it pulls\n"
                         + " the arm closer, the way the rest of the scene reacts.");
+        FILE.setComment("restir",
+                " ReSTIR DI reservoir reuse (Lin/Kettunen et al. GRIS / ReSTIR PT). The live toggle\n"
+                        + " lives at lights.restir-sampling; this table is the high-detail stability knobs.\n"
+                        + " Defaults are ultra-stable: temporal history dominates (M-cap 24 vs fresh 4), a\n"
+                        + " boiling filter keeps the previous emitter unless a new one is clearly better, and\n"
+                        + " W is temporally blended so block lights do not flicker. Spatial reuse only fills\n"
+                        + " holes. invalidate-on-light-change is off by default because reservoirs store the\n"
+                        + " sample point (not a light index) and a hierarchy republish would otherwise wipe\n"
+                        + " every pixel's history every time a distant torch streams in.");
         FILE.setComment("lights",
                 " Direct lighting controls. held-item-light toggles the analytic light a luminous held\n"
                         + " item casts (torch in hand lighting up a cave); each item casts its own colour.\n"
@@ -162,7 +172,8 @@ public final class CausticaConfig {
                         + " direct-hit emission and sampled area-light contribution. The toggle, both intensity\n"
                         + " sliders and ReSTIR sampling are exposed in the Video Settings screen. restir-sampling reuses\n"
                         + " validated light reservoirs across frames and nearby pixels; off keeps the original\n"
-                        + " independent RIS estimator. ris-candidates = 0 disables emitter NEE entirely\n"
+                        + " independent RIS estimator. Fine ReSTIR knobs live in the [restir] table and the\n"
+                        + " dedicated ReSTIR Settings sub-screen. ris-candidates = 0 disables emitter NEE entirely\n"
                         + " (emitters just gather on direct hit). min-fill-ratio drops sparse emissive\n"
                         + " footprints from the light buffer. stats/dump/dump-radius are debug logging.");
         FILE.setComment("tonemap",
@@ -867,6 +878,89 @@ public final class CausticaConfig {
                     intAtLeast("caustica.rt.lightDumpRadius", "lights.dump-radius", 12, 1);
 
             private Lights() {
+            }
+        }
+
+        /**
+         * Fine ReSTIR DI / GRIS knobs. The master enable stays {@link Lights#RESTIR_SAMPLING} so existing
+         * configs keep working; this table is the ultra-stable temporal/spatial reuse surface exposed by
+         * the dedicated ReSTIR Settings sub-screen.
+         *
+         * <p>Defaults follow ReSTIR PT (Lin et al., SIGGRAPH 2022) and ReSTIR DI (Bitterli et al.): a
+         * high temporal M-cap so history dominates the reservoir, a modest fresh-candidate budget so
+         * new lights can still enter, spatial reuse only as a hole-filler, and a boiling filter that
+         * keeps the previous emitter unless a new one is clearly better. That combination is what
+         * stops Minecraft block lights from flickering every frame.
+         */
+        public static final class Restir {
+            /** Fresh RIS candidates at the ReSTIR receiver. Deeper vertices still use {@link Lights#RIS_CANDIDATES}. */
+            public static final IntSetting FRESH_CANDIDATES =
+                    clampedInt("caustica.rt.restir.freshCandidates", "restir.fresh-candidates", 4, 1, 16);
+            public static final IntSetting SPATIAL_SAMPLES =
+                    clampedInt("caustica.rt.restir.spatialSamples", "restir.spatial-samples", 4, 0, 8);
+            /** Spatial reuse radius in pixels. Smaller is less boiling; 4 is the ultra-stable default. */
+            public static final IntSetting SPATIAL_RADIUS =
+                    clampedInt("caustica.rt.restir.spatialRadius", "restir.spatial-radius", 4, 1, 32);
+            public static final IntSetting MAX_M =
+                    clampedInt("caustica.rt.restir.maxM", "restir.max-m", 32, 8, 64);
+            public static final IntSetting CURRENT_M_CAP =
+                    clampedInt("caustica.rt.restir.currentMCap", "restir.current-m-cap", 4, 1, 16);
+            /**
+             * Temporal history M-cap. ReSTIR PT / ReSTIR DI use ~20 so the previous frame almost always
+             * wins the reservoir update — that is the main anti-flicker lever.
+             */
+            public static final IntSetting TEMPORAL_M_CAP =
+                    clampedInt("caustica.rt.restir.temporalMCap", "restir.temporal-m-cap", 24, 1, 64);
+            public static final IntSetting SPATIAL_M_CAP =
+                    clampedInt("caustica.rt.restir.spatialMCap", "restir.spatial-m-cap", 2, 0, 16);
+            public static final IntSetting MAX_W =
+                    clampedInt("caustica.rt.restir.maxW", "restir.max-w", 16, 1, 64);
+            public static final IntSetting MAX_LUMINANCE =
+                    clampedInt("caustica.rt.restir.maxLuminance", "restir.max-luminance", 16, 1, 64);
+            public static final IntSetting MAX_AGE =
+                    clampedInt("caustica.rt.restir.maxAge", "restir.max-age", 60, 1, 120);
+            /**
+             * Jacobian rejection window. ReSTIR PT's default threshold is 10 (i.e. [0.1, 10]); a
+             * tighter window rejects more valid history and flickers at grazing angles.
+             */
+            public static final FloatSetting JACOBIAN_MIN =
+                    clampedFloat("caustica.rt.restir.jacobianMin", "restir.jacobian-min", 0.10f, 0.05f, 1.0f);
+            public static final FloatSetting JACOBIAN_MAX =
+                    clampedFloat("caustica.rt.restir.jacobianMax", "restir.jacobian-max", 10.0f, 1.0f, 20.0f);
+            public static final FloatSetting TEMPORAL_NORMAL =
+                    clampedFloat("caustica.rt.restir.temporalNormal", "restir.temporal-normal", 0.92f, 0.50f, 1.0f);
+            public static final FloatSetting SPATIAL_NORMAL =
+                    clampedFloat("caustica.rt.restir.spatialNormal", "restir.spatial-normal", 0.88f, 0.50f, 1.0f);
+            /** Base position tolerance in blocks (also scales with camera distance in the shader). */
+            public static final FloatSetting TEMPORAL_POS =
+                    clampedFloat("caustica.rt.restir.temporalPos", "restir.temporal-pos", 0.35f, 0.05f, 2.0f);
+            public static final FloatSetting SPATIAL_POS =
+                    clampedFloat("caustica.rt.restir.spatialPos", "restir.spatial-pos", 1.0f, 0.25f, 8.0f);
+            /**
+             * Boiling-filter strength. High values keep the previous emitter unless a new candidate is
+             * clearly brighter — this is what makes a torch stay a torch instead of flipping faces.
+             */
+            public static final FloatSetting STICKINESS =
+                    clampedFloat("caustica.rt.restir.stickiness", "restir.stickiness", 0.88f, 0.0f, 1.0f);
+            /**
+             * Temporal W blend when the same emitter is kept. 0.12 ≈ an 8-frame window: W no longer
+             * jumps every frame, so the shaded intensity stays put.
+             */
+            public static final FloatSetting TEMPORAL_BLEND =
+                    clampedFloat("caustica.rt.restir.temporalBlend", "restir.temporal-blend", 0.12f, 0.0f, 1.0f);
+            public static final BooleanSetting TEMPORAL_REUSE =
+                    bool("caustica.rt.restir.temporalReuse", "restir.temporal-reuse", true);
+            public static final BooleanSetting SPATIAL_REUSE =
+                    bool("caustica.rt.restir.spatialReuse", "restir.spatial-reuse", true);
+            /**
+             * Reject history when the published light hierarchy generation changes. Off by default:
+             * reservoirs store the sample point, not a buffer index, so a republish (new distant
+             * torch streaming in) must not wipe the whole screen.
+             */
+            public static final BooleanSetting INVALIDATE_ON_LIGHT_CHANGE =
+                    bool("caustica.rt.restir.invalidateOnLightChange", "restir.invalidate-on-light-change", false);
+
+            private Restir() {
             }
         }
 

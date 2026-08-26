@@ -25,25 +25,115 @@ public struct Reservoir {
     public uint restir; // 1 only after the hard ReSTIR safety clamps have been applied
 };
 
+// Compile-time fallbacks matching CausticaConfig.Rt.Restir defaults. Live values ride in
+// WorldPush.restirParams[1..5] and are read through the restir*() accessors below. ReSTIR PT
+// (Lin et al., SIGGRAPH 2022) is the stability reference: a high temporal M-cap so history
+// dominates, conservative spatial reuse, Jacobian rejection around 10, and no per-frame
+// spatial-pattern jitter that would boil a locked reservoir.
 public static const uint RESTIR_SPATIAL_SAMPLES = 4u;
-// Hard stability bounds. M=16 is split into four fresh candidates, four temporal effective samples,
-// and two from each of four spatial neighbours. ReSTIR therefore does less fresh-light work than the
-// default RIS M=8 and has an observable performance path, while history never grows with age.
 public static const uint RESTIR_FRESH_CANDIDATES = 4u;
-public static const float RESTIR_MAX_M = 16.0;
+public static const float RESTIR_MAX_M = 32.0;
 public static const float RESTIR_CURRENT_M_CAP = 4.0;
-public static const float RESTIR_TEMPORAL_M_CAP = 4.0;
+public static const float RESTIR_TEMPORAL_M_CAP = 24.0;
 public static const float RESTIR_SPATIAL_M_CAP = 2.0;
 public static const float RESTIR_MAX_W = 16.0;
 public static const float RESTIR_MIN_PHAT = 1.0e-4;
-// Minimum importance floor to avoid aggressive discard of emissive samples like Shroomlight
-// (prevents black spots / flicker from reservoirs dropping low-luma but valid emitters).
-public static const float RESTIR_PHAT_EMISSIVE_FLOOR = 5.0e-3;
 public static const float RESTIR_MAX_SAMPLE_LUMINANCE = 16.0;
-public static const float RESTIR_MAX_WEIGHT_SUM = 4096.0; // MAX_M * MAX_W * MAX_SAMPLE_LUMINANCE
-public static const float RESTIR_JACOBIAN_MIN = 0.2;
-public static const float RESTIR_JACOBIAN_MAX = 5.0;
-public static const uint RESTIR_MAX_AGE = 30u;
+public static const float RESTIR_JACOBIAN_MIN = 0.10;
+public static const float RESTIR_JACOBIAN_MAX = 10.0;
+public static const uint RESTIR_MAX_AGE = 60u;
+public static const uint RESTIR_FLAG_TEMPORAL = 1u;
+public static const uint RESTIR_FLAG_SPATIAL = 2u;
+public static const uint RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE = 4u;
+
+public float restirMaxM() {
+    float v = worldPush.restirParams.x;
+    return v > 0.0 ? clamp(v, 1.0, 64.0) : RESTIR_MAX_M;
+}
+public float restirCurrentMCap() {
+    float v = worldPush.restirParams.y;
+    return v > 0.0 ? clamp(v, 1.0, 16.0) : RESTIR_CURRENT_M_CAP;
+}
+public float restirTemporalMCap() {
+    float v = worldPush.restirParams.z;
+    return v > 0.0 ? clamp(v, 1.0, 64.0) : RESTIR_TEMPORAL_M_CAP;
+}
+public float restirSpatialMCap() {
+    float v = worldPush.restirParams.w;
+    return v >= 0.0 ? clamp(v, 0.0, 16.0) : RESTIR_SPATIAL_M_CAP;
+}
+public uint restirSpatialSamples() {
+    float v = worldPush.restirParams2.x;
+    return v >= 0.0 ? min(uint(v + 0.5), 8u) : RESTIR_SPATIAL_SAMPLES;
+}
+public float restirSpatialRadius() {
+    float v = worldPush.restirParams2.y;
+    return v > 0.0 ? clamp(v, 1.0, 32.0) : 4.0;
+}
+public float restirMaxW() {
+    float v = worldPush.restirParams2.z;
+    return v > 0.0 ? clamp(v, 1.0, 64.0) : RESTIR_MAX_W;
+}
+public float restirMaxLuminance() {
+    float v = worldPush.restirParams2.w;
+    return v > 0.0 ? clamp(v, 1.0, 64.0) : RESTIR_MAX_SAMPLE_LUMINANCE;
+}
+public float restirJacobianMin() {
+    float v = worldPush.restirParams3.x;
+    return v > 0.0 ? clamp(v, 0.05, 1.0) : RESTIR_JACOBIAN_MIN;
+}
+public float restirJacobianMax() {
+    float v = worldPush.restirParams3.y;
+    return v > 0.0 ? clamp(v, 1.0, 20.0) : RESTIR_JACOBIAN_MAX;
+}
+public uint restirMaxAge() {
+    float v = worldPush.restirParams3.z;
+    return v > 0.0 ? min(uint(v + 0.5), 120u) : RESTIR_MAX_AGE;
+}
+public uint restirFreshCandidates() {
+    float v = worldPush.restirParams3.w;
+    if (!(v > 0.0)) {
+        return RESTIR_FRESH_CANDIDATES;
+    }
+    return max(1u, min(uint(v + 0.5), 16u));
+}
+public float restirTemporalPos() {
+    float v = worldPush.restirParams4.x;
+    return v > 0.0 ? clamp(v, 0.05, 2.0) : 0.35;
+}
+public float restirTemporalNormal() {
+    float v = worldPush.restirParams4.y;
+    return v > 0.0 ? clamp(v, 0.50, 1.0) : 0.92;
+}
+public float restirSpatialPos() {
+    float v = worldPush.restirParams4.z;
+    return v > 0.0 ? clamp(v, 0.25, 8.0) : 1.0;
+}
+public float restirSpatialNormal() {
+    float v = worldPush.restirParams4.w;
+    return v > 0.0 ? clamp(v, 0.50, 1.0) : 0.88;
+}
+public float restirStickiness() {
+    return saturate(worldPush.restirParams5.x);
+}
+public float restirTemporalBlend() {
+    return saturate(worldPush.restirParams5.y);
+}
+public uint restirFlags() {
+    return uint(worldPush.restirParams5.z + 0.5);
+}
+public bool restirTemporalReuse() {
+    return (restirFlags() & RESTIR_FLAG_TEMPORAL) != 0u;
+}
+public bool restirSpatialReuse() {
+    return (restirFlags() & RESTIR_FLAG_SPATIAL) != 0u;
+}
+public bool restirInvalidateOnLightChange() {
+    return (restirFlags() & RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE) != 0u;
+}
+public float restirMaxWeightSum() {
+    return restirMaxM() * restirMaxW() * restirMaxLuminance();
+}
 
 public Reservoir resEmpty() {
     Reservoir r;
@@ -125,19 +215,15 @@ public float3 evalSampleContribSplit(float3 sp, float3 lnrm, float3 le, float ar
         contrib = outDiff;
     }
     float rawPhat = luminance(contrib);
-    // If facing away and no SSS, this is truly unlit -> keep zero to allow culling.
-    // Floor only applies when there is some front-facing contribution (even tiny) to avoid
-    // aggressive discard of dim but valid emissives (Shroomlight fix).
+    // Honest target: inflating p-hat of dim faces made W jump every time a different face of
+    // the same torch won the reservoir, which is the Shroomlight / Redstone Lamp flicker.
     if (rawPhat <= 0.0) {
         phat = 0.0;
         outDiff = float3(0.0, 0.0, 0.0);
         outSpec = float3(0.0, 0.0, 0.0);
         return float3(0.0,0.0,0.0);
     }
-    // Minimum importance floor: prevents aggressive discard of emissive samples like
-    // Shroomlight / Redstone Lamp that may have low NDL but still carry visible energy.
-    float emissiveFloor = luminance(le) * 0.01 * saturate(area / max(dist2, 1.0));
-    phat = max(rawPhat, max(RESTIR_MIN_PHAT, max(emissiveFloor * 0.1, RESTIR_PHAT_EMISSIVE_FLOOR)));
+    phat = rawPhat;
     return contrib;
 }
 
@@ -412,8 +498,11 @@ public bool restirLoadCandidate(PackedRestirReservoir record, float3 expectedPre
     uint age = (record.meta >> 16u) & 0xffu;
     uint generation = (record.meta >> 24u) & 0x7fu;
     bool storedTwoSided = (record.meta & 0x80000000u) != 0u;
-    if (storedM == 0u || age > RESTIR_MAX_AGE || storedTwoSided != twoSided
-            || generation != (pc.lightGeneration & 0x7fu)
+    // Reservoirs store the sample point + packedLe, not a light-buffer index, so a hierarchy
+    // republish (streaming, rebase, a distant torch appearing) must not wipe every pixel's
+    // history. Dead lights already fail contrib/visibility. The generation check is opt-in.
+    if (storedM == 0u || age > restirMaxAge() || storedTwoSided != twoSided
+            || (restirInvalidateOnLightChange() && generation != (pc.lightGeneration & 0x7fu))
             || !(record.W > 0.0) || !(record.area > 0.0)) {
         return false; // the !(x>0) form rejects NaN as well as zero/negative values
     }
@@ -434,8 +523,8 @@ public bool restirLoadCandidate(PackedRestirReservoir record, float3 expectedPre
     candidate.packedLe = record.packedLe;
     candidate.le = lightRadiancePacked(record.packedLe) * max(worldPush.lightScales.x, 0.0);
     candidate.area = record.area;
-    candidate.M = min(float(storedM), RESTIR_MAX_M);
-    candidate.W = min(record.W, RESTIR_MAX_W);
+    candidate.M = min(float(storedM), restirMaxM());
+    candidate.W = min(record.W, restirMaxW());
     candidate.age = age;
     candidate.sourcePos = previousSurface;
     candidate.sourceNormal = previousNormal;
@@ -471,7 +560,15 @@ public bool restirValidJacobian(Reservoir source, float3 hitPos, float3 n) {
     }
     float jacobian = currentGeometry / sourceGeometry;
     // Both comparisons are false for NaN; infinity also falls outside the upper bound.
-    return jacobian >= RESTIR_JACOBIAN_MIN && jacobian <= RESTIR_JACOBIAN_MAX;
+    // ReSTIR PT's default Jacobian reject threshold is 10 (i.e. [0.1, 10]).
+    return jacobian >= restirJacobianMin() && jacobian <= restirJacobianMax();
+}
+
+// True when both reservoirs picked the same emitter (packed radiance) at nearly the same sample
+// point. Used by the boiling filter to keep a locked torch instead of hopping between its faces.
+public bool restirSameEmitter(Reservoir a, Reservoir b) {
+    if (a.packedLe == 0u || b.packedLe == 0u || a.packedLe != b.packedLe) return false;
+    return length(a.pos - b.pos) <= 0.85;
 }
 
 // Combine one already-finalized source reservoir at the CURRENT receiver. The source's representative
@@ -479,41 +576,55 @@ public bool restirValidJacobian(Reservoir source, float3 hitPos, float3 n) {
 // factors are bounded before entering the stream; invalid Jacobians and near-zero targets are discarded
 // rather than allowed to manufacture a huge reciprocal weight in finalization.
 //
-// Fix for Shroomlight flicker / burned faces: instead of hard rejecting targets below MIN_PHAT
-// (which caused aggressive discard and black spots), clamp to a small floor. This guarantees a minimum
-// importance weight so emissive blocks keep contributing and don't flicker.
+// Stickiness is a boiling filter: the same emitter keeps its exact sample point (no stochastic hop
+// between faces of a torch), and switching to a different emitter is biased against unless the new
+// weight clearly wins. That is what stops Minecraft block lights from flickering every frame.
 public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
                  float3 hitPos, float3 n, float3 v, float3 rd, float3 diffAlb, float3 F0,
-                 float rough, bool twoSided, float sss, inout uint seed) {
-    float acceptedM = min(source.M, max(0.0, min(maxM, RESTIR_MAX_M) - dst.M));
-    float sourceW = min(source.W, RESTIR_MAX_W);
+                 float rough, bool twoSided, float sss, float stickiness, inout uint seed) {
+    float hardMaxM = restirMaxM();
+    float acceptedM = min(source.M, max(0.0, min(maxM, hardMaxM) - dst.M));
+    float sourceW = min(source.W, restirMaxW());
     if (!(acceptedM > 0.0 && sourceW > 0.0) || !restirValidJacobian(source, hitPos, n)) return;
 
     float target;
     evalSampleContrib(source.pos, source.lnrm, source.le, source.area,
             hitPos, n, v, rd, diffAlb, F0, rough, twoSided, sss, target);
-    // Emissive floor instead of hard discard to avoid black/burned flicker (Shroomlight fix)
-    float floorPhat = max(RESTIR_MIN_PHAT, RESTIR_PHAT_EMISSIVE_FLOOR);
-    if (!(target >= floorPhat)) {
-        // If target is tiny but emitter is strong, keep it with floor to prevent aggressive discard
-        if (target <= 0.0 && luminance(source.le) < 0.01) return; // truly behind face and dim
-        target = floorPhat;
-    }
-    float safeTarget = min(target, RESTIR_MAX_SAMPLE_LUMINANCE);
+    if (!(target >= RESTIR_MIN_PHAT)) return;
+    float safeTarget = min(target, restirMaxLuminance());
     float w = min(safeTarget * sourceW * acceptedM,
-            max(0.0, RESTIR_MAX_WEIGHT_SUM - dst.wSum));
+            max(0.0, restirMaxWeightSum() - dst.wSum));
     if (!(w > 0.0)) return;
 
-    dst.M = min(dst.M + acceptedM, RESTIR_MAX_M);
+    bool same = restirSameEmitter(dst, source);
+    dst.M = min(dst.M + acceptedM, hardMaxM);
     dst.wSum += w;
-    if (rndf(seed) * dst.wSum < w) {
+    if (same) {
+        // Keep the temporally older sample point so a locked torch does not hop faces.
+        if (source.age >= dst.age) {
+            dst.pos = source.pos;
+            dst.lnrm = source.lnrm;
+            dst.le = source.le;
+            dst.area = source.area;
+            dst.packedLe = source.packedLe;
+            dst.age = min(source.age + 1u, restirMaxAge());
+        } else {
+            dst.age = min(dst.age + 1u, restirMaxAge());
+        }
+        dst.phat = safeTarget;
+        return;
+    }
+
+    // Different emitter: stickiness raises the bar for replacing the current sample.
+    float keepBias = 1.0 + saturate(stickiness) * 8.0;
+    if (rndf(seed) * dst.wSum * keepBias < w) {
         dst.pos = source.pos;
         dst.lnrm = source.lnrm;
         dst.le = source.le;
         dst.area = source.area;
         dst.phat = safeTarget;
         dst.packedLe = source.packedLe;
-        dst.age = min(source.age + 1u, RESTIR_MAX_AGE);
+        dst.age = min(source.age + 1u, restirMaxAge());
     }
 }
 
@@ -531,40 +642,31 @@ public bool restirPreviousPixel(float3 hitPos, float3 motionPrev, uint2 dimensio
     return all(previousPixel >= int2(0, 0)) && all(previousPixel < int2(dimensions));
 }
 
-// Star-artifact fix: spatial ReSTIR offsets were 4 cardinal directions * discrete radius 1..8,
-// producing petal/star patterns on ground from emissives (Copper Bulb, Redstone Lamp, Magma).
-// New version samples a random disk with per-frame jitter, giving smooth circular spread.
+// Deterministic per-pixel golden-angle disk. ReSTIR PT's SpatialReusePattern is stable across
+// frames: rotating the disk every frame (or adding sub-pixel jitter) is what boils a locked
+// temporal reservoir even when the same emitter wins. Star artifacts are avoided by the spiral
+// itself rather than by temporal scrambling.
 public float2 restirDiskOffset(uint sampleIndex, uint hash) {
-    // Combine sample index, hash and frameIndex for temporal jitter
-    uint h = hash ^ (sampleIndex * 1973u + 9277u) ^ (worldPush.frameIndex * 26699u + 12345u);
+    uint h = hash ^ (sampleIndex * 1973u + 9277u);
     h = pcg(h);
-    float a01 = float(h & 0xFFFFu) / 65535.0; // angle 0..1
+    float a01 = float(h & 0xFFFFu) / 65535.0;
     h = pcg(h);
-    float r01 = float((h >> 8u) & 0xFFFFu) / 65535.0; // radius 0..1
-    // sqrt for uniform disk area
-    float radius = sqrt(r01) * 8.0; // max 8 px, circular
-    // Per-frame angular jitter to break any residual alignment
-    float angleJitter = float(worldPush.frameIndex & 255u) / 255.0 * 6.2831853;
-    float angle = a01 * 6.2831853 + angleJitter;
+    float r01 = float((h >> 8u) & 0xFFFFu) / 65535.0;
+    float radius = sqrt(r01) * restirSpatialRadius();
+    float angle = a01 * 6.2831853 + float(sampleIndex) * 2.3999632; // golden angle
     return float2(cos(angle), sin(angle)) * radius;
 }
 
 public int2 restirSpatialOffset(uint sampleIndex, uint hash) {
     float2 f = restirDiskOffset(sampleIndex, hash);
-    // Add sub-pixel jittering per frame to smooth the sampling pattern
-    // Fix CI E30047: pcg() takes inout, so expression must be l-value. Store in temp var.
-    uint hjSeed = hash ^ worldPush.frameIndex * 7411u;
-    uint hj = pcg(hjSeed);
-    float jitterX = (rndf(hj) - 0.5) * 0.8;
-    float jitterY = (rndf(hj) - 0.5) * 0.8;
-    return int2(int(round(f.x + jitterX)), int(round(f.y + jitterY)));
+    return int2(int(round(f.x)), int(round(f.y)));
 }
 
 public void restirStore(Reservoir r, uint pixelIndex, float3 surfacePos, float3 surfaceNormal,
                  bool twoSided) {
     if (pc.restirCurrentAddr == 0
-            || !(r.W > 0.0 && r.W <= RESTIR_MAX_W
-                && r.M > 0.0 && r.M <= RESTIR_MAX_M && r.phat >= RESTIR_MIN_PHAT)) return;
+            || !(r.W > 0.0 && r.W <= restirMaxW()
+                && r.M > 0.0 && r.M <= restirMaxM() && r.phat >= RESTIR_MIN_PHAT)) return;
     PackedRestirReservoir record;
     record.sampleCameraRelative = r.pos - worldPush.camOffset;
     record.area = r.area;
@@ -573,7 +675,7 @@ public void restirStore(Reservoir r, uint pixelIndex, float3 surfacePos, float3 
     record.sampleNormal = restirPackNormal(r.lnrm);
     record.packedLe = r.packedLe;
     record.surfaceNormal = restirPackNormal(surfaceNormal);
-    uint storedM = min(uint(round(r.M)), uint(RESTIR_MAX_M));
+    uint storedM = min(uint(round(r.M)), uint(restirMaxM()));
     record.meta = storedM
             | (min(r.age, 0xffu) << 16u)
             | ((pc.lightGeneration & 0x7fu) << 24u)
@@ -586,20 +688,28 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
                        float3 diffAlb, float3 F0, float rough, bool twoSided, float sss,
                        inout uint seed) {
     Reservoir result = initial;
+    float hardMaxM = restirMaxM();
+    float currentMCap = restirCurrentMCap();
+    float temporalMCap = restirTemporalMCap();
+    float spatialMCap = restirSpatialMCap();
+    float maxW = restirMaxW();
+    float maxLum = restirMaxLuminance();
+    float maxWeightSum = restirMaxWeightSum();
+    float stickiness = restirStickiness();
+    float temporalBlend = restirTemporalBlend();
     // Normalize the fresh RIS set into a fixed budget before any history enters. Scaling M and wSum by
     // the same ratio preserves its W, then the explicit W/luminance clamps remove pathological tails.
     float originalM = max(initial.M, 1.0);
-    result.M = min(originalM, min(RESTIR_CURRENT_M_CAP, RESTIR_MAX_M));
+    result.M = min(originalM, min(currentMCap, hardMaxM));
     result.sourcePos = hitPos;
     result.sourceNormal = n;
     result.restir = 1u;
     if (initial.W > 0.0 && initial.phat >= RESTIR_MIN_PHAT) {
-        float safeTarget = min(initial.phat, RESTIR_MAX_SAMPLE_LUMINANCE);
-        float safeW = min(initial.W, min(RESTIR_MAX_W,
-                RESTIR_MAX_SAMPLE_LUMINANCE / initial.phat));
+        float safeTarget = min(initial.phat, maxLum);
+        float safeW = min(initial.W, min(maxW, maxLum / initial.phat));
         result.phat = safeTarget;
         result.W = safeW;
-        result.wSum = min(safeW * result.M * safeTarget, RESTIR_MAX_WEIGHT_SUM);
+        result.wSum = min(safeW * result.M * safeTarget, maxWeightSum);
     } else {
         result.W = 0.0;
         result.wSum = 0.0;
@@ -608,6 +718,8 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
 
     int2 previousPixel;
     bool hasPreviousPixel = restirPreviousPixel(hitPos, motionPrev, dimensions, previousPixel);
+    float lockedW = 0.0;
+    bool lockedSample = false;
     if (hasPreviousPixel) {
         ConstPtr<PackedRestirReservoir> history =
                 ConstPtr<PackedRestirReservoir>(pc.restirPreviousAddr);
@@ -615,37 +727,54 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
         float3 expectedPreviousSurface = hitPos - motionPrev;
         Reservoir candidate;
         uint previousIndex = uint(previousPixel.y) * dimensions.x + uint(previousPixel.x);
-        if (restirLoadCandidate(history[previousIndex], expectedPreviousSurface, n, twoSided,
-                max(0.20, cameraDistance * 0.01), 0.95, candidate)) {
-            candidate.M = min(candidate.M, RESTIR_TEMPORAL_M_CAP);
-            restirMerge(result, candidate, RESTIR_MAX_M, hitPos, n, v, rd,
-                    diffAlb, F0, rough, twoSided, sss, seed);
+        if (restirTemporalReuse()
+                && restirLoadCandidate(history[previousIndex], expectedPreviousSurface, n, twoSided,
+                max(restirTemporalPos(), cameraDistance * 0.01), restirTemporalNormal(), candidate)) {
+            float temporalW = min(candidate.W, maxW);
+            candidate.M = min(candidate.M, temporalMCap);
+            restirMerge(result, candidate, hardMaxM, hitPos, n, v, rd,
+                    diffAlb, F0, rough, twoSided, sss, stickiness, seed);
+            if (result.packedLe == candidate.packedLe && candidate.age > 0u && result.phat >= RESTIR_MIN_PHAT) {
+                lockedSample = true;
+                lockedW = temporalW;
+            }
         }
 
-        // Read neighbours only from last frame's immutable buffer. Tighter normal acceptance plus the
-        // connection-Jacobian test prevents floor/wall edges and disocclusions from exchanging energy.
-        uint spatialHash = pixel.x * 1973u + pixel.y * 9277u
-                + worldPush.frameIndex * 26699u;
-        spatialHash = pcg(spatialHash);
-        for (uint i = 0u; i < RESTIR_SPATIAL_SAMPLES; ++i) {
-            int2 neighbour = previousPixel + restirSpatialOffset(i, spatialHash);
-            if (any(neighbour < int2(0, 0)) || any(neighbour >= int2(dimensions))) continue;
-            uint neighbourIndex = uint(neighbour.y) * dimensions.x + uint(neighbour.x);
-            if (restirLoadCandidate(history[neighbourIndex], expectedPreviousSurface, n, twoSided,
-                    max(1.5, cameraDistance * 0.05), 0.90, candidate)) {
-                candidate.M = min(candidate.M, RESTIR_SPATIAL_M_CAP);
-                restirMerge(result, candidate, RESTIR_MAX_M, hitPos, n, v, rd,
-                        diffAlb, F0, rough, twoSided, sss, seed);
+        // Spatial reuse fills holes and shares a little energy. Skip it when a temporal sample is
+        // already locked and stickiness is high — neighbour jitter is the remaining boiling source.
+        bool runSpatial = restirSpatialReuse() && spatialMCap > 0.0
+                && restirSpatialSamples() > 0u
+                && !(lockedSample && stickiness >= 0.50);
+        if (runSpatial) {
+            // Pixel-only hash: no frameIndex, so the neighbour set is temporally stable.
+            uint spatialHash = pixel.x * 1973u + pixel.y * 9277u;
+            spatialHash = pcg(spatialHash);
+            for (uint i = 0u; i < restirSpatialSamples(); ++i) {
+                int2 neighbour = previousPixel + restirSpatialOffset(i, spatialHash);
+                if (any(neighbour < int2(0, 0)) || any(neighbour >= int2(dimensions))) continue;
+                uint neighbourIndex = uint(neighbour.y) * dimensions.x + uint(neighbour.x);
+                if (restirLoadCandidate(history[neighbourIndex], expectedPreviousSurface, n, twoSided,
+                        max(restirSpatialPos(), cameraDistance * 0.05), restirSpatialNormal(), candidate)) {
+                    candidate.M = min(candidate.M, spatialMCap);
+                    restirMerge(result, candidate, hardMaxM, hitPos, n, v, rd,
+                            diffAlb, F0, rough, twoSided, sss, stickiness, seed);
+                }
             }
         }
     }
 
-    result.M = min(result.M, RESTIR_MAX_M);
+    result.M = min(result.M, hardMaxM);
     float rawW = result.phat >= RESTIR_MIN_PHAT && result.M > 0.0
             ? result.wSum / (result.M * result.phat) : 0.0;
     float selectedLuminanceW = result.phat >= RESTIR_MIN_PHAT
-            ? RESTIR_MAX_SAMPLE_LUMINANCE / result.phat : 0.0;
-    result.W = rawW > 0.0 ? min(rawW, min(RESTIR_MAX_W, selectedLuminanceW)) : 0.0;
+            ? maxLum / result.phat : 0.0;
+    result.W = rawW > 0.0 ? min(rawW, min(maxW, selectedLuminanceW)) : 0.0;
+    // Same-emitter temporal lock: blend W toward the previous frame so intensity does not jump
+    // every time a new fresh candidate slightly changes the stream sum.
+    if (lockedSample && temporalBlend < 1.0 && lockedW > 0.0 && result.W > 0.0) {
+        result.W = lerp(lockedW, result.W, temporalBlend);
+        result.W = min(result.W, min(maxW, selectedLuminanceW));
+    }
     result.sourcePos = hitPos;
     result.sourceNormal = n;
     restirStore(result, pixel.y * dimensions.x + pixel.x, hitPos, n, twoSided);
@@ -678,7 +807,7 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
     // Stop just short of the sample point so the ray doesn't self-occlude on the emitter's own face.
     VisibilityResult shadow = visibility(origin, toL / dist, dist * 0.999);
     float3 vis = shadow.transmittance;
-    float appliedW = s.restir != 0u ? min(s.W, RESTIR_MAX_W) : s.W;
+    float appliedW = s.restir != 0u ? min(s.W, restirMaxW()) : s.W;
     float3 shaded = contrib * vis * appliedW;
     if (s.restir != 0u) {
         // Last-line firefly suppression after visibility and target re-evaluation. This catches the case
@@ -686,8 +815,9 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
         // larger. Hue is preserved by scaling all channels together.
         float shadedLuminance = luminance(shaded);
         if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
-        if (shadedLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
-            shaded *= RESTIR_MAX_SAMPLE_LUMINANCE / shadedLuminance;
+        float maxLum = restirMaxLuminance();
+        if (shadedLuminance > maxLum) {
+            shaded *= maxLum / shadedLuminance;
         }
     }
     return shaded;
@@ -720,7 +850,7 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
     float dist = length(toL);
     VisibilityResult shadow = visibility(origin, toL / dist, dist * 0.999);
     float3 vis = shadow.transmittance;
-    float appliedW = s.restir != 0u ? min(s.W, RESTIR_MAX_W) : s.W;
+    float appliedW = s.restir != 0u ? min(s.W, restirMaxW()) : s.W;
     outDiff = diffPart * vis * appliedW;
     outSpec = specPart * vis * appliedW;
     if (s.restir != 0u) {
@@ -731,8 +861,9 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
             outSpec = float3(0.0, 0.0, 0.0);
             return;
         }
-        if (shadedLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
-            float scale = RESTIR_MAX_SAMPLE_LUMINANCE / shadedLuminance;
+        float maxLum = restirMaxLuminance();
+        if (shadedLuminance > maxLum) {
+            float scale = maxLum / shadedLuminance;
             outDiff *= scale;
             outSpec *= scale;
         }

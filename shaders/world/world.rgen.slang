@@ -416,7 +416,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 restirReceiverPending = false;
                 if (!skipSiblingRis) {
                     uint freshCandidates = shadeWithRestir
-                            ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                            ? min(worldPush.risCandidates, restirFreshCandidates())
                             : worldPush.risCandidates;
                     Reservoir r = risInitial(hitPos, n, v, rd, albedo,
                             float3(0.0, 0.0, 0.0), 1.0, true, 0.0, freshCandidates,
@@ -648,7 +648,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             restirReceiverPending = false;
             if (!skipSiblingRis) {
                 uint freshCandidates = shadeWithRestir
-                        ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                        ? min(worldPush.risCandidates, restirFreshCandidates())
                         : worldPush.risCandidates;
                 Reservoir r = risInitial(hitPos, n, v, rd, diffAlb, F0, rough, twoSidedEmitter,
                         activeSss, freshCandidates, seed, proposalSeed);

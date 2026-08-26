@@ -350,6 +350,98 @@ public final class RtComposite {
         return new Int4(terrain.blockX, terrain.blockY, terrain.blockZ, RtSharc.INSTANCE.entryCount());
     }
 
+    // ---- ReSTIR DI / GRIS live knobs (WorldPush.restirParams[1..5]). Read fresh every frame so the
+    // dedicated ReSTIR Settings sub-screen takes effect without a shader rebuild.
+    private static final int RESTIR_FLAG_TEMPORAL = 1;
+    private static final int RESTIR_FLAG_SPATIAL = 2;
+    private static final int RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE = 4;
+
+    /** WorldPush.restirParams: x maxM, y current M-cap, z temporal M-cap, w spatial M-cap. */
+    private static Float4 restirParams() {
+        return new Float4(
+                CausticaConfig.Rt.Restir.MAX_M.value(),
+                CausticaConfig.Rt.Restir.CURRENT_M_CAP.value(),
+                CausticaConfig.Rt.Restir.TEMPORAL_M_CAP.value(),
+                CausticaConfig.Rt.Restir.SPATIAL_M_CAP.value());
+    }
+
+    /** WorldPush.restirParams2: x spatial samples, y spatial radius, z max W, w max luminance. */
+    private static Float4 restirParams2() {
+        return new Float4(
+                CausticaConfig.Rt.Restir.SPATIAL_SAMPLES.value(),
+                CausticaConfig.Rt.Restir.SPATIAL_RADIUS.value(),
+                CausticaConfig.Rt.Restir.MAX_W.value(),
+                CausticaConfig.Rt.Restir.MAX_LUMINANCE.value());
+    }
+
+    /** WorldPush.restirParams3: x jacobian min, y jacobian max, z max age, w fresh candidates. */
+    private static Float4 restirParams3() {
+        return new Float4(
+                CausticaConfig.Rt.Restir.JACOBIAN_MIN.value(),
+                CausticaConfig.Rt.Restir.JACOBIAN_MAX.value(),
+                CausticaConfig.Rt.Restir.MAX_AGE.value(),
+                CausticaConfig.Rt.Restir.FRESH_CANDIDATES.value());
+    }
+
+    /** WorldPush.restirParams4: x temporal pos, y temporal normal, z spatial pos, w spatial normal. */
+    private static Float4 restirParams4() {
+        return new Float4(
+                CausticaConfig.Rt.Restir.TEMPORAL_POS.value(),
+                CausticaConfig.Rt.Restir.TEMPORAL_NORMAL.value(),
+                CausticaConfig.Rt.Restir.SPATIAL_POS.value(),
+                CausticaConfig.Rt.Restir.SPATIAL_NORMAL.value());
+    }
+
+    /**
+     * WorldPush.restirParams5: x stickiness, y temporal W blend, z flags (bit0 temporal reuse,
+     * bit1 spatial reuse, bit2 invalidate-on-light-change), w reserved.
+     */
+    private static Float4 restirParams5() {
+        int flags = 0;
+        if (CausticaConfig.Rt.Restir.TEMPORAL_REUSE.value()) {
+            flags |= RESTIR_FLAG_TEMPORAL;
+        }
+        if (CausticaConfig.Rt.Restir.SPATIAL_REUSE.value()) {
+            flags |= RESTIR_FLAG_SPATIAL;
+        }
+        if (CausticaConfig.Rt.Restir.INVALIDATE_ON_LIGHT_CHANGE.value()) {
+            flags |= RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE;
+        }
+        return new Float4(
+                CausticaConfig.Rt.Restir.STICKINESS.value(),
+                CausticaConfig.Rt.Restir.TEMPORAL_BLEND.value(),
+                flags,
+                0.0f);
+    }
+
+    private volatile boolean restirClearRequested;
+
+    /** Drop both ReSTIR history buffers next frame (SHaRC-style fill). Called from the options UI. */
+    public void requestRestirClear() {
+        restirClearRequested = true;
+    }
+
+    private void clearRestirIfRequested(RtContext ctx) {
+        if (!restirClearRequested) {
+            return;
+        }
+        restirClearRequested = false;
+        if (!restirResourcesEnabled || restirReservoirs[0] == null || restirReservoirs[1] == null
+                || renderW <= 0 || renderH <= 0) {
+            return;
+        }
+        ctx.waitIdle();
+        long pixels = Math.multiplyExact((long) renderW, (long) renderH);
+        long bytes = Math.multiplyExact(pixels, RESTIR_RECORD_BYTES);
+        ctx.submitSync(cmd -> {
+            VK10.vkCmdFillBuffer(cmd, restirReservoirs[0].handle, 0L, bytes, 0);
+            VK10.vkCmdFillBuffer(cmd, restirReservoirs[1].handle, 0L, bytes, 0);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VulkanCommandEncoder.memoryBarrier(cmd, stack);
+            }
+        });
+    }
+
     // Finite sun/moon angular sizes let NEE shadow rays sample the light disk (soft, contact-hardening
     // penumbrae). Radii in degrees; the real sun/moon are ~0.27°, but a touch larger reads pleasantly.
     private static final int WATER_ANCHOR_MASK = 4095;
@@ -1720,7 +1812,12 @@ public final class RtComposite {
                     sharcParams(),
                     sharcParams2(),
                     sharcParams3(),
-                    sharcGridOrigin(terrain)
+                    sharcGridOrigin(terrain),
+                    restirParams(),
+                    restirParams2(),
+                    restirParams3(),
+                    restirParams4(),
+                    restirParams5()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {

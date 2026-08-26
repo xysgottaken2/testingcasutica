@@ -127,7 +127,9 @@ final class RtShaderConstantMirrorTest {
         // These four lanes are what SSS, weather lighting, the dimension skyboxes and the denoiser
         // toggle travel in. Removing one would still compile (the generated record just loses a
         // component) but would silently drop a feature, so pin them here.
-        for (String field : new String[] {"weather", "ambientFog", "dimension", "featureFlags"}) {
+        for (String field : new String[] {
+                "weather", "ambientFog", "dimension", "featureFlags",
+                "restirParams", "restirParams2", "restirParams3", "restirParams4", "restirParams5"}) {
             assertTrue(Pattern.compile("^\\s*public\\s+\\S+\\s+" + field + "\\s*;", Pattern.MULTILINE)
                             .matcher(slang).find(),
                     "WorldPush is missing the '" + field + "' field");

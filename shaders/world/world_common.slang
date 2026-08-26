@@ -151,6 +151,20 @@ public struct WorldPush {
     public float4   sharcParams2;
     public float4   sharcParams3;
     public int4     sharcGridOrigin;
+    // ReSTIR DI / GRIS live knobs (CausticaConfig.Rt.Restir). Packed like the SHaRC lanes so a
+    // slider change takes effect next frame without a shader rebuild. Defaults are the ultra-stable
+    // set: temporal M-cap 24 vs fresh 4, boiling-filter stickiness, temporal W blend.
+    // restirParams:  x maxM, y current M-cap, z temporal M-cap, w spatial M-cap
+    // restirParams2: x spatial samples, y spatial radius (px), z max W, w max sample luminance
+    // restirParams3: x jacobian min, y jacobian max, z max age, w fresh candidates
+    // restirParams4: x temporal pos (blocks), y temporal normal, z spatial pos, w spatial normal
+    // restirParams5: x stickiness, y temporal W blend, z flags (bit0 temporal, bit1 spatial,
+    //                bit2 invalidate-on-light-change), w reserved
+    public float4   restirParams;
+    public float4   restirParams2;
+    public float4   restirParams3;
+    public float4   restirParams4;
+    public float4   restirParams5;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full

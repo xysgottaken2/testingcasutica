@@ -9,9 +9,11 @@ import dev.comfyfluffy.caustica.CausticaConfig.StringSetting;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import dev.comfyfluffy.caustica.client.gui.RtRestirOptionsScreen;
 import dev.comfyfluffy.caustica.client.gui.RtSharcOptionsScreen;
 import dev.comfyfluffy.caustica.compat.DistantHorizonsCompat;
 import dev.comfyfluffy.caustica.compat.VoxyCompat;
+import dev.comfyfluffy.caustica.rt.RtComposite;
 import dev.comfyfluffy.caustica.rt.RtSharc;
 import dev.comfyfluffy.caustica.rt.terrain.RtDistantHorizonsTerrain;
 import dev.comfyfluffy.caustica.rt.terrain.RtTerrain;
@@ -1138,5 +1140,223 @@ public final class RtVideoOptions {
         button.setTooltip(Tooltip.create(
                 Component.translatable("caustica.options.sharc.reset.tooltip")));
         return button;
+    }
+
+    // ===== ReSTIR DI / GRIS (ultra-stable reservoir reuse) =====
+
+    /**
+     * Temporal-reuse knobs for the dedicated {@link RtRestirOptionsScreen}. These are the main
+     * anti-flicker levers: a high temporal M-cap so history dominates, stickiness so a torch stays
+     * a torch, and a temporal W blend so intensity does not jump every frame.
+     */
+    public static OptionInstance<?>[] restirTemporalOptions() {
+        return new OptionInstance<?>[] {
+            restirTemporalReuse(),
+            restirFreshCandidates(),
+            restirCurrentMCap(),
+            restirTemporalMCap(),
+            restirMaxM(),
+            restirMaxAge(),
+            restirStickiness(),
+            restirTemporalBlend(),
+            restirTemporalPos(),
+            restirTemporalNormal(),
+        };
+    }
+
+    /** Spatial-reuse knobs. Defaults are conservative: small radius, tiny M-cap, hole-filling only. */
+    public static OptionInstance<?>[] restirSpatialOptions() {
+        return new OptionInstance<?>[] {
+            restirSpatialReuse(),
+            restirSpatialSamples(),
+            restirSpatialRadius(),
+            restirSpatialMCap(),
+            restirSpatialPos(),
+            restirSpatialNormal(),
+        };
+    }
+
+    /** Safety / estimator bounds and the light-hierarchy invalidation toggle. */
+    public static OptionInstance<?>[] restirSafetyOptions() {
+        return new OptionInstance<?>[] {
+            restirMaxW(),
+            restirMaxLuminance(),
+            restirJacobianMin(),
+            restirJacobianMax(),
+            restirInvalidateOnLightChange(),
+        };
+    }
+
+    public static Button restirToggleButton() {
+        Button button = Button.builder(restirToggleLabel(), clicked -> {
+            CausticaConfig.BooleanSetting setting = CausticaConfig.Rt.Lights.RESTIR_SAMPLING;
+            setting.set(!setting.value());
+            clicked.setMessage(restirToggleLabel());
+        }).width(310).build();
+        button.setTooltip(Tooltip.create(
+                Component.translatable("caustica.options.rt.restirSampling.tooltip")));
+        return button;
+    }
+
+    private static Component restirToggleLabel() {
+        return Options.genericValueLabel(
+                Component.translatable("caustica.options.rt.restirSampling"),
+                Component.translatable(CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()
+                        ? "options.on" : "options.off"));
+    }
+
+    /** Opens the dedicated ReSTIR customization sub-screen. */
+    public static Button restirSettingsButton(Screen parent) {
+        return Button.builder(Component.translatable("caustica.options.restir.settingsButton"), clicked -> {
+            Minecraft minecraft = Minecraft.getInstance();
+            minecraft.gui.setScreen(new RtRestirOptionsScreen(parent, minecraft.options));
+        }).width(310).build();
+    }
+
+    /** Zero-fills both ReSTIR ping-pong buffers next frame. */
+    public static Button restirResetButton() {
+        Button button = Button.builder(Component.translatable("caustica.options.restir.reset"), clicked -> {
+            RtComposite.INSTANCE.requestRestirClear();
+            clicked.setMessage(Component.translatable("caustica.options.restir.reset.queued"));
+        }).width(310).build();
+        button.setTooltip(Tooltip.create(
+                Component.translatable("caustica.options.restir.reset.tooltip")));
+        return button;
+    }
+
+    private static OptionInstance<Boolean> restirTemporalReuse() {
+        return bool("caustica.options.restir.temporalReuse", CausticaConfig.Rt.Restir.TEMPORAL_REUSE);
+    }
+
+    private static OptionInstance<Boolean> restirSpatialReuse() {
+        return bool("caustica.options.restir.spatialReuse", CausticaConfig.Rt.Restir.SPATIAL_REUSE);
+    }
+
+    private static OptionInstance<Boolean> restirInvalidateOnLightChange() {
+        return bool("caustica.options.restir.invalidateOnLightChange",
+                CausticaConfig.Rt.Restir.INVALIDATE_ON_LIGHT_CHANGE);
+    }
+
+    private static OptionInstance<Integer> restirFreshCandidates() {
+        return intTicks("caustica.options.restir.freshCandidates",
+                CausticaConfig.Rt.Restir.FRESH_CANDIDATES, 1, 16, null);
+    }
+
+    private static OptionInstance<Integer> restirCurrentMCap() {
+        return intTicks("caustica.options.restir.currentMCap",
+                CausticaConfig.Rt.Restir.CURRENT_M_CAP, 1, 16, null);
+    }
+
+    private static OptionInstance<Integer> restirTemporalMCap() {
+        return intTicks("caustica.options.restir.temporalMCap",
+                CausticaConfig.Rt.Restir.TEMPORAL_M_CAP, 1, 64, null);
+    }
+
+    private static OptionInstance<Integer> restirSpatialMCap() {
+        return intTicks("caustica.options.restir.spatialMCap",
+                CausticaConfig.Rt.Restir.SPATIAL_M_CAP, 0, 16, null);
+    }
+
+    private static OptionInstance<Integer> restirMaxM() {
+        return intTicks("caustica.options.restir.maxM",
+                CausticaConfig.Rt.Restir.MAX_M, 8, 64, null);
+    }
+
+    private static OptionInstance<Integer> restirMaxAge() {
+        return intTicks("caustica.options.restir.maxAge",
+                CausticaConfig.Rt.Restir.MAX_AGE, 1, 120, " frames");
+    }
+
+    private static OptionInstance<Integer> restirSpatialSamples() {
+        return intTicks("caustica.options.restir.spatialSamples",
+                CausticaConfig.Rt.Restir.SPATIAL_SAMPLES, 0, 8, null);
+    }
+
+    private static OptionInstance<Integer> restirSpatialRadius() {
+        return intTicks("caustica.options.restir.spatialRadius",
+                CausticaConfig.Rt.Restir.SPATIAL_RADIUS, 1, 32, " px");
+    }
+
+    private static OptionInstance<Integer> restirMaxW() {
+        return intTicks("caustica.options.restir.maxW",
+                CausticaConfig.Rt.Restir.MAX_W, 1, 64, null);
+    }
+
+    private static OptionInstance<Integer> restirMaxLuminance() {
+        return intTicks("caustica.options.restir.maxLuminance",
+                CausticaConfig.Rt.Restir.MAX_LUMINANCE, 1, 64, null);
+    }
+
+    private static OptionInstance<Integer> restirStickiness() {
+        return percent("caustica.options.restir.stickiness", CausticaConfig.Rt.Restir.STICKINESS);
+    }
+
+    private static OptionInstance<Integer> restirTemporalBlend() {
+        return percent("caustica.options.restir.temporalBlend", CausticaConfig.Rt.Restir.TEMPORAL_BLEND);
+    }
+
+    private static OptionInstance<Integer> restirTemporalNormal() {
+        return percentRange("caustica.options.restir.temporalNormal",
+                CausticaConfig.Rt.Restir.TEMPORAL_NORMAL, 50, 100);
+    }
+
+    private static OptionInstance<Integer> restirSpatialNormal() {
+        return percentRange("caustica.options.restir.spatialNormal",
+                CausticaConfig.Rt.Restir.SPATIAL_NORMAL, 50, 100);
+    }
+
+    private static OptionInstance<Integer> restirTemporalPos() {
+        return hundredths("caustica.options.restir.temporalPos",
+                CausticaConfig.Rt.Restir.TEMPORAL_POS, 5, 200);
+    }
+
+    private static OptionInstance<Integer> restirSpatialPos() {
+        return hundredths("caustica.options.restir.spatialPos",
+                CausticaConfig.Rt.Restir.SPATIAL_POS, 25, 800);
+    }
+
+    private static OptionInstance<Integer> restirJacobianMin() {
+        return hundredths("caustica.options.restir.jacobianMin",
+                CausticaConfig.Rt.Restir.JACOBIAN_MIN, 5, 100);
+    }
+
+    private static OptionInstance<Integer> restirJacobianMax() {
+        return tenths("caustica.options.restir.jacobianMax",
+                CausticaConfig.Rt.Restir.JACOBIAN_MAX, 10, 200);
+    }
+
+    private static OptionInstance<Integer> intTicks(String captionKey, IntSetting setting,
+                                                    int min, int max, String unit) {
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption,
+                    unit == null ? Component.literal(Integer.toString(value))
+                            : Component.literal(value + unit)),
+            new OptionInstance.IntRange(min, max),
+            Math.clamp(setting.value(), min, max),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> percentRange(String captionKey, FloatSetting setting,
+                                                        int min, int max) {
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, Component.literal(value + "%")),
+            new OptionInstance.IntRange(min, max),
+            Math.clamp(Math.round(setting.value() * 100.0f), min, max),
+            value -> setting.set(value / 100.0f));
+    }
+
+    private static OptionInstance<Integer> tenths(String captionKey, FloatSetting setting, int min, int max) {
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, tenths) -> Options.genericValueLabel(caption,
+                    Component.literal(String.format(Locale.ROOT, "%.1f", tenths / 10.0f))),
+            new OptionInstance.IntRange(min, max),
+            Math.clamp(Math.round(setting.value() * 10.0f), min, max),
+            tenths -> setting.set(tenths / 10.0f));
     }
 }
