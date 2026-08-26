@@ -317,11 +317,21 @@ public final class RtComposite {
      * vertex's path), z inverse temporal accumulation window (blend cap), w reserved (was max query
      * distance — a query position is always inside its own cell, so the limit could never fire).
      */
-    private static Float4 sharcParams() {
+    private static Float4 sharcParams(boolean worldEditResponse) {
+        // While a world-edit response window is open (see recordFrame), floor the temporal-blend
+        // knob at a responsive value: warm cache cells near the edit re-converge to the new
+        // lighting within a few writes instead of easing toward it over the configured window, so
+        // the cache cannot keep feeding the pre-edit radiance into the very frames that are trying
+        // to show the change. The knob is the inverse accumulation window in frames (see
+        // sharc.slang's sharcDecay), so a LARGER value means a SHORTER window — hence max().
+        float temporalBlend = CausticaConfig.Rt.Sharc.TEMPORAL_BLEND.value();
+        if (worldEditResponse) {
+            temporalBlend = Math.max(temporalBlend, SHARC_EDIT_RESPONSE_BLEND);
+        }
         return new Float4(
                 CausticaConfig.Rt.Sharc.CELL_SIZE.value(),
                 CausticaConfig.Rt.Sharc.STRENGTH.value(),
-                CausticaConfig.Rt.Sharc.TEMPORAL_BLEND.value(),
+                temporalBlend,
                 CausticaConfig.Rt.Sharc.MAX_DISTANCE.value());
     }
 
@@ -360,6 +370,47 @@ public final class RtComposite {
     // GEOMETRY rather than thrown away on motion: a long window no longer means ghosting, it means
     // a converged image. The exponential tail after the 1/n phase still tracks lighting changes.
     private static final float SVGF_MAX_FRAMES = 48.0f;
+    /**
+     * Accumulation cap while a world-edit response window is open. A block placed or broken with a
+     * STATIC camera changes the world under zero-length motion vectors, so the reprojection's
+     * geometry gate — correctly — keeps the history of every surface whose own depth/normal did not
+     * change, and the edit's real footprint (the block itself converges instantly via the depth
+     * gate; the INDIRECT light it moved on the surrounding surfaces does not) blends in over the
+     * full 48-frame window above: the "placed block fades in until you walk" lag. While the window
+     * is open the cap drops to a handful of frames — the exact trade the image already accepts while
+     * moving (histories of 1-4 frames), so edits settle the way they do when walking, without a
+     * reset: converged history is kept and merely trusted less, so there is no flash, no
+     * full-screen re-convergence, only a briefly faster exponential window.
+     */
+    private static final float SVGF_EDIT_RESPONSE_MAX_FRAMES = 5.0f;
+    /**
+     * How long a world edit keeps the temporal stages responsive. Long enough to cover the async
+     * edit -> re-extract -> publish pipeline (the publish itself bumps the serial again and extends
+     * the window), short enough that sustained building does not leave the image permanently at the
+     * shorter window's slightly higher residual noise.
+     */
+    private static final long WORLD_EDIT_RESPONSE_NANOS = 500_000_000L;
+    /**
+     * How far beyond an edit's block bounds the visibility gate still treats it as on screen. An
+     * edit just past a screen edge is not itself visible, but the light it emits or blocks IS: a
+     * torch placed one block outside the view brightens the wall inside it. Sixteen blocks (a
+     * vanilla block-light radius) covers that spill; anything further out cannot meaningfully
+     * change what the frame shows.
+     */
+    private static final int WORLD_EDIT_VISIBILITY_PAD_BLOCKS = 16;
+    /**
+     * Minimum spacing between DLSS-RR history resets for world edits. One edit typically pulses the
+     * serial twice (prediction now, geometry publish a few frames later) and building pulses it
+     * continuously; RR's reset is a designed camera-cut recovery, and coalescing the pulses keeps
+     * rapid building from resetting its history on every single placement.
+     */
+    private static final long RR_EDIT_RESET_MIN_INTERVAL_NANOS = 250_000_000L;
+    /**
+     * SHaRC temporal-blend floor while a world-edit response window is open: 0.25 = a 4-frame
+     * effective accumulation window, so warm cache cells near the edit re-converge to the new
+     * lighting in a handful of writes instead of easing toward it over their configured window.
+     */
+    private static final float SHARC_EDIT_RESPONSE_BLEND = 0.25f;
     /**
      * Debug-view ids that inspect SVGF's internal state instead of the tracer's guides. Unlike the
      * guide views these leave the denoiser enabled, because the point is to see what it is doing.
@@ -633,6 +684,12 @@ public final class RtComposite {
     private RtImage svgfPrevNormal;
     private boolean svgfWriteToPing;
     private boolean svgfHasHistory;
+    // World-edit responsiveness bookkeeping (see RtTerrain.worldEditCounter): the serial this
+    // renderer last consumed, the deadline of the currently open response window, and the last time
+    // RR's history was reset for an edit (rate limiter). All render-thread only.
+    private long seenWorldEditCounter;
+    private long worldEditResponseUntilNanos;
+    private long lastRrEditResetNanos;
     private double svgfPrevCamX;
     private double svgfPrevCamY;
     private double svgfPrevCamZ;
@@ -1453,6 +1510,68 @@ public final class RtComposite {
     }
 
     /**
+     * Could the world-space AABB of a recent edit be on screen right now? Conservative by design:
+     * unknown bounds (publish-only pulses whose originating edit is older than the union horizon,
+     * full clears) and any non-finite projection degrade to "visible", and the only confident
+     * rejection is every padded-AABB corner landing outside the SAME frustum side plane in
+     * homogeneous clip space (the standard separating-plane test — a box straddling the camera or
+     * crossing the frustum always keeps at least one plane satisfied on both sides). Uses
+     * {@link #mvCurProjView}, valid because {@link #updateMotion()} runs before every
+     * {@link #recordFrame}.
+     */
+    private boolean editMightBeVisible(RtTerrain terrain) {
+        RtTerrain.WorldEditBounds bounds = RtTerrain.recentEditBounds();
+        if (bounds == null
+                || System.nanoTime() - bounds.observedNanos() > 2L * WORLD_EDIT_RESPONSE_NANOS) {
+            return true; // provenance unknown: assume the player can see it
+        }
+        int pad = WORLD_EDIT_VISIBILITY_PAD_BLOCKS;
+        double minX = bounds.minX() - pad, minY = bounds.minY() - pad, minZ = bounds.minZ() - pad;
+        // +1: block bounds are inclusive coordinates; the box extends one block further.
+        double maxX = bounds.maxX() + 1 + pad, maxY = bounds.maxY() + 1 + pad, maxZ = bounds.maxZ() + 1 + pad;
+        Matrix4fc m = mvCurProjView;
+        double m00 = m.m00(), m01 = m.m01(), m02 = m.m02(), m03 = m.m03();
+        double m10 = m.m10(), m11 = m.m11(), m12 = m.m12(), m13 = m.m13();
+        double m30 = m.m30(), m31 = m.m31(), m32 = m.m32(), m33 = m.m33();
+        boolean allRight = true, allLeft = true, allAbove = true, allBelow = true;
+        boolean anyInFront = false;
+        for (int corner = 0; corner < 8; corner++) {
+            double wx = (corner & 1) == 0 ? minX : maxX;
+            double wy = (corner & 2) == 0 ? minY : maxY;
+            double wz = (corner & 4) == 0 ? minZ : maxZ;
+            // mvCurProjView maps camera-relative world points to clip space (its rotation has no
+            // translation; the camera position is subtracted here, in double precision because
+            // world coordinates reach tens of millions of blocks).
+            double rx = wx - camX, ry = wy - camY, rz = wz - camZ;
+            double cx = m00 * rx + m01 * ry + m02 * rz + m03;
+            double cy = m10 * rx + m11 * ry + m12 * rz + m13;
+            double cw = m30 * rx + m31 * ry + m32 * rz + m33;
+            if (!Double.isFinite(cx) || !Double.isFinite(cy) || !Double.isFinite(cw)) {
+                return true;
+            }
+            // Clip-space w carries the sign of "in front of the camera" under every projection
+            // convention in use (perspective, reverse-Z, infinite far), so a box with NO front
+            // corner is entirely behind the view. It would otherwise evade the side-plane test
+            // below: behind-space flips the plane inequalities, so a wide box behind the camera
+            // gathers no per-plane consensus at all.
+            if (cw > 0.0) {
+                anyInFront = true;
+            }
+            // Outside the SAME plane in homogeneous space (valid for negative w too — these are the
+            // frustum's side planes through the origin of clip space). NaN-safe order: the guarded
+            // comparisons fall out of "outside" on any doubt.
+            if (!(cx > cw)) allRight = false;
+            if (!(cx < -cw)) allLeft = false;
+            if (!(cy > cw)) allAbove = false;
+            if (!(cy < -cw)) allBelow = false;
+        }
+        if (!anyInFront) {
+            return false; // entirely behind the camera
+        }
+        return !(allRight || allLeft || allAbove || allBelow);
+    }
+
+    /**
      * Compute this frame's motion-vector push data: the matrix that projects a current world point
      * into the previous frame's clip space, plus the per-frame camera translation. On the first frame
      * (or after a reset) push the current view-projection with zero delta so MVs come out zero.
@@ -1490,6 +1609,33 @@ public final class RtComposite {
         RtDebugLabels.name(ctx, VK10.VK_OBJECT_TYPE_COMMAND_BUFFER, cmd.address(), "composite command buffer");
         int debugView = debugView();
         RtTerrain terrain = RtTerrain.currentOrNull();
+        // ---- World-edit responsiveness window ------------------------------------------
+        //
+        // Motion vectors only express change the CAMERA sees. A block placed, broken, or lit while
+        // standing still changes the world under zero-length MVs, so every temporal stage keeps a
+        // history that no longer matches the world and blends the edit in over its full accumulation
+        // window — the slow fade that snaps the moment you walk (movement rejects history through
+        // disocclusion). RtTerrain bumps a monotonic edit serial when an edit arrives AND when its
+        // rebuilt geometry publishes; each bump (re)opens a short window during which the stages
+        // below converge faster instead: SVGF's accumulation cap drops (no reset — history is kept
+        // and trusted less), RR's history resets once (rate-limited), and SHaRC's temporal blend
+        // shortens so cache cells re-warm quickly. After the window everything eases back to the
+        // long-window steady state.
+        long worldEditSerial = terrain.worldEditCounter();
+        boolean worldEditPulse = worldEditSerial != seenWorldEditCounter;
+        boolean worldEditPulseVisible = false;
+        if (worldEditPulse) {
+            seenWorldEditCounter = worldEditSerial;
+            // An off-screen pulse costs nothing: the change is not in view, and turning to look at
+            // it re-invalidates history through ordinary disocclusion anyway. Only a pulse that
+            // could be on screen (padding included, so indirect light spilling in from just past a
+            // screen edge counts) opens the response window / resets RR.
+            worldEditPulseVisible = editMightBeVisible(terrain);
+            if (worldEditPulseVisible) {
+                worldEditResponseUntilNanos = System.nanoTime() + WORLD_EDIT_RESPONSE_NANOS;
+            }
+        }
+        boolean worldEditResponse = System.nanoTime() < worldEditResponseUntilNanos;
         try (MemoryStack stack = MemoryStack.stackPush(); RtDebugLabels.Scope frameLabel = RtDebugLabels.scope(ctx, cmd, "composite frame")) {
             // The active upscaler drives the frame: trace + jitter at render res, then DLSS-RR
             // (denoise+upscale) or FSR 3 (upscale only) brings it to display res. They occupy one
@@ -1717,7 +1863,7 @@ public final class RtComposite {
                     // the cache buffer address plus the world-space caching and tuning parameters the
                     // shader reads.
                     sharcCacheAddress(),
-                    sharcParams(),
+                    sharcParams(worldEditResponse),
                     sharcParams2(),
                     sharcParams3(),
                     sharcGridOrigin(terrain)
@@ -1840,6 +1986,20 @@ public final class RtComposite {
             // DLSS-RR denoise + upscale. The RT pass wrote noisy color (render res) + guides;
             // RR reads them and writes the display-res denoised result straight into rrOutput.
             if (rrPath && RtDlssRr.INSTANCE.ensureFeature(cmd.address(), renderW, renderH, displayW, displayH)) {
+                // World edit under a static camera: RR owns its temporal history internally, and
+                // zero-length MVs give it no signal that the world (not the camera) changed, so the
+                // edit fades in over its accumulation. A reset is RR's designed "history is invalid"
+                // recovery — it re-converges within a couple of frames. Visibility-gated and
+                // rate-limited so off-screen machinery never resets it, and so an edit's
+                // predict+publish pulse pair and sustained building collapse into single resets
+                // instead of hammering the reconstruction every placement.
+                if (worldEditPulseVisible) {
+                    long rrResetNow = System.nanoTime();
+                    if (rrResetNow - lastRrEditResetNanos >= RR_EDIT_RESET_MIN_INTERVAL_NANOS) {
+                        lastRrEditResetNanos = rrResetNow;
+                        RtDlssRr.INSTANCE.requestReset();
+                    }
+                }
                 try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "DLSS-RR evaluate");
                      RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.dlssRr")) {
                     rrDone = RtDlssRr.INSTANCE.evaluate(cmd.address(), output, gDepth, gMotion, gAlbedo,
@@ -1869,6 +2029,16 @@ public final class RtComposite {
                 // previous frame's projection, so a zoom arrives as ordinary screen displacement
                 // that the reprojection follows and the geometry gate validates.
                 boolean svgfReset = !svgfHasHistory;
+                // World-edit responsiveness (see the window computation at the top of recordFrame):
+                // while the window is open, cap the accumulation so pixels the edit changed — its
+                // indirect-light footprint included, whose geometry (and therefore history) is
+                // rightly kept — reconverge in a handful of frames instead of over the full window.
+                // alpha never falls below 1/cap, so 5 frames means the edit is ~95% settled within
+                // ~15 frames; the variance-guided a-trous absorbs the briefly higher residual noise
+                // exactly as it does under motion, where histories are this short by default.
+                float svgfMaxFrames = worldEditResponse
+                        ? Math.min(SVGF_MAX_FRAMES, SVGF_EDIT_RESPONSE_MAX_FRAMES)
+                        : SVGF_MAX_FRAMES;
                 // How far the camera travelled ALONG THE VIEW AXIS since the previous frame. The
                 // reprojection gate uses it to predict what a static surface's previous view depth
                 // should have been; without it, walking forward changes every nearby surface's
@@ -1913,7 +2083,7 @@ public final class RtComposite {
                             historyOut.view, momentsOut.view, svgfFilterPing.view,
                             gMotion.view, gViewZ.view, gNormal.view,
                             svgfPrevViewZ.view, svgfPrevNormal.view, gAlbedo.view,
-                            svgfReset, SVGF_MAX_FRAMES, svgfCamForwardDelta);
+                            svgfReset, svgfMaxFrames, svgfCamForwardDelta);
                     VulkanCommandEncoder.memoryBarrier(cmd, stack); // reprojection visible to the wavelet
 
                     // À-trous cascade with doubling tap spacing. The first iteration's output is

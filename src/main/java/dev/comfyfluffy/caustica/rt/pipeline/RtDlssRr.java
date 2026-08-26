@@ -81,6 +81,20 @@ public final class RtDlssRr {
     }
 
     /**
+     * Ask the next {@link #evaluate} to discard RR's temporal history (pass the reset flag once).
+     *
+     * <p>Used for world edits observed under a STATIC camera: RR keeps its history internally and
+     * the zero-length motion vectors of a still view give it no signal that the WORLD (not the
+     * camera) changed, so a placed/broken block and its indirect-light footprint would fade in over
+     * the accumulation window. A reset is RR's designed invalid-history recovery — it re-converges
+     * within a couple of frames. The caller (RtComposite) rate-limits this so an edit's
+     * predict/publish pulse pair and sustained building coalesce into single resets.
+     */
+    public void requestReset() {
+        resetHistory = true;
+    }
+
+    /**
      * Record a DLSS-RR evaluation: denoise + upscale the noisy path-traced color (at render res) using
      * the guide buffers, writing the display-res result into {@code out}. {@code jitterX/jitterY} is the
      * sub-pixel camera jitter applied to the primary ray this frame, in render pixels. Returns false

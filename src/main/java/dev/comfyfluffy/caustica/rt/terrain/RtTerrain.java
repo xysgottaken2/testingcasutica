@@ -58,6 +58,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -176,6 +177,40 @@ public final class RtTerrain {
     // render-distance change, F3+A). Consumed in tick(), where the RT context is available.
     private volatile boolean fullClearRequested;
     private volatile boolean dirtyPending;
+    // Monotonic "the world's visible content just changed" serial for the temporal stages. Bumped when
+    // a block edit arrives (markBlocksDirty, any thread) and again when that edit's rebuilt geometry
+    // actually publishes (render thread). Motion vectors rightly invalidate SVGF/RR/SHaRC history under
+    // CAMERA movement, but a static camera produces zero-length MVs while the world changed underneath —
+    // without this pulse those stages blend the edit in over their full accumulation window, which is
+    // the "placed block fades in slowly until you walk" lag. RtComposite watches the serial and opens a
+    // short responsiveness window on every bump (see its WORLD_EDIT_RESPONSE_* constants). Atomic:
+    // block edits arrive on arbitrary threads and can race the render thread's publish bumps.
+    private final AtomicLong worldEditCounter = new AtomicLong();
+    // Union AABB of the edits behind recent counter bumps (world block coordinates), kept so the
+    // renderer can tell whether a pulse could actually be on screen before paying for a response —
+    // an off-screen farm of pistons pulses the serial continuously, and its pulses deserve no
+    // temporal-stage response at all. Replaced (not unioned) once older than EDIT_BOUNDS_UNION_NANOS
+    // so a long session cannot widen it to the whole world. Written under dirtyLock; the publish
+    // bumps carry no bounds, so a pulse whose union is stale is treated as "unknown, assume visible".
+    private static final long EDIT_BOUNDS_UNION_NANOS = 1_000_000_000L;
+    private volatile WorldEditBounds recentEditBounds;
+
+    /** Immutable world-space AABB of recent edits plus the time of the last edit that touched it. */
+    public record WorldEditBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
+                                  long observedNanos) {
+        private static WorldEditBounds unionOf(WorldEditBounds prior,
+                                               int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
+                                               long now) {
+            if (prior == null) {
+                return new WorldEditBounds(minX, minY, minZ, maxX, maxY, maxZ, now);
+            }
+            return new WorldEditBounds(
+                    Math.min(prior.minX, minX), Math.min(prior.minY, minY), Math.min(prior.minZ, minZ),
+                    Math.max(prior.maxX, maxX), Math.max(prior.maxY, maxY), Math.max(prior.maxZ, maxZ),
+                    now);
+        }
+    }
+
     private boolean noWorldClearApplied;
     // Rebase origin (player block at the last TLAS rebuild) for the instance transforms + ray camOffset.
     public int blockX;
@@ -379,8 +414,40 @@ public final class RtTerrain {
                 }
                 terrain.dirtyEvents.add(new DirtyEvent(groupId, keys));
                 terrain.dirtyPending = true;
+                // The temporal-stage signal (see worldEditCounter): the edit is observed NOW, the
+                // re-extracted geometry publishes a few frames later and bumps again there, which
+                // extends the responsiveness window through the moment the change becomes visible.
+                terrain.worldEditCounter.incrementAndGet();
+                long editNow = System.nanoTime();
+                WorldEditBounds currentBounds = terrain.recentEditBounds;
+                WorldEditBounds priorBounds = currentBounds != null
+                        && editNow - currentBounds.observedNanos() <= EDIT_BOUNDS_UNION_NANOS
+                        ? currentBounds : null;
+                terrain.recentEditBounds = WorldEditBounds.unionOf(priorBounds,
+                        minX, minY, minZ, maxX, maxY, maxZ, editNow);
             }
         }
+    }
+
+    /**
+     * Monotonic serial of world content changes observed by the renderer: every block edit bumps it
+     * (from any thread), and each publication of edit-rebuilt geometry bumps it again on the render
+     * thread. Temporal stages compare it across frames to detect "the world changed while the camera
+     * stood still" — the case motion vectors cannot express.
+     */
+    public static long worldEditCounter() {
+        return INSTANCE.worldEditCounter.get();
+    }
+
+    /**
+     * Union AABB of the edits behind recent {@link #worldEditCounter()} bumps, or {@code null} if
+     * none arrived yet. The renderer uses it (with generous padding) to decide whether a pulse
+     * could be on screen: off-screen machinery (a piston farm in loaded chunks pulses the serial
+     * continuously) must not cost any temporal-stage response, while a genuinely visible edit —
+     * including one whose indirect light spills in from just past a screen edge — must.
+     */
+    public static WorldEditBounds recentEditBounds() {
+        return INSTANCE.recentEditBounds;
     }
 
     /**
@@ -394,6 +461,10 @@ public final class RtTerrain {
         // A full terrain/rebase clears the world-space cache too: SHaRC cells are keyed on the
         // tracer's rebased coordinates, so a new rebase origin would otherwise read stale entries.
         RtSharc.INSTANCE.requestClear();
+        // Wholesale world change (dimension switch, F3+A, render-distance change): every visible
+        // surface's content changes at once. Pulse the temporal stages alongside the SHaRC clear so
+        // the first post-clear frames converge responsively instead of easing in.
+        INSTANCE.worldEditCounter.incrementAndGet();
         INSTANCE.fullClearRequested = true;
     }
 
@@ -1416,6 +1487,9 @@ public final class RtTerrain {
                     SectionGeom prev = resident.get(task.key);
                     if (prev != null) {
                         group.removed.add(prev);
+                        // An edit emptied a previously-geometric section: world content changed
+                        // (the worldEditCounter "publish" bump — see markBlocksDirty).
+                        worldEditCounter.incrementAndGet();
                     } else {
                         group.restoreEmptyKeys.add(task.key);
                     }
@@ -1433,6 +1507,10 @@ public final class RtTerrain {
                     SectionGeom prev = resident.remove(task.key);
                     if (prev != null) {
                         removed.add(prev);
+                        // Same as the group branch above: a re-extract that emptied the section is a
+                        // visible world edit landing right now (missing builds never have a resident
+                        // prev — enqueueing guards on residency), so pulse the temporal stages.
+                        worldEditCounter.incrementAndGet();
                     }
                     empty.add(task.key);
                     remaining--;
@@ -1612,6 +1690,14 @@ public final class RtTerrain {
                 continue;
             }
             SectionGeom prev = resident.get(ps.key());
+            if (prev != null) {
+                // In-place republication: only the dirty re-extract path publishes over a resident
+                // section (missing builds are never enqueued for resident keys), so this is an
+                // edited section's rebuilt geometry going live RIGHT NOW. Pulse the temporal stages
+                // (worldEditCounter) so their histories re-converge over a few frames instead of
+                // blending the edit in over the full accumulation window.
+                worldEditCounter.incrementAndGet();
+            }
             boolean sectionLightsChanged = !sameLightRecords(prev != null ? prev.lights : null, g.lights);
             lightsChanged |= sectionLightsChanged;
             if (prev != null && prev.slot >= 0) {
