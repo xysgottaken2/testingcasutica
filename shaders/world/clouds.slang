@@ -78,17 +78,19 @@ public static const uint CLOUD_STYLE_VOLUMETRIC = 1u;
 //     invisible in the result but would multiply the cost by the bounce count. It keeps the same
 //     extinction and phase, so the ENERGY stays right — only the detail is coarser.
 // Quality comes from the light march and the phase function rather than raw step count.
-public static const int   CLOUD_MARCH_STEPS = 24;
-public static const int   CLOUD_LIGHT_STEPS = 6;
-public static const int   CLOUD_MARCH_STEPS_CHEAP = 6;
-public static const int   CLOUD_LIGHT_STEPS_CHEAP = 2;
+public static const int   CLOUD_MARCH_STEPS = 32;
+public static const int   CLOUD_LIGHT_STEPS = 12;
+public static const int   CLOUD_MARCH_STEPS_CHEAP = 8;
+public static const int   CLOUD_LIGHT_STEPS_CHEAP = 4;
 // Upper bounds used when the step count is scaled to the path length (see cloudMarch). A fixed step
 // COUNT means a deeper slab silently gets coarser steps, which bands: cloud lobes are tens of blocks
 // wide, so a 60-block step walks straight past them. These cap the cost of that scaling.
-public static const int   CLOUD_MARCH_STEPS_MAX = 48;
-public static const int   CLOUD_MARCH_STEPS_CHEAP_MAX = 12;
-// Target distance between samples. Comfortably finer than a lobe, so the march resolves shape.
-public static const float CLOUD_TARGET_STEP_BLOCKS = 6.0;
+public static const int   CLOUD_MARCH_STEPS_MAX = 64;
+public static const int   CLOUD_MARCH_STEPS_CHEAP_MAX = 16;
+// Target distance between samples. Comfortably finer than a lobe, so the march resolves shape; the
+// volumetric detail noise is sampled at 24-block cells, so 5-block steps resolve it without the
+// stepped, layered look a coarse stride produces.
+public static const float CLOUD_TARGET_STEP_BLOCKS = 5.0;
 public static const float CLOUD_EXTINCTION = 0.115; // per block, at density 1
 // Optical depth is normalised against this thickness, so making the deck taller adds VOLUME without
 // making it more opaque. Without it, tau = density * sigma * pathLength grows with the slab depth and
@@ -97,19 +99,18 @@ public static const float CLOUD_REFERENCE_THICKNESS = 40.0;
 // Longest in-slab path a single ray may integrate, in slab depths. Bounds the grazing/horizon case
 // (see cloudMarch); a few crossings already saturate a real cloud.
 public static const float CLOUD_MAX_SLAB_CROSSINGS = 3.5;
-// Octave divisors for the warp and the two billow layers. Each divisor is another space the periodic
-// hash is sampled in, so the anchor wrap (24576 blocks, see CLOUD_FIELD_PERIOD_BLOCKS in Java) must be
-// a whole hash period in every one of them simultaneously. cloudNoise has a 512-cell period at 12
-// blocks per cell, so its period at divisor D is 512 * 12 * D blocks; all of these are powers of two,
-// giving periods 12288 / 6144 / 1536 that each divide 24576 exactly. (The old volumetric model had a
-// CLOUD_VOLUMETRIC_SCALE lane for the same reason; the cellular model samples its lattices directly
-// and needs no scale lane at all — see the cellular-field note below.)
-public static const float CLOUD_WARP_DIV = 2.0;
-public static const float CLOUD_BILLOW_DIV_COARSE = 1.0;
-public static const float CLOUD_BILLOW_DIV_FINE = 0.25;
-// How much wider a cloud gets around its belly than at its base/crown. Turns a straight-sided extrusion
-// into a rounded, bulging mass — see the note in cloudVolumeDensity.
-public static const float CLOUD_BULGE = 0.30;
+// Octave divisor for the domain warp. Each divisor is another space the periodic hash is sampled in,
+// so the anchor wrap (24576 blocks, see CLOUD_FIELD_PERIOD_BLOCKS in Java) must be a whole hash period
+// in every one of them simultaneously. cloudNoise has a 512-cell period at 12 blocks per cell, so its
+// period at divisor D is 512 * 12 * D blocks; all of these are powers of two, giving periods 12288 /
+// 6144 / 1536 that each divide 24576 exactly. (The old volumetric model had a CLOUD_VOLUMETRIC_SCALE
+// lane for the same reason; the cellular model samples its lattices directly and needs no scale lane
+// at all — see the cellular-field note below. The 3D cauliflower detail inside cloudVolumeDensity
+// carries its own explicit wrap masks instead.)
+// How much wider a cloud gets around its belly than at its base/crown. Deliberately modest and
+// base-heavy (the belly peak sits in the lower-middle of each cloud) — a strong symmetric bulge is
+// what made clouds read as barrels. See the note in cloudVolumeDensity.
+public static const float CLOUD_BULGE = 0.22;
 public static const float CLOUD_HG_G = 0.72;        // forward-scattering anisotropy of cloud droplets
 public static const float CLOUD_HG_BACK = -0.28;    // weak backward lobe (see cloudPhase)
 public static const float CLOUD_POWDER_STRENGTH = 0.7; // dark-edge / multiple-scattering approximation
@@ -132,9 +133,10 @@ public static const float CLOUD_CLASSIC_EXTINCTION_SCALE = 6.0;
 // wide for a single cell, so big clouds are built from a few overlapping cells while single cells
 // span ~150-500 blocks. The old lattice (96-block cells, radius 0.55-1.25 cells) produced clouds
 // that shrank to a third of their nominal radius once thresholded — 34-80 blocks, small puffs
-// instead of clouds. This lattice uses 192-block cells, radii up to 2.4 cells and a flatter falloff
-// that holds ~60% of the radius, and couples radius to flatness (towers are narrow columns, sheets
-// are wide masses — real cumulus proportions).
+// instead of clouds. This lattice uses 192-block cells and a flatter falloff that holds ~60% of the
+// radius, and the footprint stays BROAD for every shape (see cloudLatticeCell) — no skinny barrels,
+// no pancakes — while the 3D cauliflower erosion breaks up the silhouette so nothing reads as a
+// smooth round blob.
 //
 // DEPTH IS REAL TOO. The volumetric slab is FIXED at 384 blocks deep (CLOUD_VOLUMETRIC_THICKNESS_BLOCKS
 // in RtComposite), so tower crowns reach ~375 blocks while flat sheets stay thin — the deck reads as
@@ -145,12 +147,15 @@ public static const float CLOUD_CLASSIC_EXTINCTION_SCALE = 6.0;
 // (CLOUD_FIELD_PERIOD_BLOCKS in RtComposite) — every cell wraps onto itself at the seam, so the
 // field is seamless by construction, with no scale factor to desync. All the detail scales below
 // are power-of-two divisors of this same period (see the per-function notes). The largest radius
-// (2.1 * 1.15 = 2.4 cells = 464 blocks) stays below the 480-block reach of a two-ring cell, so the
-// 3x3 neighbourhood below is exact.
+// is clamped to 2.4 cells = 460 blocks, below the ~480-block reach of the nearest two-ring cell,
+// so the 3x3 neighbourhood below is exact.
 public static const float CLOUD_LATTICE_BLOCKS = 192.0;
 public static const int   CLOUD_LATTICE_MASK = 127;        // 128 cells -> 24576 blocks
-public static const float CLOUD_LATTICE_RADIUS_MIN = 0.8;  // narrow tower footprint, in lattice cells
-public static const float CLOUD_LATTICE_RADIUS_MAX = 2.1;  // wide sheet footprint
+// Footprint radius, in lattice cells. Broad by design — see cloudLatticeCell. These are only the
+// hard clamp bounds; the upper one keeps the 3x3 neighbourhood exact (2.4 cells < the 2.5-cell
+// reach of the nearest ring-2 cell).
+public static const float CLOUD_LATTICE_RADIUS_MIN = 0.9;
+public static const float CLOUD_LATTICE_RADIUS_MAX = 2.4;
 // Presence is squared (hash^2) before use: uniform hash would leave ~half the sky covered by
 // overlapping big clouds at the default slider — the real sky has large clouds with BLUE SKY between
 // them. Squaring skews cells toward low presence (gaps) with a few strong ones (the big clouds),
@@ -175,8 +180,8 @@ public static const int   CLOUD_CIRRUS_MASK = 63;          // 64 cells -> 24576 
 public static const float CLOUD_CIRRUS_RADIUS_MIN = 1.1;   // veil systems are WIDE — kilometres
 public static const float CLOUD_CIRRUS_RADIUS_MAX = 1.6;
 public static const float CLOUD_CIRRUS_GAP_BLOCKS = 96.0;  // gap above the cumulus slab top
-public static const float CLOUD_CIRRUS_SLAB_THICKNESS = 48.0;
-// Cirrus extinction is well below cumulus (0.115 * 40/48 reference): at full coverage and an average
+public static const float CLOUD_CIRRUS_SLAB_THICKNESS = 64.0;
+// Cirrus extinction is well below cumulus (0.115 * 40/64 reference): at full coverage and an average
 // band the integrated optical depth comes out ~0.3, so the densest veil still lets ~75% of the light
 // through — nearly transparent, exactly what makes it a veil rather than a second cloud deck.
 public static const float CLOUD_CIRRUS_EXTINCTION_SCALE = 0.55;
@@ -256,6 +261,44 @@ float cloudNoise(float2 p) {
     float c = cloudHash(i + int2(0, 1));
     float d = cloudHash(i + int2(1, 1));
     return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+// 3D hash for the volumetric detail noise. `wrapMask` keeps the X and Z axes periodic at the caller's
+// chosen scale (a power-of-two cell count over the 24576-block wrap — the same trick cloudHash uses);
+// Y needs no wrap: the density is only ever sampled inside the finite slab, so it never crosses a
+// period. Mixing the three axes with distinct primes keeps the lobes isotropic.
+uint cloudHash3(int3 p, int2 wrapMask) {
+    uint3 c = uint3(uint(p.x & wrapMask.x), uint(p.y & wrapMask.y), uint(p.z));
+    uint h = c.x * 374761393u + c.y * 668265263u + c.z * 1442695040u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return h;
+}
+
+/**
+ * 3D value noise, smoothstep-interpolated (8 hashes per sample). This is what gives clouds their
+ * CAULIFLOWER: a 2D noise can roughen the footprint but leaves the vertical profile smooth, so clouds
+ * read as round blobs with flat, layered tops; 3D lobes carve lumpy crowns, ragged bases and
+ * irregular silhouettes the way real cumulus looks (and the way UE5's Perlin-Worley base + detail
+ * erosion does it).
+ */
+float cloudNoise3D(float3 p, int2 wrapMask) {
+    int3 i = int3(floor(p));
+    float3 f = frac(p);
+    float3 u = f * f * (3.0 - 2.0 * f);
+    float h000 = cloudHash3(i, wrapMask);
+    float h100 = cloudHash3(i + int3(1, 0, 0), wrapMask);
+    float h010 = cloudHash3(i + int3(0, 1, 0), wrapMask);
+    float h110 = cloudHash3(i + int3(1, 1, 0), wrapMask);
+    float h001 = cloudHash3(i + int3(0, 0, 1), wrapMask);
+    float h101 = cloudHash3(i + int3(1, 0, 1), wrapMask);
+    float h011 = cloudHash3(i + int3(0, 1, 1), wrapMask);
+    float h111 = cloudHash3(i + int3(1, 1, 1), wrapMask);
+    float x00 = lerp(h000, h100, u.x);
+    float x10 = lerp(h010, h110, u.x);
+    float x01 = lerp(h001, h101, u.x);
+    float x11 = lerp(h011, h111, u.x);
+    return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
 }
 
 /**
@@ -728,24 +771,27 @@ CloudCell cloudLatticeCell(int2 cell) {
     // way to get that skew and it keeps the field exactly periodic.
     float p = float(h0 & 0xffu) * (1.0 / 255.0);
     c.presence = p * p;
-    // Footprint couples to flatness so proportions stay real: a tower (flatness 0) is a narrow
-    // column, a sheet (flatness 1) a wide mass. The extra hash slice varies it on top. Flatness
-    // itself is skewed toward towers (pow > 1 pushes the hash down): a real sky has more round
-    // puffs and towering cumulus than pancake sheets, and the vertical extent below scales with it.
-    float flatN = float((h0 >> 16u) & 0xffu) * (1.0 / 255.0);
-    float radN = float((h0 >> 8u) & 0xffu) * (1.0 / 255.0);
-    c.flatness = pow(flatN, 1.4);
-    c.radius = lerp(CLOUD_LATTICE_RADIUS_MIN, CLOUD_LATTICE_RADIUS_MAX, c.flatness)
-            * lerp(0.75, 1.15, radN);
     // The vertical extent couples to flatness: towers span almost the whole slab (low base, high
     // crown — real congestus is taller than it is wide), while flat sheets hug a thin band high in
     // the slab (real stratocumulus). The tower crown can reach 100% of the 384-block slab, so the
-    // tallest towers are ~375 blocks; sheets stay ~30-100. `top` is always above `bottom` (the
-    // density function clamps a minimum gap anyway).
+    // tallest towers are ~375 blocks; sheets stay ~30-100. A mild skew (pow 1.2) keeps the sky
+    // mostly round puffs and broad towers with a few flat sheets.
+    float flatN = float((h0 >> 16u) & 0xffu) * (1.0 / 255.0);
+    float radN = float((h0 >> 8u) & 0xffu) * (1.0 / 255.0);
+    c.flatness = pow(flatN, 1.2);
     float topN = float(h1 & 0xffu) * (1.0 / 255.0);
     float botN = float((h1 >> 8u) & 0xffu) * (1.0 / 255.0);
     c.top = lerp(lerp(0.55, 1.00, topN), lerp(0.40, 0.52, topN), c.flatness);
     c.bottom = lerp(lerp(0.02, 0.22, botN), lerp(0.24, 0.34, botN), c.flatness);
+    // Footprint: BROAD regardless of height, with the floor set high enough that even the tallest
+    // tower is a wide column, never a thin barrel (real congestus is roughly as wide as it is tall,
+    // and the coverage ramp only keeps ~60% of the nominal radius). Sheets spread wider via the
+    // flatness factor, exactly how stratocumulus spreads out. Coupling the radius to the vertical
+    // span was tried and shrank the clouds back into small puffs — the barrel look was actually the
+    // SMOOTH SILHOUETTE (symmetric bulge, smooth crown), which the 3D erosion and the base-heavy
+    // bulge below fix instead. Clamped to keep the 3x3 neighbourhood exact (max 2.4 cells).
+    c.radius = clamp(lerp(1.2, 2.1, c.flatness) * lerp(0.95, 1.15, radN),
+                     CLOUD_LATTICE_RADIUS_MIN, CLOUD_LATTICE_RADIUS_MAX);
     c.density = lerp(0.65, 1.30, float((h1 >> 16u) & 0xffu) * (1.0 / 255.0));
     c.billow = lerp(0.35, 1.25, float((h1 >> 24u) & 0xffu) * (1.0 / 255.0));
     return c;
@@ -785,9 +831,9 @@ CloudCellSample cloudLatticeSample(float2 samplePos) {
     s.density = 0.0;
     s.billow = 0.0;
     float totalW = 0.0;
-    // 3x3 neighbourhood, exact: the largest reachable radius is 2.1 * 1.15 = 2.415 cells = 464 blocks,
-    // which is less than the ~480-block reach of the nearest ring-2 cell centre (2.5 cells away), so
-    // no cell outside the 3x3 ring can ever contribute.
+    // 3x3 neighbourhood, exact: the radius is clamped to 2.4 cells = 460 blocks, which is less than
+    // the ~480-block reach of the nearest ring-2 cell centre (2.5 cells away), so no cell outside the
+    // 3x3 ring can ever contribute.
     for (int dz = -1; dz <= 1; dz++) {
         for (int dx = -1; dx <= 1; dx++) {
             int2 cell = base + int2(dx, dz);
@@ -822,12 +868,12 @@ CloudCellSample cloudLatticeSample(float2 samplePos) {
  * weather-merged coverage.
  *
  * The threshold maps the coverage SLIDER onto the blob scale. The blob is the presence-weighted sum
- * of the surrounding metaballs: in a fully merged cell it reaches ~1.5-2.5 (several strong cells
- * overlapping), and an isolated strong cell reaches ~1. With the naive threshold (1 - merged) the
- * slider would need to pass 1.5 before a cloud even appeared — the deck would be sky until "70%",
- * then flood. Instead the threshold goes DOWN with coverage, exactly like the old noise ramp, and
- * the edge softness sits in the range where the blob spends most of its time, so 0 stays empty, 1 is
- * a full sky, and the middle behaves the way the old volumetric style's coverage slider did.
+ * of the surrounding metaballs: in a fully merged cell it reaches ~2-3.5 (several strong cells
+ * overlapping), and an isolated strong cell reaches ~1-1.5. With the naive threshold (1 - merged)
+ * the slider would need to pass 1.5 before a cloud even appeared — the deck would be sky until
+ * "70%", then flood. Instead the threshold goes DOWN with coverage, exactly like the old noise ramp:
+ * lerp(2.2, 0.45, merged) is calibrated (via simulation of the lattice field) so 0 stays empty,
+ * the default 0.55 gives scattered big cumulus with plenty of blue sky, and 1.0 is a near-overcast.
  */
 float cloudCoverageVolumetric(WorldPush push, float2 samplePos) {
     float retain = clamp(push.clouds.x, 0.0, 1.0);
@@ -844,7 +890,7 @@ float cloudCoverageVolumetric(WorldPush push, float2 samplePos) {
     if (blob <= 0.0) {
         return 0.0;
     }
-    float threshold = lerp(1.6, 0.35, merged);
+    float threshold = lerp(2.2, 0.45, merged);
     return smoothstep(threshold, threshold + CLOUD_CELL_EDGE_SOFTNESS, blob);
 }
 
@@ -898,7 +944,7 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     float merged = retain + (1.0 - retain) * fill;
     // Same slider-to-blob mapping as cloudCoverageVolumetric — the density and the coverage/shadow
     // answer must agree about where cloud is (see that function's note on the threshold).
-    float threshold = lerp(1.6, 0.35, merged);
+    float threshold = lerp(2.2, 0.45, merged);
     float coverage = merged >= 1.0 ? 1.0
             : smoothstep(threshold, threshold + CLOUD_CELL_EDGE_SOFTNESS, s.blob);
     if (coverage <= 0.0) {
@@ -925,10 +971,10 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
         return 0.0;
     }
 
-    // BULGE around each cloud's OWN middle (local height fraction), so a tower widens in its belly
-    // and a sheet thickens in its band: widest in the middle, narrower toward base and crown.
-    float belly = 1.0 - abs(hfLocal - 0.5) * 2.0;
-    coverage = clamp(coverage + smoothstep(0.0, 1.0, max(belly, 0.0)) * CLOUD_BULGE - CLOUD_BULGE * 0.35,
+    // Gentle base-heavy bulge: widest in the LOWER-middle, like real cumulus. The old symmetric
+    // mid-height bulge made every cloud a barrel — widest at exactly half height with smooth sides.
+    float belly = 1.0 - abs(hfLocal - 0.38) * 1.6;
+    coverage = clamp(coverage + smoothstep(0.0, 1.0, max(belly, 0.0)) * CLOUD_BULGE - CLOUD_BULGE * 0.30,
                      0.0, 1.0);
     if (coverage <= 0.0) {
         return 0.0;
@@ -942,23 +988,26 @@ float cloudVolumeDensity(WorldPush push, float3 posRel, float heightFrac) {
     float2 warp = float2(cloudNoise(warpUv), cloudNoise(warpUv + float2(41.0, 17.0))) - 0.5;
     float2 warped = samplePos + warp * CLOUD_LATTICE_BLOCKS * (0.30 + 0.60 * hfLocalClamped);
 
-    // Billow detail: inverted noise (1 - |2n-1|) gives rounded cellular lobes rather than a cloudy blur,
-    // which is what reads as cauliflower. Scales chosen so the lobes are a fraction of a cloud's width,
-    // not a fraction of a cell — small lobes on a big cloud is exactly the cumulus look. The coarsest
-    // lobe is 1 noise cell per 12 blocks at 1/1 (period 6144) and the finest at 1/0.25 (period 1536),
-    // both divisors of the 24576 wrap.
-    float d1 = cloudNoise(warped / (CLOUD_CELL_BLOCKS * CLOUD_BILLOW_DIV_COARSE));
-    float d2 = cloudNoise(warped / (CLOUD_CELL_BLOCKS * CLOUD_BILLOW_DIV_FINE) + float2(19.0, 7.0));
-    float billow = (1.0 - abs(d1 * 2.0 - 1.0)) * 0.7 + (1.0 - abs(d2 * 2.0 - 1.0)) * 0.3;
+    // 3D CAULIFLOWER — the change that kills the "round blob" look. The old detail was 2D: it
+    // roughened the footprint but left the vertical profile smooth, which is why clouds read as
+    // round blobs with flat, layered tops (and, seen from the side, as horizontal slabs). Two
+    // octaves of 3D lobes (96 and 24 blocks) carve lumpy crowns, ragged bases and irregular
+    // silhouettes the way UE5's Perlin-Worley base + detail erosion does, while the dense core
+    // stays intact. The x/z masks make each octave exactly periodic over the 24576-block wrap
+    // (24576/96 = 256 cells and 24576/24 = 1024 cells, both powers of two); y needs no wrap —
+    // density is only sampled inside the finite slab.
+    float3 dUv = float3(warped.x, posRel.y, warped.y);
+    float lobes1 = 1.0 - abs(cloudNoise3D(dUv / 96.0 + float3(11.0, 0.0, 17.0), int2(255, 255)) * 2.0 - 1.0);
+    float lobes2 = 1.0 - abs(cloudNoise3D(dUv / 24.0 + float3(5.0, 0.0, 29.0), int2(1023, 1023)) * 2.0 - 1.0);
+    float detail = lobes1 * 0.45 + lobes2 * 0.55;
 
-    // Erosion concentrated at the extremes (crown lobes, frayed base), scaled by the cell's own
-    // billow so some clouds are crisp cauliflower and others are smooth mounds, and damped for flat
-    // sheets which read as calm layers rather than churned towers. The middle stays solid: uniform
-    // erosion is what makes procedural clouds look like fog.
+    // Erode hardest at the silhouette (footprint edge and top/bottom extremes), least in the core:
+    // the shape becomes irregular without the cloud dissolving into fog. The cell's own billow
+    // decides how churned it is; flat sheets stay calm (damped by flatness).
     float edge = 1.0 - coverage;
     float extremes = smoothstep(0.55, 1.0, hfLocalClamped) * 0.85
             + smoothstep(0.15, 0.0, hfLocalClamped) * 0.5;
-    float erosion = billow * (edge * 0.55 + extremes * 0.45) * s.billow;
+    float erosion = detail * (0.30 + 0.70 * (edge * 0.60 + extremes * 0.40)) * s.billow;
     erosion *= lerp(1.0, 0.55, clamp(s.flatness, 0.0, 1.0));
 
     // Dense core: cumulus interiors are optically thick, and a field that peaks at ~0.5 can never look
@@ -1040,9 +1089,11 @@ CloudCirrusSample cloudCirrusSample(float2 samplePos) {
  *
  * Coverage is the cirrus blob thresholded against the weather-merged coverage, gated by a large-scale
  * VEIL field that organises the layer into systems (clear sky between them) instead of a uniform
- * haze. The vertical profile is a thin band around the slab's middle, and wispy streak noise (long
- * along the wind axis x, short across z — both periods divide 24576) erodes it into cirrostratus
- * texture. Density stays well below cumulus: this is the nearly transparent high layer.
+ * haze. The vertical profile is a thin band that UNDULATES (real cirrus is not a flat ribbon), and
+ * fibrous filaments — 3D noise stretched long along the wind axis x, short across z and thin
+ * through the band — carry nearly all of the visible density, so the veil reads as drifting wisps
+ * rather than a grey sheet. Density stays well below cumulus: this is the nearly transparent high
+ * layer.
  */
 float cloudCirrusDensity(WorldPush push, float2 samplePos, float heightFrac) {
     float retain = clamp(push.clouds.x, 0.0, 1.0);
@@ -1062,26 +1113,37 @@ float cloudCirrusDensity(WorldPush push, float2 samplePos, float heightFrac) {
     veil = smoothstep(0.30, 0.78, veil);
     float threshold = 1.0 - merged * 0.85;
     float coverage = smoothstep(threshold, threshold + 0.55, min(s.blob, 1.0));
-    coverage *= lerp(0.15, 1.0, veil);
+    coverage *= lerp(0.10, 1.0, veil);
     if (coverage <= 0.0) {
         return 0.0;
     }
 
-    // Thin vertical band around the slab's middle; per-cell width so some veils are wispier.
+    // Thin band that undulates: the centre wobbles with a wide noise so the veil is never a flat
+    // horizontal ribbon. Per-cell width keeps some veils wispier than others.
     float band = clamp(s.band, 0.08, 0.45);
-    float profile = smoothstep(0.5 - band, 0.5 - band * 0.55, heightFrac)
-            * (1.0 - smoothstep(0.5 + band * 0.55, 0.5 + band, heightFrac));
+    float wobble = cloudNoise(samplePos / (CLOUD_CELL_BLOCKS * 8.0) + float2(7.0, 3.0));
+    float centre = 0.5 + (wobble - 0.5) * 0.6;
+    float profile = smoothstep(centre - band, centre - band * 0.5, heightFrac)
+            * (1.0 - smoothstep(centre + band * 0.5, centre + band, heightFrac));
     if (profile <= 0.0) {
         return 0.0;
     }
 
-    // Wispy detail: horizontal streaks (long along x, short along z) erode the sheet. The x period is
-    // 512 * 48 = 24576 blocks and the z period 512 * 6 = 3072, so the veil stays seamless at the wrap.
-    float streak = cloudNoise(float2(samplePos.x / (CLOUD_CELL_BLOCKS * 4.0),
-                                     samplePos.y / (CLOUD_CELL_BLOCKS * 0.5)));
-    float wisp = 1.0 - abs(streak * 2.0 - 1.0);
-    float erosion = wisp * (0.30 + 0.50 * (1.0 - coverage)) * s.wisp;
-    float density = coverage * s.density - erosion;
+    // Fibrous filaments, the visible structure of the veil: 3D lobes stretched long along the wind
+    // axis (x sampled at low frequency), short across z, and thin through the band (y at high
+    // frequency, clamped to [0,1]). The x/z scales are 3*2^k so the mask wraps at the 24576 period:
+    // /48 -> 512 cells (mask 511), /12 -> 2048 cells (mask 2047); the second octave /96 (mask 255)
+    // and /24 (mask 1023) adds fine wisps. Sharpened (pow) so the veil is distinct filaments on
+    // faint haze, not a uniform grey sheet.
+    float fil1 = cloudNoise3D(float3(samplePos.x / 48.0, heightFrac * 6.0, samplePos.y / 12.0),
+                              int2(511, 2047));
+    float fil2 = cloudNoise3D(float3(samplePos.x / 96.0 + 31.0, heightFrac * 3.0 + 5.0,
+                                     samplePos.y / 24.0 + 7.0), int2(255, 1023));
+    float filaments = (1.0 - abs(fil1 * 2.0 - 1.0)) * 0.65
+            + (1.0 - abs(fil2 * 2.0 - 1.0)) * 0.35;
+    filaments = pow(max(filaments, 0.0), 1.4);
+
+    float density = coverage * s.density * lerp(0.10, 1.0, filaments);
     return clamp(density, 0.0, 1.0) * profile;
 }
 
@@ -1170,9 +1232,11 @@ CloudVolume cloudMarchCirrus(WorldPush push, float3 originRel, float3 dir, float
         }
         float extinction = density * sigma * stepLen;
         float sampleTransmittance = exp(-extinction);
-        // Sun glow through the veil plus a strong sky-ambient term: cirrostratus is lit haze.
-        float3 inScatter = CLOUD_ALBEDO * (sunRadiance * phase * 3.0 * cloudPowder(density)
-                                           + skyBehind * 0.55);
+        // Sun glow through the veil plus a strong sky-ambient term: cirrostratus is lit haze, and its
+        // ice crystals scatter strongly forward, so the veil brightens into a halo around the sun
+        // (the phase is boosted relative to cumulus) while staying faint elsewhere.
+        float3 inScatter = CLOUD_ALBEDO * (sunRadiance * phase * 4.5 * cloudPowder(density)
+                                           + skyBehind * 0.7);
         result.scatter += result.transmittance * inScatter * (1.0 - sampleTransmittance);
         result.transmittance *= sampleTransmittance;
         if (result.transmittance < 0.01) {
