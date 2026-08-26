@@ -415,9 +415,14 @@ public final class RtComposite {
     // cloudState): the deck is now a system of individual clouds with per-cell heights plus a
     // cirrostratus layer above, and both are authored against a known slab. A player-sized slab
     // would clip tower crowns, an oversized one would shove the cirrus gap out of the pushed view,
-    // and the two would interact in ways the classic boxes never did. 100 blocks comfortably spans
-    // tiny puffs to tall towers; cirrus floats CLOUD_CIRRUS_GAP_BLOCKS above this slab's top.
-    private static final float CLOUD_VOLUMETRIC_THICKNESS_BLOCKS = 100.0f;
+    // and the two would interact in ways the classic boxes never did. 384 blocks makes the depth
+    // REAL: real fair-weather cumulus is roughly as tall as it is wide, and congestus taller than
+    // wide — at 1 block = 1 m that is hundreds of blocks of height, so a 100-block slab read as
+    // flat pancakes and even 256 left the median cloud at ~85 blocks. With 384 the per-cell
+    // fractions (towers span almost the whole slab) put the median cloud at ~170 blocks, the
+    // tower tail at 250-375, and the deck reads as deep, heaped cumulus. Cirrus floats
+    // CLOUD_CIRRUS_GAP_BLOCKS above this slab's top.
+    private static final float CLOUD_VOLUMETRIC_THICKNESS_BLOCKS = 384.0f;
     // Vanilla offsets the deck half a cell minus a sliver in Z (CloudRenderer.render: cameraZ + 3.96),
     // so the camera sits asymmetrically inside the cell grid. Matched for shape-parity with vanilla;
     // the x offset is the wind scroll itself.

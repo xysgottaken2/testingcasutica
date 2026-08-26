@@ -126,15 +126,20 @@ public static const float CLOUD_CLASSIC_EXTINCTION_SCALE = 6.0;
 // Density is the smooth sum of the surrounding cells' metaballs, so clouds merge into banks where
 // cells overlap and stay distinct where they do not, and the presence hash leaves gaps of open sky.
 //
-// SIZES ARE REAL. A real cumulus is roughly a kilometre across (Stull: fair-weather cumulus ~1 km,
-// congestus much taller than wide, cloud diameters lognormally distributed with a long tail of
-// giants). At 1 block = 1 metre a 1 km cloud is 1000 blocks — too wide for a single cell, so big
-// clouds are built from a few overlapping cells while single cells span ~150-500 blocks. The old
-// lattice (96-block cells, radius 0.55-1.25 cells) produced clouds that shrank to a third of their
-// nominal radius once thresholded — 34-80 blocks, small puffs instead of clouds. This lattice uses
-// 192-block cells, radii up to 2.4 cells and a flatter falloff that holds ~60% of the radius, and
-// couples radius to flatness (towers are narrow columns, sheets are wide masses — real cumulus
-// proportions).
+// SIZES ARE REAL. A real cumulus is roughly a kilometre across AND about as tall as it is wide
+// (Stull: fair-weather cumulus ~1 km, congestus much taller than wide, cloud diameters lognormally
+// distributed with a long tail of giants). At 1 block = 1 metre a 1 km cloud is 1000 blocks — too
+// wide for a single cell, so big clouds are built from a few overlapping cells while single cells
+// span ~150-500 blocks. The old lattice (96-block cells, radius 0.55-1.25 cells) produced clouds
+// that shrank to a third of their nominal radius once thresholded — 34-80 blocks, small puffs
+// instead of clouds. This lattice uses 192-block cells, radii up to 2.4 cells and a flatter falloff
+// that holds ~60% of the radius, and couples radius to flatness (towers are narrow columns, sheets
+// are wide masses — real cumulus proportions).
+//
+// DEPTH IS REAL TOO. The volumetric slab is FIXED at 384 blocks deep (CLOUD_VOLUMETRIC_THICKNESS_BLOCKS
+// in RtComposite), so tower crowns reach ~375 blocks while flat sheets stay thin — the deck reads as
+// deep, heaped cumulus instead of a pancake layer. The per-cell top/bottom fractions below span that
+// whole depth, so height varies from thin bands (sheets) to near-full-slab towers.
 //
 // Periodicity: 128 cells * 192 blocks = 24576 blocks, exactly the anchor wrap
 // (CLOUD_FIELD_PERIOD_BLOCKS in RtComposite) — every cell wraps onto itself at the seam, so the
@@ -697,8 +702,8 @@ struct CloudCell {
     float presence; // how much cloud this cell owns (0..1); near-zero cells are the gaps of open sky
     float radius;   // footprint radius in lattice cells (see CLOUD_LATTICE_RADIUS_MIN/MAX)
     float flatness; // 0 = tall tower, 1 = wide flat sheet
-    float top;      // crown height as a fraction of the slab (0.36..0.99)
-    float bottom;   // base height as a fraction of the slab (0.05..0.40)
+    float top;      // crown height as a fraction of the slab (0.40..1.00)
+    float bottom;   // base height as a fraction of the slab (0.02..0.34)
     float density;  // optical density multiplier (0.65..1.30)
     float billow;   // how much cauliflower erosion the crown gets (0.35..1.25)
 };
@@ -724,19 +729,23 @@ CloudCell cloudLatticeCell(int2 cell) {
     float p = float(h0 & 0xffu) * (1.0 / 255.0);
     c.presence = p * p;
     // Footprint couples to flatness so proportions stay real: a tower (flatness 0) is a narrow
-    // column, a sheet (flatness 1) a wide mass. The extra hash slice varies it on top.
+    // column, a sheet (flatness 1) a wide mass. The extra hash slice varies it on top. Flatness
+    // itself is skewed toward towers (pow > 1 pushes the hash down): a real sky has more round
+    // puffs and towering cumulus than pancake sheets, and the vertical extent below scales with it.
     float flatN = float((h0 >> 16u) & 0xffu) * (1.0 / 255.0);
     float radN = float((h0 >> 8u) & 0xffu) * (1.0 / 255.0);
-    c.flatness = flatN;
-    c.radius = lerp(CLOUD_LATTICE_RADIUS_MIN, CLOUD_LATTICE_RADIUS_MAX, flatN)
+    c.flatness = pow(flatN, 1.4);
+    c.radius = lerp(CLOUD_LATTICE_RADIUS_MIN, CLOUD_LATTICE_RADIUS_MAX, c.flatness)
             * lerp(0.75, 1.15, radN);
     // The vertical extent couples to flatness: towers span almost the whole slab (low base, high
-    // crown), while flat sheets hug a thin band high in the slab. `top` is always above `bottom`
-    // (the density function clamps a minimum gap anyway).
+    // crown — real congestus is taller than it is wide), while flat sheets hug a thin band high in
+    // the slab (real stratocumulus). The tower crown can reach 100% of the 384-block slab, so the
+    // tallest towers are ~375 blocks; sheets stay ~30-100. `top` is always above `bottom` (the
+    // density function clamps a minimum gap anyway).
     float topN = float(h1 & 0xffu) * (1.0 / 255.0);
     float botN = float((h1 >> 8u) & 0xffu) * (1.0 / 255.0);
-    c.top = lerp(lerp(0.45, 0.99, topN), lerp(0.36, 0.48, topN), c.flatness);
-    c.bottom = lerp(lerp(0.05, 0.30, botN), lerp(0.28, 0.40, botN), c.flatness);
+    c.top = lerp(lerp(0.55, 1.00, topN), lerp(0.40, 0.52, topN), c.flatness);
+    c.bottom = lerp(lerp(0.02, 0.22, botN), lerp(0.24, 0.34, botN), c.flatness);
     c.density = lerp(0.65, 1.30, float((h1 >> 16u) & 0xffu) * (1.0 / 255.0));
     c.billow = lerp(0.35, 1.25, float((h1 >> 24u) & 0xffu) * (1.0 / 255.0));
     return c;
