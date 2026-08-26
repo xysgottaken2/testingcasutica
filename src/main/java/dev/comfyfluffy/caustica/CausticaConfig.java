@@ -923,8 +923,8 @@ public final class CausticaConfig {
                             5.0f, 1.0f, 10.0f);
 
             /**
-             * Bounds shared by independent RIS, legacy ReSTIR and ReSTCV. They deliberately enter before
-             * radiance reaches DLSS/SVGF history, so turning ReSTIR off cannot bring back isolated flashes.
+             * Bounds shared by independent RIS, legacy ReSTIR, ReSTCV and stochastic indirect emitter
+             * hits. They enter before DLSS/SVGF history, so turning ReSTIR off cannot restore flashes.
              */
             public static final FloatSetting RIS_MAX_WEIGHT =
                     clampedFloat("caustica.rt.ris.maxWeight", "lights.restir.max-weight", 16.0f, 1.0f, 64.0f);

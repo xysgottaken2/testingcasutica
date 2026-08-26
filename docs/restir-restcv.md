@@ -10,7 +10,7 @@ The dedicated **RT Lighting → ReSTIR / ReSTCV Settings...** screen exposes can
 
 ## Stability contract
 
-The maximum reservoir weight and final contribution-luminance bound apply to **all three modes** before direct-light radiance reaches DLSS/SVGF history. This is intentional: turning ReSTIR off must not restore the rare unbounded independent-RIS samples that appeared as static block-light flashes.
+The maximum reservoir weight and final contribution-luminance bound apply to **all three modes** before direct-light radiance reaches DLSS/SVGF history. The same luminance ceiling also covers roulette-amplified indirect paths that land directly on an emitter. This is intentional: turning ReSTIR off must not restore the rare unbounded independent-RIS or indirect-emission samples that appeared as static block-light flashes.
 
 Spatial ReSTIR uses a random disk pattern hashed per pixel, but the pattern no longer rotates with the frame index. A static scene therefore does not receive a permanently moving set of neighbour candidates. Temporal and spatial history still has to pass camera-relative position, normal, light-generation, age, and connection-Jacobian gates.
 

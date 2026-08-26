@@ -210,7 +210,7 @@
 	"caustica.options.restir.maxWeight": "Maximum RIS Weight",
 	"caustica.options.restir.maxWeight.tooltip": "Final reservoir-weight bound shared by independent RIS, legacy ReSTIR and ReSTCV. Lower values suppress flashes more aggressively but add bias.",
 	"caustica.options.restir.contributionLimit": "Contribution Luminance Limit",
-	"caustica.options.restir.contributionLimit.tooltip": "Per-reservoir luminance ceiling applied before radiance or denoiser history in every mode. This is the main static block-light flash guard.",
+	"caustica.options.restir.contributionLimit.tooltip": "Luminance ceiling applied to sampled block light and stochastic emitter hits before denoiser history in every mode. This is the main static-light flash guard.",
 	"caustica.options.restir.restcvStrength": "ReSTCV Strength",
 	"caustica.options.restir.restcvStrength.tooltip": "Weight of the transferred accumulated estimate relative to the current one-sample ReSTIR estimate. Zero makes ReSTCV match legacy output.",
 	"caustica.options.restir.restcvFallbackStrength": "Fresh-Winner Fallback",

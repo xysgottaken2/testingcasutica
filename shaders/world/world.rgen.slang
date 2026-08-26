@@ -538,7 +538,12 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         bool gateEmitter = risOn && payloadEmitterInList();
         if (emission > 0.0 && (!gateEmitter || showCelestial)) {
             float emissionScale = isDynamicEntityEarly ? worldPush.lightScales.y : worldPush.lightScales.x;
-            float3 emissive = throughput * albedo * emission * max(emissionScale, 0.0);
+            // The same pre-history ceiling also protects stochastic indirect paths that directly land
+            // on an emitter. Those paths exist with ReSTIR disabled and were the remaining way a rare
+            // roulette-amplified static block light could flash despite bounded independent RIS.
+            float3 emissive = restirBoundContribution(
+                    throughput * albedo * emission * max(emissionScale, 0.0),
+                    restirContributionLimit());
             L += emissive;
             // Emission has no lobe; REBLUR convention is to carry it in the diffuse signal (a
             // specular bucket would mislead the hit-distance-driven specular filter).

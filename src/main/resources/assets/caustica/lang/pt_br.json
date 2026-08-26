@@ -192,7 +192,7 @@
 	"caustica.options.restir.maxWeight": "Peso RIS máximo",
 	"caustica.options.restir.maxWeight.tooltip": "Limite final do peso compartilhado pelo RIS independente, ReSTIR clássico e ReSTCV. Valores menores eliminam flashes com mais força, mas adicionam viés.",
 	"caustica.options.restir.contributionLimit": "Limite de luminância da contribuição",
-	"caustica.options.restir.contributionLimit.tooltip": "Teto de luminância por reservatório aplicado antes da radiância ou do histórico do denoiser em todos os modos. É a principal proteção contra flashes de blocos estáticos.",
+	"caustica.options.restir.contributionLimit.tooltip": "Teto de luminância aplicado à luz amostrada de blocos e aos acertos estocásticos em emissores antes do histórico do denoiser em todos os modos. É a principal proteção contra flashes de luz estática.",
 	"caustica.options.restir.restcvStrength": "Força do ReSTCV",
 	"caustica.options.restir.restcvStrength.tooltip": "Peso da estimativa acumulada transferida em relação à estimativa ReSTIR atual. Zero faz o ReSTCV produzir a saída clássica.",
 	"caustica.options.restir.restcvFallbackStrength": "Fallback quando a amostra nova vence",

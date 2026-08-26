@@ -90,7 +90,9 @@ final class RtRestcvShaderRegressionTest {
 
         assertTrue(raygen.contains("shadeRestirReservoir(r")
                 && raygen.contains("restirMatchSplitToResolved(transportedEstimate")
-                && raygen.contains("throughput * reservoirEstimate, restirContributionLimit()"));
+                && raygen.contains("throughput * reservoirEstimate, restirContributionLimit()")
+                && raygen.contains("float3 emissive = restirBoundContribution(\n"
+                        + "                    throughput * albedo * emission"));
         assertTrue(screen.contains("RtVideoOptions.restirSettingsButton(this)"));
     }
 
