@@ -9,6 +9,7 @@ import dev.comfyfluffy.caustica.CausticaConfig.StringSetting;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import dev.comfyfluffy.caustica.client.gui.RtRestirOptionsScreen;
 import dev.comfyfluffy.caustica.client.gui.RtSharcOptionsScreen;
 import dev.comfyfluffy.caustica.compat.DistantHorizonsCompat;
 import dev.comfyfluffy.caustica.compat.VoxyCompat;
@@ -198,7 +199,59 @@ public final class RtVideoOptions {
             heldItemLight(),
             blockEmissiveIntensity(),
             dynamicIntensity(),
-            restirSampling(),
+        };
+    }
+
+    // ===== ReSTIR / ReSTCV dedicated sub-screen groups =====
+
+    public static OptionInstance<?>[] restirModeOptions() {
+        return new OptionInstance<?>[] {restirSampling(), restcvEnabled()};
+    }
+
+    public static OptionInstance<?>[] restirSamplingOptions() {
+        return new OptionInstance<?>[] {
+            risCandidates(),
+            restirFreshCandidates(),
+            restirMaxM(),
+        };
+    }
+
+    public static OptionInstance<?>[] restirReuseOptions() {
+        return new OptionInstance<?>[] {
+            restirTemporalReuse(),
+            restirTemporalMCap(),
+            restirSpatialReuse(),
+            restirSpatialSamples(),
+            restirSpatialRadius(),
+            restirSpatialMCap(),
+            restirMaxAge(),
+        };
+    }
+
+    public static OptionInstance<?>[] restirValidationOptions() {
+        return new OptionInstance<?>[] {
+            restirTemporalPositionThreshold(),
+            restirTemporalNormalThreshold(),
+            restirSpatialPositionThreshold(),
+            restirSpatialNormalThreshold(),
+            restirJacobianMin(),
+            restirJacobianMax(),
+        };
+    }
+
+    public static OptionInstance<?>[] restirStabilityOptions() {
+        return new OptionInstance<?>[] {
+            risMaxWeight(),
+            risContributionLimit(),
+        };
+    }
+
+    public static OptionInstance<?>[] restcvOptions() {
+        return new OptionInstance<?>[] {
+            restcvStrength(),
+            restcvFallbackStrength(),
+            restcvMaxHistory(),
+            restcvHistoryClamp(),
         };
     }
 
@@ -308,7 +361,174 @@ public final class RtVideoOptions {
     }
 
     private static OptionInstance<Boolean> restirSampling() {
-        return bool("caustica.options.rt.restirSampling", CausticaConfig.Rt.Lights.RESTIR_SAMPLING);
+        return bool("caustica.options.restir.enabled", CausticaConfig.Rt.Lights.RESTIR_SAMPLING);
+    }
+
+    private static OptionInstance<Boolean> restcvEnabled() {
+        return bool("caustica.options.restir.restcv", CausticaConfig.Rt.Lights.RESTCV_ENABLED);
+    }
+
+    private static OptionInstance<Integer> risCandidates() {
+        IntSetting setting = CausticaConfig.Rt.Lights.RIS_CANDIDATES;
+        return new OptionInstance<>(
+            "caustica.options.restir.risCandidates",
+            OptionInstance.cachedConstantTooltip(Component.translatable(
+                    "caustica.options.restir.risCandidates.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, value == 0
+                    ? Component.translatable("options.off") : Component.literal(value + " samples")),
+            new OptionInstance.IntRange(0, 32),
+            Math.clamp(setting.value(), 0, 32),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> restirFreshCandidates() {
+        return integerSetting("caustica.options.restir.freshCandidates",
+                CausticaConfig.Rt.Lights.RESTIR_FRESH_CANDIDATES, 1, 16, " samples");
+    }
+
+    private static OptionInstance<Integer> restirMaxM() {
+        return integerSetting("caustica.options.restir.maxM",
+                CausticaConfig.Rt.Lights.RESTIR_MAX_M, 1, 64, " samples");
+    }
+
+    private static OptionInstance<Boolean> restirTemporalReuse() {
+        return bool("caustica.options.restir.temporalReuse",
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_REUSE);
+    }
+
+    private static OptionInstance<Integer> restirTemporalMCap() {
+        return integerSetting("caustica.options.restir.temporalMCap",
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_M_CAP, 1, 16, " samples");
+    }
+
+    private static OptionInstance<Boolean> restirSpatialReuse() {
+        return bool("caustica.options.restir.spatialReuse",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_REUSE);
+    }
+
+    private static OptionInstance<Integer> restirSpatialSamples() {
+        return integerSetting("caustica.options.restir.spatialSamples",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_SAMPLES, 0, 8, " taps");
+    }
+
+    private static OptionInstance<Integer> restirSpatialRadius() {
+        return wholeFloatSetting("caustica.options.restir.spatialRadius",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_RADIUS, 1, 16, " px");
+    }
+
+    private static OptionInstance<Integer> restirSpatialMCap() {
+        return integerSetting("caustica.options.restir.spatialMCap",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_M_CAP, 1, 8, " samples/tap");
+    }
+
+    private static OptionInstance<Integer> restirMaxAge() {
+        return integerSetting("caustica.options.restir.maxAge",
+                CausticaConfig.Rt.Lights.RESTIR_MAX_AGE, 1, 120, " frames");
+    }
+
+    private static OptionInstance<Integer> restirTemporalPositionThreshold() {
+        return decimalFloatSetting("caustica.options.restir.temporalPositionThreshold",
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_POSITION_THRESHOLD, 1, 200, 100, " blocks");
+    }
+
+    private static OptionInstance<Integer> restirTemporalNormalThreshold() {
+        return boundedPercent("caustica.options.restir.temporalNormalThreshold",
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_NORMAL_THRESHOLD, 50, 100);
+    }
+
+    private static OptionInstance<Integer> restirSpatialPositionThreshold() {
+        return decimalFloatSetting("caustica.options.restir.spatialPositionThreshold",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_POSITION_THRESHOLD, 5, 400, 100, " blocks");
+    }
+
+    private static OptionInstance<Integer> restirSpatialNormalThreshold() {
+        return boundedPercent("caustica.options.restir.spatialNormalThreshold",
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NORMAL_THRESHOLD, 50, 100);
+    }
+
+    private static OptionInstance<Integer> restirJacobianMin() {
+        return boundedPercent("caustica.options.restir.jacobianMin",
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MIN, 1, 100);
+    }
+
+    private static OptionInstance<Integer> restirJacobianMax() {
+        return decimalFloatSetting("caustica.options.restir.jacobianMax",
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MAX, 10, 100, 10, "x");
+    }
+
+    private static OptionInstance<Integer> risMaxWeight() {
+        return wholeFloatSetting("caustica.options.restir.maxWeight",
+                CausticaConfig.Rt.Lights.RIS_MAX_WEIGHT, 1, 64, "x");
+    }
+
+    private static OptionInstance<Integer> risContributionLimit() {
+        return wholeFloatSetting("caustica.options.restir.contributionLimit",
+                CausticaConfig.Rt.Lights.RIS_CONTRIBUTION_LIMIT, 4, 128, " luminance");
+    }
+
+    private static OptionInstance<Integer> restcvStrength() {
+        return percent("caustica.options.restir.restcvStrength",
+                CausticaConfig.Rt.Lights.RESTCV_STRENGTH);
+    }
+
+    private static OptionInstance<Integer> restcvFallbackStrength() {
+        return percent("caustica.options.restir.restcvFallbackStrength",
+                CausticaConfig.Rt.Lights.RESTCV_FALLBACK_STRENGTH);
+    }
+
+    private static OptionInstance<Integer> restcvMaxHistory() {
+        return integerSetting("caustica.options.restir.restcvMaxHistory",
+                CausticaConfig.Rt.Lights.RESTCV_MAX_HISTORY, 1, 64, " frames");
+    }
+
+    private static OptionInstance<Integer> restcvHistoryClamp() {
+        return wholeFloatSetting("caustica.options.restir.restcvHistoryClamp",
+                CausticaConfig.Rt.Lights.RESTCV_HISTORY_CLAMP, 1, 16, "x");
+    }
+
+    private static OptionInstance<Integer> integerSetting(String captionKey, IntSetting setting,
+                                                           int min, int max, String suffix) {
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, Component.literal(value + suffix)),
+            new OptionInstance.IntRange(min, max),
+            Math.clamp(setting.value(), min, max),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> wholeFloatSetting(String captionKey, FloatSetting setting,
+                                                              int min, int max, String suffix) {
+        return decimalFloatSetting(captionKey, setting, min, max, 1, suffix);
+    }
+
+    private static OptionInstance<Integer> decimalFloatSetting(String captionKey, FloatSetting setting,
+                                                                int minSteps, int maxSteps,
+                                                                int stepsPerUnit, String suffix) {
+        int initial = Math.clamp(Math.round(setting.value() * stepsPerUnit), minSteps, maxSteps);
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, steps) -> {
+                String format = stepsPerUnit >= 100 ? "%.2f" : stepsPerUnit >= 10 ? "%.1f" : "%.0f";
+                String value = String.format(Locale.ROOT, format, steps / (double) stepsPerUnit);
+                return Options.genericValueLabel(caption, Component.literal(value + suffix));
+            },
+            new OptionInstance.IntRange(minSteps, maxSteps),
+            initial,
+            steps -> setting.set(steps / (float) stepsPerUnit));
+    }
+
+    private static OptionInstance<Integer> boundedPercent(String captionKey, FloatSetting setting,
+                                                           int min, int max) {
+        int initial = Math.clamp(Math.round(setting.value() * 100.0f), min, max);
+        return new OptionInstance<>(
+            captionKey,
+            OptionInstance.cachedConstantTooltip(Component.translatable(captionKey + ".tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, Component.literal(value + "%")),
+            new OptionInstance.IntRange(min, max),
+            initial,
+            value -> setting.set(value / 100.0f));
     }
 
     private static final List<String> TONEMAP_OPERATORS =
@@ -986,6 +1206,83 @@ public final class RtVideoOptions {
                 CausticaConfig.Rt.Omm.ENABLED.set(value);
                 RtTerrain.requestFullClear();
             });
+    }
+
+    // ===== ReSTIR / ReSTCV navigation =====
+
+    /** Opens the dedicated direct-light reservoir customization screen. */
+    public static Button restirSettingsButton(Screen parent) {
+        Button button = Button.builder(Component.translatable("caustica.options.restir.settingsButton"), clicked -> {
+            Minecraft minecraft = Minecraft.getInstance();
+            minecraft.gui.setScreen(new RtRestirOptionsScreen(parent, minecraft.options));
+        }).width(310).build();
+        button.setTooltip(Tooltip.create(
+                Component.translatable("caustica.options.restir.settingsButton.tooltip")));
+        return button;
+    }
+
+    /** Restores the complete estimator surface, including the independent-RIS stability bounds. */
+    public static Button restirResetButton(Runnable onReset) {
+        Button button = Button.builder(Component.translatable("caustica.options.restir.reset"), clicked -> {
+            resetRestirDefaults();
+            clicked.setMessage(Component.translatable("caustica.options.restir.reset.done"));
+            if (onReset != null) {
+                onReset.run();
+            }
+        }).width(310).build();
+        button.setTooltip(Tooltip.create(Component.translatable("caustica.options.restir.reset.tooltip")));
+        return button;
+    }
+
+    private static void resetRestirDefaults() {
+        CausticaConfig.Rt.Lights.RESTIR_SAMPLING.set(
+                CausticaConfig.Rt.Lights.RESTIR_SAMPLING.defaultValue());
+        CausticaConfig.Rt.Lights.RESTCV_ENABLED.set(
+                CausticaConfig.Rt.Lights.RESTCV_ENABLED.defaultValue());
+        CausticaConfig.Rt.Lights.RIS_CANDIDATES.set(
+                CausticaConfig.Rt.Lights.RIS_CANDIDATES.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_FRESH_CANDIDATES.set(
+                CausticaConfig.Rt.Lights.RESTIR_FRESH_CANDIDATES.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_MAX_M.set(
+                CausticaConfig.Rt.Lights.RESTIR_MAX_M.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_REUSE.set(
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_REUSE.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_M_CAP.set(
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_M_CAP.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_REUSE.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_REUSE.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_SAMPLES.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_SAMPLES.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_RADIUS.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_RADIUS.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_M_CAP.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_M_CAP.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.set(
+                CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_POSITION_THRESHOLD.set(
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_POSITION_THRESHOLD.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_NORMAL_THRESHOLD.set(
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_NORMAL_THRESHOLD.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_POSITION_THRESHOLD.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_POSITION_THRESHOLD.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NORMAL_THRESHOLD.set(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NORMAL_THRESHOLD.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MIN.set(
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MIN.defaultValue());
+        CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MAX.set(
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MAX.defaultValue());
+        CausticaConfig.Rt.Lights.RIS_MAX_WEIGHT.set(
+                CausticaConfig.Rt.Lights.RIS_MAX_WEIGHT.defaultValue());
+        CausticaConfig.Rt.Lights.RIS_CONTRIBUTION_LIMIT.set(
+                CausticaConfig.Rt.Lights.RIS_CONTRIBUTION_LIMIT.defaultValue());
+        CausticaConfig.Rt.Lights.RESTCV_STRENGTH.set(
+                CausticaConfig.Rt.Lights.RESTCV_STRENGTH.defaultValue());
+        CausticaConfig.Rt.Lights.RESTCV_FALLBACK_STRENGTH.set(
+                CausticaConfig.Rt.Lights.RESTCV_FALLBACK_STRENGTH.defaultValue());
+        CausticaConfig.Rt.Lights.RESTCV_MAX_HISTORY.set(
+                CausticaConfig.Rt.Lights.RESTCV_MAX_HISTORY.defaultValue());
+        CausticaConfig.Rt.Lights.RESTCV_HISTORY_CLAMP.set(
+                CausticaConfig.Rt.Lights.RESTCV_HISTORY_CLAMP.defaultValue());
     }
 
     // ===== Experimental SHaRC (Spatially Hashed Radiance Cache) =====

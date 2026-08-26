@@ -57,7 +57,7 @@ final class RtMaterialLayoutTest {
     }
 
     @Test
-    void reflectedRestirRecordStaysCompact() {
-        assertEquals(48, RestirReservoirData.BYTE_SIZE);
+    void reflectedRestirRecordStaysCacheAlignedWithCompactRestcvHistory() {
+        assertEquals(64, RestirReservoirData.BYTE_SIZE);
     }
 }

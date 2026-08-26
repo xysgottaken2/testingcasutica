@@ -137,6 +137,7 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
         // --- Lighting ---
         list.addHeader(LIGHTS_HEADER);
         list.addSmall(RtVideoOptions.lightOptions());
+        list.addBig(RtVideoOptions.restirSettingsButton(this));
 
         // --- Exposure + Tonemapping ---
         list.addHeader(EXPOSURE_HEADER);

@@ -31,6 +31,9 @@ changes while the renderer is being built.
   with adjustable thickness, opacity and cloud shadows, visible in reflections
 - Dedicated Nether and End skyboxes with per-dimension ambient fog
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
+- Configurable direct-light sampling with bounded independent RIS, legacy ReSTIR, and a compact ReSTCV
+  control-variate mode. Candidate budgets, temporal/spatial reuse, geometry gates, stability limits and
+  ReSTCV history controls are available from a dedicated RT settings sub-menu.
 - Experimental NVIDIA SHaRC-style world-space radiance cache (Spatially Hashed Radiance Cache) to
   shorten noisy multi-bounce path tails — every shaded vertex warms the cache and back-propagates its
   light to earlier bounces, while diffuse vertices past the start bounce reuse the cached outgoing
@@ -94,4 +97,4 @@ license terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - [ ] Multi-layer / cirrus clouds and cloud-shadow softening
 - [x] XeSS + FSR upscaling for non-NVIDIA GPUs
 - [ ] LOD
-- [ ] ReSTIR
+- [x] ReSTIR / ReSTCV direct-light reuse

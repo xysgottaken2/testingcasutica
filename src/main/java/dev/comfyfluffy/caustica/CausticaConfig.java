@@ -67,7 +67,18 @@ public final class CausticaConfig {
             Rt.Sharc.TEMPORAL_BLEND, Rt.Sharc.START_BOUNCE, Rt.Sharc.STRENGTH, Rt.Sharc.MAX_DISTANCE,
             Rt.Sharc.FRAME_LIFETIME, Rt.Sharc.NORMAL_THRESHOLD, Rt.Sharc.STABLE_FRAMES, Rt.Sharc.DEBUG,
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
-            Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
+            Rt.Lights.RESTIR_SAMPLING, Rt.Lights.RESTCV_ENABLED, Rt.Lights.RIS_CANDIDATES,
+            Rt.Lights.RESTIR_FRESH_CANDIDATES, Rt.Lights.RESTIR_MAX_M,
+            Rt.Lights.RESTIR_TEMPORAL_REUSE, Rt.Lights.RESTIR_TEMPORAL_M_CAP,
+            Rt.Lights.RESTIR_SPATIAL_REUSE, Rt.Lights.RESTIR_SPATIAL_SAMPLES,
+            Rt.Lights.RESTIR_SPATIAL_RADIUS, Rt.Lights.RESTIR_SPATIAL_M_CAP,
+            Rt.Lights.RESTIR_MAX_AGE, Rt.Lights.RESTIR_TEMPORAL_POSITION_THRESHOLD,
+            Rt.Lights.RESTIR_TEMPORAL_NORMAL_THRESHOLD, Rt.Lights.RESTIR_SPATIAL_POSITION_THRESHOLD,
+            Rt.Lights.RESTIR_SPATIAL_NORMAL_THRESHOLD, Rt.Lights.RESTIR_JACOBIAN_MIN,
+            Rt.Lights.RESTIR_JACOBIAN_MAX, Rt.Lights.RIS_MAX_WEIGHT,
+            Rt.Lights.RIS_CONTRIBUTION_LIMIT, Rt.Lights.RESTCV_STRENGTH,
+            Rt.Lights.RESTCV_FALLBACK_STRENGTH, Rt.Lights.RESTCV_MAX_HISTORY,
+            Rt.Lights.RESTCV_HISTORY_CLAMP, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
@@ -159,12 +170,16 @@ public final class CausticaConfig {
                         + " item casts (torch in hand lighting up a cave); each item casts its own colour.\n"
                         + " dynamic-intensity scales that held-item light and other dynamic emitters;\n"
                         + " block-emissive-intensity scales emissive blocks placed in the world, both their\n"
-                        + " direct-hit emission and sampled area-light contribution. The toggle, both intensity\n"
-                        + " sliders and ReSTIR sampling are exposed in the Video Settings screen. restir-sampling reuses\n"
-                        + " validated light reservoirs across frames and nearby pixels; off keeps the original\n"
-                        + " independent RIS estimator. ris-candidates = 0 disables emitter NEE entirely\n"
-                        + " (emitters just gather on direct hit). min-fill-ratio drops sparse emissive\n"
-                        + " footprints from the light buffer. stats/dump/dump-radius are debug logging.");
+                        + " direct-hit emission and sampled area-light contribution. restir-sampling reuses\n"
+                        + " validated light reservoirs across frames and nearby pixels; off keeps independent\n"
+                        + " RIS, which still uses the shared max-weight and contribution-limit firefly guards.\n"
+                        + " restir.restcv enables the control-variate estimator on top of ReSTIR; disabling only\n"
+                        + " that switch keeps legacy ReSTIR for comparison. The remaining restir.* values expose\n"
+                        + " candidate budgets, temporal/spatial reuse, geometry validation, Jacobian bounds,\n"
+                        + " history confidence and stability limits in the dedicated Video Settings submenu.\n"
+                        + " ris-candidates = 0 disables emitter NEE entirely (emitters just gather on direct hit).\n"
+                        + " min-fill-ratio drops sparse emissive footprints from the light buffer.\n"
+                        + " stats/dump/dump-radius are debug logging.");
         FILE.setComment("tonemap",
                 " Scene tonemapping after exposure and before writing the vanilla SDR target. operator selects\n"
                         + " the curve; exposure-ev is an extra post-exposure bias; gamma/saturation/contrast\n"
@@ -851,14 +866,85 @@ public final class CausticaConfig {
                     lightIntensity("caustica.rt.blockLightIntensity", "lights.block-emissive-intensity", 2.0f);
             /**
              * Reservoir-based spatio-temporal resampling for emitter NEE. When disabled, every shading
-             * vertex uses the original independent per-frame RIS reservoir and no history allocation is
-             * retained. The renderer notices live changes, idles before retiring/recreating the two Vulkan
-             * history buffers, and starts newly enabled history from zero.
+             * vertex uses an independent per-frame RIS reservoir and no history allocation is retained.
+             * The independent estimator still uses the shared weight/contribution bounds below: ReSTIR
+             * being off must not re-enable the rare unbounded block-light samples that used to flash.
              */
             public static final BooleanSetting RESTIR_SAMPLING =
                     bool("caustica.rt.restir", "lights.restir-sampling", true);
+            /** ReSTCV control-variate resolve on top of ReSTIR. False selects legacy ReSTIR. */
+            public static final BooleanSetting RESTCV_ENABLED =
+                    bool("caustica.rt.restir.restcv", "lights.restir.restcv", true);
+
+            /** Independent RIS candidates at every eligible shading vertex. Zero disables emitter NEE. */
             public static final IntSetting RIS_CANDIDATES =
-                    intAtLeast("caustica.rt.risCandidates", "lights.ris-candidates", 8, 0);
+                    clampedInt("caustica.rt.risCandidates", "lights.ris-candidates", 8, 0, 32);
+            /** Fresh candidates at the one screen-space reservoir owner. */
+            public static final IntSetting RESTIR_FRESH_CANDIDATES =
+                    clampedInt("caustica.rt.restir.freshCandidates", "lights.restir.fresh-candidates", 8, 1, 16);
+            /** Hard effective-sample cap after all temporal and spatial merges. */
+            public static final IntSetting RESTIR_MAX_M =
+                    clampedInt("caustica.rt.restir.maxM", "lights.restir.max-m", 24, 1, 64);
+
+            public static final BooleanSetting RESTIR_TEMPORAL_REUSE =
+                    bool("caustica.rt.restir.temporalReuse", "lights.restir.temporal-reuse", true);
+            public static final IntSetting RESTIR_TEMPORAL_M_CAP =
+                    clampedInt("caustica.rt.restir.temporalMCap", "lights.restir.temporal-m-cap", 4, 1, 16);
+            public static final BooleanSetting RESTIR_SPATIAL_REUSE =
+                    bool("caustica.rt.restir.spatialReuse", "lights.restir.spatial-reuse", true);
+            public static final IntSetting RESTIR_SPATIAL_SAMPLES =
+                    clampedInt("caustica.rt.restir.spatialSamples", "lights.restir.spatial-samples", 4, 0, 8);
+            public static final FloatSetting RESTIR_SPATIAL_RADIUS =
+                    clampedFloat("caustica.rt.restir.spatialRadius", "lights.restir.spatial-radius", 8.0f,
+                            1.0f, 16.0f);
+            public static final IntSetting RESTIR_SPATIAL_M_CAP =
+                    clampedInt("caustica.rt.restir.spatialMCap", "lights.restir.spatial-m-cap", 2, 1, 8);
+            public static final IntSetting RESTIR_MAX_AGE =
+                    clampedInt("caustica.rt.restir.maxAge", "lights.restir.max-age", 30, 1, 120);
+
+            /** Camera-relative reprojection gates. Position thresholds are in Minecraft blocks. */
+            public static final FloatSetting RESTIR_TEMPORAL_POSITION_THRESHOLD =
+                    clampedFloat("caustica.rt.restir.temporalPositionThreshold",
+                            "lights.restir.temporal-position-threshold", 0.20f, 0.01f, 2.0f);
+            public static final FloatSetting RESTIR_TEMPORAL_NORMAL_THRESHOLD =
+                    clampedFloat("caustica.rt.restir.temporalNormalThreshold",
+                            "lights.restir.temporal-normal-threshold", 0.95f, 0.50f, 1.0f);
+            public static final FloatSetting RESTIR_SPATIAL_POSITION_THRESHOLD =
+                    clampedFloat("caustica.rt.restir.spatialPositionThreshold",
+                            "lights.restir.spatial-position-threshold", 1.50f, 0.05f, 4.0f);
+            public static final FloatSetting RESTIR_SPATIAL_NORMAL_THRESHOLD =
+                    clampedFloat("caustica.rt.restir.spatialNormalThreshold",
+                            "lights.restir.spatial-normal-threshold", 0.90f, 0.50f, 1.0f);
+            public static final FloatSetting RESTIR_JACOBIAN_MIN =
+                    clampedFloat("caustica.rt.restir.jacobianMin", "lights.restir.jacobian-min",
+                            0.20f, 0.01f, 1.0f);
+            public static final FloatSetting RESTIR_JACOBIAN_MAX =
+                    clampedFloat("caustica.rt.restir.jacobianMax", "lights.restir.jacobian-max",
+                            5.0f, 1.0f, 10.0f);
+
+            /**
+             * Bounds shared by independent RIS, legacy ReSTIR and ReSTCV. They deliberately enter before
+             * radiance reaches DLSS/SVGF history, so turning ReSTIR off cannot bring back isolated flashes.
+             */
+            public static final FloatSetting RIS_MAX_WEIGHT =
+                    clampedFloat("caustica.rt.ris.maxWeight", "lights.restir.max-weight", 16.0f, 1.0f, 64.0f);
+            public static final FloatSetting RIS_CONTRIBUTION_LIMIT =
+                    clampedFloat("caustica.rt.ris.contributionLimit",
+                            "lights.restir.contribution-limit", 24.0f, 4.0f, 128.0f);
+
+            /** Confidence-weighted ReSTCV transfer and conservative fresh-winner fallback. */
+            public static final FloatSetting RESTCV_STRENGTH =
+                    clampedFloat("caustica.rt.restcv.strength", "lights.restir.restcv-strength", 1.0f,
+                            0.0f, 1.0f);
+            public static final FloatSetting RESTCV_FALLBACK_STRENGTH =
+                    clampedFloat("caustica.rt.restcv.fallbackStrength",
+                            "lights.restir.restcv-fallback-strength", 0.20f, 0.0f, 1.0f);
+            public static final IntSetting RESTCV_MAX_HISTORY =
+                    clampedInt("caustica.rt.restcv.maxHistory", "lights.restir.restcv-max-history", 16, 1, 64);
+            public static final FloatSetting RESTCV_HISTORY_CLAMP =
+                    clampedFloat("caustica.rt.restcv.historyClamp", "lights.restir.restcv-history-clamp",
+                            4.0f, 1.0f, 16.0f);
+
             public static final FloatSetting MIN_FILL_RATIO =
                     finiteFloat("caustica.rt.lightMinFillRatio", "lights.min-fill-ratio", 0.25f);
             public static final BooleanSetting STATS = bool("caustica.rt.lightStats", "lights.stats", false);

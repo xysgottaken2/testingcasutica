@@ -416,7 +416,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 restirReceiverPending = false;
                 if (!skipSiblingRis) {
                     uint freshCandidates = shadeWithRestir
-                            ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                            ? min(worldPush.risCandidates, restirFreshCandidates())
                             : worldPush.risCandidates;
                     Reservoir r = risInitial(hitPos, n, v, rd, albedo,
                             float3(0.0, 0.0, 0.0), 1.0, true, 0.0, freshCandidates,
@@ -427,8 +427,14 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                                 1.0, true, 0.0, seed);
                     }
                     float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                    float3 particleRis = throughput * shadeReservoir(r, hitPos, n, v, rd, albedo,
-                            float3(0.0, 0.0, 0.0), 1.0, true, 0.0) * estimatorScale;
+                    float3 reservoirEstimate = shadeWithRestir
+                            ? shadeRestirReservoir(r, pix.y * dimensions.x + pix.x,
+                                    hitPos, n, v, rd, albedo, float3(0.0, 0.0, 0.0),
+                                    1.0, true, 0.0)
+                            : shadeReservoir(r, hitPos, n, v, rd, albedo,
+                                    float3(0.0, 0.0, 0.0), 1.0, true, 0.0);
+                    float3 particleRis = restirBoundContribution(
+                            throughput * reservoirEstimate, restirContributionLimit()) * estimatorScale;
                     L += particleRis;
                     // twoSided shading has no specular term — the whole estimate is diffuse.
                     if (channel == 2) {
@@ -648,7 +654,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             restirReceiverPending = false;
             if (!skipSiblingRis) {
                 uint freshCandidates = shadeWithRestir
-                        ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                        ? min(worldPush.risCandidates, restirFreshCandidates())
                         : worldPush.risCandidates;
                 Reservoir r = risInitial(hitPos, n, v, rd, diffAlb, F0, rough, twoSidedEmitter,
                         activeSss, freshCandidates, seed, proposalSeed);
@@ -657,19 +663,31 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                             n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed);
                 }
                 float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                float3 ris = throughput * shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
-                        twoSidedEmitter, activeSss) * estimatorScale;
+                float3 reservoirEstimate = shadeWithRestir
+                        ? shadeRestirReservoir(r, pix.y * dimensions.x + pix.x,
+                                hitPos, n, v, rd, diffAlb, F0, rough,
+                                twoSidedEmitter, activeSss)
+                        : shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
+                                twoSidedEmitter, activeSss);
+                // Bound after path throughput as well: Russian-roulette compensation can exceed one at
+                // deeper independent-RIS vertices, and the contract is on radiance entering history.
+                float3 transportedEstimate = restirBoundContribution(
+                        throughput * reservoirEstimate, restirContributionLimit());
+                float3 ris = transportedEstimate * estimatorScale;
                 L += ris;
                 if (nrdEnabled()) {
                     if (channel == 0) {
                         // Unclassified primary hit: split the reservoir estimate by BRDF lobe. Costs a
-                        // second shadow ray, so it only runs on the NRD path.
+                        // second shadow ray only on the NRD path; ReSTCV itself adds no visibility ray.
                         float3 risDiff;
                         float3 risSpec;
                         shadeReservoirSplit(r, hitPos, n, v, rd, diffAlb, F0, rough,
                                 twoSidedEmitter, activeSss, risDiff, risSpec);
-                        Ldiff += throughput * risDiff * estimatorScale;
-                        Lspec += throughput * risSpec * estimatorScale;
+                        risDiff *= throughput;
+                        risSpec *= throughput;
+                        restirMatchSplitToResolved(transportedEstimate, risDiff, risSpec);
+                        Ldiff += risDiff * estimatorScale;
+                        Lspec += risSpec * estimatorScale;
                     } else if (channel == 1) {
                         Ldiff += ris;
                     } else {

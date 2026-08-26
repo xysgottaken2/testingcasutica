@@ -11,10 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** CPU reference checks for the bounded reservoir math implemented in lighting.slang. */
 final class RestirReservoirMathTest {
-    private static final double MAX_M = 16.0;
+    private static final double MAX_M = 24.0;
     private static final double MAX_W = 16.0;
     private static final double MIN_PHAT = 1.0e-4;
-    private static final double MAX_SAMPLE_LUMINANCE = 16.0;
+    private static final double MAX_SAMPLE_LUMINANCE = 24.0;
     private static final double JACOBIAN_MIN = 0.2;
     private static final double JACOBIAN_MAX = 5.0;
 
@@ -22,12 +22,12 @@ final class RestirReservoirMathTest {
     void mergedReservoirCarriesEffectiveSamplesButNeverExceedsHardMCap() {
         Reservoir destination = new Reservoir(8.0, 12.0, 2.0);
 
-        // The source asks to contribute M=16, but only 8 fit below the hard M=16 cap. Its current
-        // receiver weight is pHat * W * acceptedM: 3 * 0.5 * 8 = 12.
+        // The source contributes all M=16 below the configured M=24 cap. Its current receiver
+        // weight is pHat * W * acceptedM: 3 * 0.5 * 16 = 24.
         merge(destination, 16.0, 0.5, 3.0, 0.0);
 
         assertEquals(MAX_M, destination.m, 0.0);
-        assertEquals(24.0, destination.weightSum, 1.0e-12);
+        assertEquals(36.0, destination.weightSum, 1.0e-12);
         assertEquals(3.0, destination.selectedTarget, 1.0e-12);
         double finalW = finalizeWeight(destination.weightSum,
                 destination.m, destination.selectedTarget);
@@ -78,6 +78,33 @@ final class RestirReservoirMathTest {
         assertTrue(Math.abs(sourceWins / (double) trials - 0.75) < 0.005);
     }
 
+    @Test
+    void sameRepresentativeControlDifferenceSurvivesAChangedFinalWeight() {
+        // The final ReSTIR weight doubled from source W=2 to W=4, so a current contribution of 6
+        // corresponds to 3 at the source weight. If that same representative contributed 3 at the
+        // source, current-minus-source is zero and the accumulated estimate remains exactly 10.
+        assertEquals(10.0, controlTransfer(10.0, 3.0, 6.0, 2.0, 4.0), 0.0);
+
+        // A genuine change in the same representative is transferred onto the accumulated estimate.
+        assertEquals(12.0, controlTransfer(10.0, 3.0, 10.0, 2.0, 4.0), 0.0);
+    }
+
+    @Test
+    void confidenceWeightedResolveStaysBetweenCurrentAndTransferredEstimates() {
+        assertEquals(8.0, confidenceResolve(4.0, 12.0, 1.0, 1.0), 0.0);
+        assertEquals(11.0, confidenceResolve(4.0, 12.0, 7.0, 1.0), 0.0);
+        assertEquals(4.0, confidenceResolve(4.0, 12.0, 64.0, 0.0), 0.0,
+                "zero ReSTCV strength must reproduce legacy ReSTIR");
+    }
+
+    @Test
+    void commonContributionBoundAlsoProtectsIndependentRis() {
+        assertEquals(24.0, boundContribution(1000.0, 24.0), 0.0);
+        assertEquals(7.0, boundContribution(7.0, 24.0), 0.0);
+        assertEquals(0.0, boundContribution(Double.NaN, 24.0), 0.0);
+        assertEquals(0.0, boundContribution(-4.0, 24.0), 0.0);
+    }
+
     private static void merge(Reservoir destination, double sourceM, double sourceW,
                               double targetAtCurrentReceiver, double uniformRandom) {
         double acceptedM = Math.min(sourceM, Math.max(0.0, MAX_M - destination.m));
@@ -103,6 +130,25 @@ final class RestirReservoirMathTest {
         return rawW > 0.0
                 ? Math.min(rawW, Math.min(MAX_W, MAX_SAMPLE_LUMINANCE / selectedTarget))
                 : 0.0;
+    }
+
+    private static double controlTransfer(double sourceEstimate, double sourceRepresentative,
+                                          double currentAtFinalWeight, double sourceW, double finalW) {
+        double currentAtSourceWeight = currentAtFinalWeight * sourceW / finalW;
+        return sourceEstimate + currentAtSourceWeight - sourceRepresentative;
+    }
+
+    private static double confidenceResolve(double current, double transfer,
+                                            double confidence, double strength) {
+        double weight = confidence * strength;
+        return (current + weight * transfer) / (1.0 + weight);
+    }
+
+    private static double boundContribution(double contribution, double limit) {
+        if (!Double.isFinite(contribution)) {
+            return 0.0;
+        }
+        return Math.min(Math.max(contribution, 0.0), limit);
     }
 
     private static boolean validJacobian(double sourceGeometry, double currentGeometry) {

@@ -36,7 +36,7 @@ public struct WorldPushConstants {
     public uint frameIndex;
     public uint debugView;
     public uint lightGeneration;         // low bits reject history after the emitter hierarchy changes
-    public uint restirMode;              // explicit 0=RIS fallback, 1=ReSTIR read+shade (live UI toggle)
+    public uint restirMode;              // 0=independent RIS, 1=legacy ReSTIR, 2=ReSTCV
 };
 
 // Block-breaking overlay entry: xyz = breaking block position (rebased, same space as gl_WorldRay*),
@@ -45,10 +45,14 @@ public struct BreakEntry {
     public int4 posSlot;
 };
 
-// Compact persistent ReSTIR ABI. Positions are camera-relative so a terrain-origin rebase cannot
-// invalidate otherwise-stationary history. `meta` packs M:16, age:8, the low seven bits of the
-// light-hierarchy generation, and the two-sided receiver bit; M==0 is the invalid sentinel. Its std430
-// array stride is reflected into RestirReservoirData.BYTE_SIZE, so Java never hand-maintains this size.
+// Explicit 64-byte persistent ReSTIR/ReSTCV ABI. Positions are camera-relative so a terrain-origin
+// rebase cannot invalidate otherwise-stationary history. `meta` packs M:16, age:8, the low seven bits
+// of the light-hierarchy generation, and the two-sided receiver bit; M==0 is the invalid sentinel.
+// The two compact positive-HDR RGB values hold ReSTCV's accumulated estimate and the representative
+// sample contribution at this record's W. They are stored before the live block-light intensity scale,
+// so dragging that slider does not make history stale. `cvMeta` carries confidence plus a format version.
+// The trailing reserved word makes the 64-byte contract explicit instead of relying on std430 tail padding.
+// Its reflected array stride feeds RestirReservoirData.BYTE_SIZE; Java never hand-maintains this size.
 public struct PackedRestirReservoir {
     public float3 sampleCameraRelative;
     public float area;
@@ -58,6 +62,10 @@ public struct PackedRestirReservoir {
     public uint packedLe;
     public uint surfaceNormal;
     public uint meta;
+    public uint packedCvEstimate;
+    public uint packedCvRepresentative;
+    public uint cvMeta;
+    public uint reserved;
 };
 
 // Per-frame world data, read through a 64-bit device address. WorldPushData.java is generated from this
@@ -151,6 +159,16 @@ public struct WorldPush {
     public float4   sharcParams2;
     public float4   sharcParams3;
     public int4     sharcGridOrigin;
+
+    // ReSTIR/ReSTCV tuning. All integer-valued lanes are small exact floats and are converted to uint
+    // only after shader-side hard clamping. Keeping this cold configuration behind worldPush leaves the
+    // push-constant hot path unchanged while allowing every stability/reuse budget to update live.
+    public float4   restirBudgets;       // fresh candidates, temporal M cap, spatial M cap, total M cap
+    public float4   restirReuse;         // spatial samples, radius (px), max age, ReSTCV max confidence
+    public float4   restirTemporal;      // position threshold, distance scale, normal dot, enabled
+    public float4   restirSpatial;       // position threshold, distance scale, normal dot, enabled
+    public float4   restirStability;     // max W, max contribution luminance, Jacobian min, Jacobian max
+    public float4   restcvParams;        // strength, fresh-winner fallback, history clamp, reserved
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full

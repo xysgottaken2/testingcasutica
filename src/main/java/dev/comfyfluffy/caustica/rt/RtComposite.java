@@ -350,6 +350,56 @@ public final class RtComposite {
         return new Int4(terrain.blockX, terrain.blockY, terrain.blockZ, RtSharc.INSTANCE.entryCount());
     }
 
+    // ---- ReSTIR/ReSTCV cold tuning lanes. These values are read every frame so the dedicated
+    // settings screen can tune the estimator live without rebuilding pipelines or history buffers.
+    private static Float4 restirBudgets() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RESTIR_FRESH_CANDIDATES.value(),
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_M_CAP.value(),
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_M_CAP.value(),
+                CausticaConfig.Rt.Lights.RESTIR_MAX_M.value());
+    }
+
+    private static Float4 restirReuse() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_SAMPLES.value(),
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_RADIUS.value(),
+                CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(),
+                CausticaConfig.Rt.Lights.RESTCV_MAX_HISTORY.value());
+    }
+
+    private static Float4 restirTemporal() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_POSITION_THRESHOLD.value(),
+                0.01f,
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_NORMAL_THRESHOLD.value(),
+                CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_REUSE.value() ? 1.0f : 0.0f);
+    }
+
+    private static Float4 restirSpatial() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_POSITION_THRESHOLD.value(),
+                0.05f,
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NORMAL_THRESHOLD.value(),
+                CausticaConfig.Rt.Lights.RESTIR_SPATIAL_REUSE.value() ? 1.0f : 0.0f);
+    }
+
+    private static Float4 restirStability() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RIS_MAX_WEIGHT.value(),
+                CausticaConfig.Rt.Lights.RIS_CONTRIBUTION_LIMIT.value(),
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MIN.value(),
+                CausticaConfig.Rt.Lights.RESTIR_JACOBIAN_MAX.value());
+    }
+
+    private static Float4 restcvParams() {
+        return new Float4(
+                CausticaConfig.Rt.Lights.RESTCV_STRENGTH.value(),
+                CausticaConfig.Rt.Lights.RESTCV_FALLBACK_STRENGTH.value(),
+                CausticaConfig.Rt.Lights.RESTCV_HISTORY_CLAMP.value(),
+                0.0f);
+    }
+
     // Finite sun/moon angular sizes let NEE shadow rays sample the light disk (soft, contact-hardening
     // penumbrae). Radii in degrees; the real sun/moon are ~0.27°, but a touch larger reads pleasantly.
     private static final int WATER_ANCHOR_MASK = 4095;
@@ -1269,9 +1319,15 @@ public final class RtComposite {
         return restirResourcesEnabled ? restirReservoirs[restirWriteIndex].deviceAddress : 0L;
     }
 
-    /** Explicit shader mode uniform; unlike the descriptive feature bit this is tied to real bindings. */
+    /**
+     * Explicit shader estimator mode; unlike the descriptive feature bit this is tied to real bindings.
+     * Mode 1 deliberately remains available as a comparison/fallback for the ReSTCV resolve in mode 2.
+     */
     private int restirMode() {
-        return restirResourcesEnabled && CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value() ? 1 : 0;
+        if (!restirResourcesEnabled || !CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
+            return 0;
+        }
+        return CausticaConfig.Rt.Lights.RESTCV_ENABLED.value() ? 2 : 1;
     }
 
     private void ensureOutput(RtContext ctx, int width, int height) {
@@ -1720,7 +1776,15 @@ public final class RtComposite {
                     sharcParams(),
                     sharcParams2(),
                     sharcParams3(),
-                    sharcGridOrigin(terrain)
+                    sharcGridOrigin(terrain),
+                    // ReSTIR/ReSTCV: candidate/reuse budgets, validation gates, common RIS firefly
+                    // bounds and control-variate history tuning. Every lane applies on the next frame.
+                    restirBudgets(),
+                    restirReuse(),
+                    restirTemporal(),
+                    restirSpatial(),
+                    restirStability(),
+                    restcvParams()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {

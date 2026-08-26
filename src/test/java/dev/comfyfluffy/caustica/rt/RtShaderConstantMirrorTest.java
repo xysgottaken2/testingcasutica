@@ -115,10 +115,16 @@ final class RtShaderConstantMirrorTest {
                 "RtComposite must write restirMode into the world pipeline push constants every frame");
         assertTrue(raygen.contains("bool shadeWithRestir = restirReceiverPending && restirOwner;")
                         && raygen.contains("r = restirSpatiotemporal(r")
-                        && raygen.contains("shadeReservoir(r"),
-                "the selected ReSTIR reservoir must flow into the radiance added to final color");
+                        && raygen.contains("shadeRestirReservoir(r"),
+                "the selected ReSTIR/ReSTCV reservoir must flow into the final-color estimator");
         assertTrue(raygen.contains("skipSiblingRis") && raygen.contains("restirSampleScale"),
                 "SPP averaging must not dilute ReSTIR with legacy RIS at the same receiver");
+        assertTrue(common.contains("packedCvEstimate")
+                        && common.contains("packedCvRepresentative")
+                        && common.contains("cvMeta"),
+                "the persistent reservoir must carry compact ReSTCV estimate/representative history");
+        assertTrue(java.contains("RESTCV_ENABLED.value() ? 2 : 1"),
+                "the host must retain distinct independent RIS, legacy ReSTIR and ReSTCV modes");
     }
 
     @Test
