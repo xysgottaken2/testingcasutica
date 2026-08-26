@@ -94,4 +94,6 @@ license terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - [ ] Multi-layer / cirrus clouds and cloud-shadow softening
 - [x] XeSS + FSR upscaling for non-NVIDIA GPUs
 - [ ] LOD
-- [ ] ReSTIR
+- [x] ReSTIR DI/GI with conservative temporal/spatial validation, bounded RIS weights and an in-game stability submenu
+
+The ReSTIR implementation is tuned around the stability goals of [DQLin/ReSTIR_PT](https://github.com/DQLin/ReSTIR_PT): reuse is bounded and validated, while the interactive controls expose candidate count, temporal/spatial budgets, neighbour radius, history gates and firefly clamps.
