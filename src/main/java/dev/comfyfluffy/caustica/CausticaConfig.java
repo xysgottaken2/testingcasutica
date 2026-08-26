@@ -900,7 +900,7 @@ public final class CausticaConfig {
             public static final IntSetting RESTIR_SPATIAL_M_CAP =
                     clampedInt("caustica.rt.restir.spatialMCap", "lights.restir.spatial-m-cap", 2, 1, 8);
             public static final IntSetting RESTIR_MAX_AGE =
-                    clampedInt("caustica.rt.restir.maxAge", "lights.restir.max-age", 30, 1, 120);
+                    clampedInt("caustica.rt.restir.maxAge", "lights.restir.max-age", 0, 0, 120);
 
             /** Camera-relative reprojection gates. Position thresholds are in Minecraft blocks. */
             public static final FloatSetting RESTIR_TEMPORAL_POSITION_THRESHOLD =

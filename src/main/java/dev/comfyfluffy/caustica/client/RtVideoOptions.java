@@ -422,8 +422,16 @@ public final class RtVideoOptions {
     }
 
     private static OptionInstance<Integer> restirMaxAge() {
-        return integerSetting("caustica.options.restir.maxAge",
-                CausticaConfig.Rt.Lights.RESTIR_MAX_AGE, 1, 120, " frames");
+        IntSetting setting = CausticaConfig.Rt.Lights.RESTIR_MAX_AGE;
+        return new OptionInstance<>(
+            "caustica.options.restir.maxAge",
+            OptionInstance.cachedConstantTooltip(Component.translatable(
+                    "caustica.options.restir.maxAge.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, value == 0
+                    ? Component.translatable("options.off") : Component.literal(value + " frames")),
+            new OptionInstance.IntRange(0, 120),
+            Math.clamp(setting.value(), 0, 120),
+            setting::set);
     }
 
     private static OptionInstance<Integer> restirTemporalPositionThreshold() {

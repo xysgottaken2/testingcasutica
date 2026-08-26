@@ -14,6 +14,7 @@ final class RestirReservoirMathTest {
     private static final double MAX_M = 24.0;
     private static final double MAX_W = 16.0;
     private static final double MIN_PHAT = 1.0e-4;
+    private static final double EMISSIVE_PHAT_FLOOR = 5.0e-3;
     private static final double MAX_SAMPLE_LUMINANCE = 24.0;
     private static final double JACOBIAN_MIN = 0.2;
     private static final double JACOBIAN_MAX = 5.0;
@@ -79,6 +80,19 @@ final class RestirReservoirMathTest {
     }
 
     @Test
+    void emissiveFloorKeepsPositiveDimSamplesButNeverPromotesTrueZero() {
+        Reservoir zero = new Reservoir(1.0, 1.0, 1.0);
+        merge(zero, 1.0, 1.0, 0.0, 0.0);
+        assertEquals(1.0, zero.m, 0.0);
+        assertEquals(1.0, zero.weightSum, 0.0);
+
+        Reservoir dim = new Reservoir(1.0, 1.0, 1.0);
+        merge(dim, 1.0, 1.0, 1.0e-6, 0.0);
+        assertEquals(2.0, dim.m, 0.0);
+        assertEquals(EMISSIVE_PHAT_FLOOR, dim.selectedTarget, 0.0);
+    }
+
+    @Test
     void sameRepresentativeControlDifferenceSurvivesAChangedFinalWeight() {
         // The final ReSTIR weight doubled from source W=2 to W=4, so a current contribution of 6
         // corresponds to 3 at the source weight. If that same representative contributed 3 at the
@@ -98,6 +112,14 @@ final class RestirReservoirMathTest {
     }
 
     @Test
+    void confidenceScaledFallbackCanSettleFrequentFreshWinners() {
+        double resolved = fallbackResolve(4.0, 12.0, 16.0, 16.0, 1.0, 0.20);
+        assertTrue(resolved > 10.0 && resolved < 12.0,
+                "mature fallback should suppress a fresh outlier without fully replacing it");
+        assertEquals(4.0, fallbackResolve(4.0, 12.0, 16.0, 16.0, 1.0, 0.0), 0.0);
+    }
+
+    @Test
     void commonContributionBoundAlsoProtectsIndependentRis() {
         assertEquals(24.0, boundContribution(1000.0, 24.0), 0.0);
         assertEquals(7.0, boundContribution(7.0, 24.0), 0.0);
@@ -110,10 +132,11 @@ final class RestirReservoirMathTest {
         double acceptedM = Math.min(sourceM, Math.max(0.0, MAX_M - destination.m));
         double safeW = Math.min(sourceW, MAX_W);
         if (!(acceptedM > 0.0 && safeW > 0.0)
-                || !(targetAtCurrentReceiver >= MIN_PHAT)) {
+                || !(targetAtCurrentReceiver > 0.0)) {
             return;
         }
-        double safeTarget = Math.min(targetAtCurrentReceiver, MAX_SAMPLE_LUMINANCE);
+        double safeTarget = Math.min(Math.max(targetAtCurrentReceiver, EMISSIVE_PHAT_FLOOR),
+                MAX_SAMPLE_LUMINANCE);
         double weight = safeTarget * safeW * acceptedM;
         destination.m = Math.min(destination.m + acceptedM, MAX_M);
         destination.weightSum += weight;
@@ -142,6 +165,13 @@ final class RestirReservoirMathTest {
                                             double confidence, double strength) {
         double weight = confidence * strength;
         return (current + weight * transfer) / (1.0 + weight);
+    }
+
+    private static double fallbackResolve(double current, double history, double confidence,
+                                          double maximumConfidence, double strength,
+                                          double fallbackStrength) {
+        double fallbackWeight = strength * fallbackStrength * Math.min(confidence, maximumConfidence);
+        return (current + fallbackWeight * history) / (1.0 + fallbackWeight);
     }
 
     private static double boundContribution(double contribution, double limit) {

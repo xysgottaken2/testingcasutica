@@ -68,7 +68,7 @@ public uint restirSpatialSamples() {
 }
 public float restirSpatialRadius() { return clamp(worldPush.restirReuse.y, 1.0, 16.0); }
 public uint restirMaxAge() {
-    return uint(clamp(round(worldPush.restirReuse.z), 1.0, float(RESTIR_HARD_MAX_AGE)));
+    return uint(clamp(round(worldPush.restirReuse.z), 0.0, float(RESTIR_HARD_MAX_AGE)));
 }
 public float restcvMaxConfidence() { return clamp(round(worldPush.restirReuse.w), 1.0, 64.0); }
 public float restirMaxW() { return clamp(worldPush.restirStability.x, 1.0, RESTIR_HARD_MAX_W); }
@@ -497,7 +497,8 @@ public bool restirLoadCandidate(PackedRestirReservoir record, float3 expectedPre
     uint age = (record.meta >> 16u) & 0xffu;
     uint generation = (record.meta >> 24u) & 0x7fu;
     bool storedTwoSided = (record.meta & 0x80000000u) != 0u;
-    if (storedM == 0u || age > restirMaxAge() || storedTwoSided != twoSided
+    uint maximumAge = restirMaxAge();
+    if (storedM == 0u || (maximumAge > 0u && age >= maximumAge) || storedTwoSided != twoSided
             || generation != (pc.lightGeneration & 0x7fu)
             || !(record.W > 0.0) || !(record.area > 0.0)) {
         return false; // the !(x>0) form rejects NaN as well as zero/negative values
@@ -617,7 +618,9 @@ public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
         dst.area = source.area;
         dst.phat = safeTarget;
         dst.packedLe = source.packedLe;
-        dst.age = min(source.age + 1u, restirMaxAge());
+        // Age zero disables forced expiry; keep counting (with an 8-bit saturation) so enabling a
+        // finite limit later immediately rejects a genuinely older representative.
+        dst.age = min(source.age + 1u, 0xffu);
         // Keep control-variate state coupled to the representative that actually won. Copying only
         // the light sample while retaining another record's estimate would manufacture a difference
         // between unrelated random variables and is the most destructive ReSTCV failure mode.
@@ -863,16 +866,19 @@ public float3 shadeRestirReservoir(Reservoir s, uint pixelIndex, float3 hitPos, 
             transfer = restirBoundContribution(transfer, transferLimit);
             float cvWeight = strength * min(s.cvConfidence, restcvMaxConfidence());
             resolvedEstimate = (standardEstimate + cvWeight * transfer) / (1.0 + cvWeight);
-            nextConfidence = min(s.cvConfidence + 1.0, restcvMaxConfidence());
+            nextConfidence = min(cvWeight + 1.0, restcvMaxConfidence());
         } else if (strength > 0.0 && s.cvFallbackValid != 0u) {
             float fallbackLimit = min(contributionLimit,
                     max(0.25, luminance(standardEstimate) * historyClamp));
             float3 fallback = restirBoundContribution(s.cvFallbackEstimate, fallbackLimit);
-            float confidenceFraction = saturate(s.cvFallbackConfidence / restcvMaxConfidence());
+            // Scale the validated centre's confidence rather than normalizing it away. At the default
+            // 20%, mature fallback history has one fifth of the selected-history authority: enough to
+            // prevent frequent fresh winners from restarting visible noise, but still more responsive.
+            float fallbackConfidence = min(s.cvFallbackConfidence, restcvMaxConfidence());
             float fallbackWeight = strength * clamp(worldPush.restcvParams.y, 0.0, 1.0)
-                    * confidenceFraction;
+                    * fallbackConfidence;
             resolvedEstimate = (standardEstimate + fallbackWeight * fallback) / (1.0 + fallbackWeight);
-            nextConfidence = min(s.cvFallbackConfidence + 1.0, restcvMaxConfidence());
+            nextConfidence = min(fallbackWeight + 1.0, restcvMaxConfidence());
         }
     }
 

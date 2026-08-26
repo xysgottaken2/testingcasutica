@@ -49,6 +49,8 @@ final class RtRestcvShaderRegressionTest {
         assertTrue(resolve.contains("standardEstimate = shadeReservoir(")
                 && resolve.contains("standardEstimate * sourceToFinal")
                 && resolve.contains("s.cvEstimate + currentAtSourceWeight - s.cvRepresentative")
+                && resolve.contains("fallbackWeight = strength * clamp(worldPush.restcvParams.y")
+                && resolve.contains("* fallbackConfidence;")
                 && resolve.contains("restirStore("));
         assertFalse(resolve.contains("visibility("),
                 "ReSTCV must reuse shadeReservoir's one visibility ray rather than trace another");
@@ -76,6 +78,9 @@ final class RtRestcvShaderRegressionTest {
         assertFalse(disk.contains("frameIndex"));
         assertFalse(spatialOffset.contains("frameIndex"));
         assertTrue(disk.contains("restirSpatialRadius()"));
+        assertTrue(lighting.contains("maximumAge > 0u && age >= maximumAge"));
+        assertTrue(lighting.contains("dst.age = min(source.age + 1u, 0xffu);"),
+                "finite age must really expire while zero leaves static convergence uninterrupted");
     }
 
     @Test

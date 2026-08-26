@@ -46,6 +46,7 @@ The transferred estimate is sanitized, bounded, and combined with the current Re
 - Lower **Maximum RIS Weight** or **Contribution Luminance Limit** first when isolated flashes remain. These controls also affect independent RIS.
 - Raise **RIS Candidates** or **ReSTIR Fresh Candidates** for lower variance at a direct GPU cost.
 - Raise temporal/spatial `M` caps or maximum reservoir `M` for stronger reuse, but keep the total bounded.
+- Leave **Maximum History Age** off for uninterrupted convergence in static scenes, or set a finite age to force periodic representative refreshes.
 - Tighten position/normal/Jacobian gates when history crosses geometry edges.
 - Lower **ReSTCV Strength**, **History Confidence**, or **Fresh-Winner Fallback** when lighting reacts too slowly.
 - Lower **ReSTCV Outlier Clamp** when transferred estimates spike; raise it only if valid bright history is being clipped.
