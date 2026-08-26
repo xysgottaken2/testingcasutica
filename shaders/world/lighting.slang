@@ -45,6 +45,18 @@ public static const uint RESTIR_MAX_AGE = 60u;
 public static const uint RESTIR_FLAG_TEMPORAL = 1u;
 public static const uint RESTIR_FLAG_SPATIAL = 2u;
 public static const uint RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE = 4u;
+// Same-face lock may walk this fraction toward the fresh RIS point each frame so a frozen
+// sample does not draw a hard terminator line on nearby blocks.
+public static const float RESTIR_SAMPLE_WALK = 0.12;
+// Distance-adaptive firefly / W caps. A torch at range has tiny p-hat, so raw W explodes and
+// visibility / GGX jitter reads as moving pinpricks. The physical 1/r^2 term is already in
+// contrib; these only cut the unphysical tail.
+public static const float RESTIR_FIREFLY_DIST = 0.035;
+public static const float RESTIR_W_DIST = 0.012;
+// Close to the camera, RIS already sees the light well. Spatial reuse here is what draws the
+// faint neighbour-disk streaks that smear away the moment you walk.
+public static const float RESTIR_CLOSE_CAMERA = 12.0;
+public static const float RESTIR_SAME_FACE_DOT = 0.85;
 
 public float restirMaxM() {
     float v = worldPush.restirParams.x;
@@ -133,6 +145,12 @@ public bool restirInvalidateOnLightChange() {
 }
 public float restirMaxWeightSum() {
     return restirMaxM() * restirMaxW() * restirMaxLuminance();
+}
+
+// Caps a value so distant connections cannot keep a near-field W / luminance. dist2 is the
+// squared receiver-to-sample distance in blocks.
+public float restirDistanceCap(float maxValue, float dist2, float coeff) {
+    return maxValue / (1.0 + coeff * max(dist2, 1.0));
 }
 
 public Reservoir resEmpty() {
@@ -564,10 +582,12 @@ public bool restirValidJacobian(Reservoir source, float3 hitPos, float3 n) {
     return jacobian >= restirJacobianMin() && jacobian <= restirJacobianMax();
 }
 
-// True when both reservoirs picked the same emitter (packed radiance) at nearly the same sample
-// point. Used by the boiling filter to keep a locked torch instead of hopping between its faces.
+// True when both reservoirs picked the same emitter face: matching packed radiance, similar
+// geometric normal, and a sample point still on that face. Opposite faces of a shroomlight share
+// packedLe, so the normal test is what stops the lock from hopping around the block.
 public bool restirSameEmitter(Reservoir a, Reservoir b) {
     if (a.packedLe == 0u || b.packedLe == 0u || a.packedLe != b.packedLe) return false;
+    if (dot(a.lnrm, b.lnrm) < RESTIR_SAME_FACE_DOT) return false;
     return length(a.pos - b.pos) <= 0.85;
 }
 
@@ -576,9 +596,9 @@ public bool restirSameEmitter(Reservoir a, Reservoir b) {
 // factors are bounded before entering the stream; invalid Jacobians and near-zero targets are discarded
 // rather than allowed to manufacture a huge reciprocal weight in finalization.
 //
-// Stickiness is a boiling filter: the same emitter keeps its exact sample point (no stochastic hop
-// between faces of a torch), and switching to a different emitter is biased against unless the new
-// weight clearly wins. That is what stops Minecraft block lights from flickering every frame.
+// Stickiness is a boiling filter: the same emitter face is kept (no hop between faces of a torch),
+// the sample point walks a little on that face so close-up shadows stay soft, and switching to a
+// different emitter is biased against unless the new weight clearly wins.
 public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
                  float3 hitPos, float3 n, float3 v, float3 rd, float3 diffAlb, float3 F0,
                  float rough, bool twoSided, float sss, float stickiness, inout uint seed) {
@@ -600,9 +620,12 @@ public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
     dst.M = min(dst.M + acceptedM, hardMaxM);
     dst.wSum += w;
     if (same) {
-        // Keep the temporally older sample point so a locked torch does not hop faces.
+        // Keep the older face so the torch does not hop, but walk the sample point a little
+        // toward this frame's RIS pick. A fully frozen point is a hard contact line on nearby
+        // blocks that only smears away while the camera moves.
+        float3 freshPos = dst.pos;
         if (source.age >= dst.age) {
-            dst.pos = source.pos;
+            dst.pos = lerp(source.pos, freshPos, RESTIR_SAMPLE_WALK);
             dst.lnrm = source.lnrm;
             dst.le = source.le;
             dst.area = source.area;
@@ -720,16 +743,18 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
     bool hasPreviousPixel = restirPreviousPixel(hitPos, motionPrev, dimensions, previousPixel);
     float lockedW = 0.0;
     bool lockedSample = false;
+    bool hasTemporal = false;
+    float cameraDistance = length(hitPos - worldPush.camOffset);
     if (hasPreviousPixel) {
         ConstPtr<PackedRestirReservoir> history =
                 ConstPtr<PackedRestirReservoir>(pc.restirPreviousAddr);
-        float cameraDistance = length(hitPos - worldPush.camOffset);
         float3 expectedPreviousSurface = hitPos - motionPrev;
         Reservoir candidate;
         uint previousIndex = uint(previousPixel.y) * dimensions.x + uint(previousPixel.x);
         if (restirTemporalReuse()
                 && restirLoadCandidate(history[previousIndex], expectedPreviousSurface, n, twoSided,
                 max(restirTemporalPos(), cameraDistance * 0.01), restirTemporalNormal(), candidate)) {
+            hasTemporal = true;
             float temporalW = min(candidate.W, maxW);
             candidate.M = min(candidate.M, temporalMCap);
             restirMerge(result, candidate, hardMaxM, hitPos, n, v, rd,
@@ -740,11 +765,14 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
             }
         }
 
-        // Spatial reuse fills holes and shares a little energy. Skip it when a temporal sample is
-        // already locked and stickiness is high — neighbour jitter is the remaining boiling source.
+        // Spatial reuse is a hole-filler only. A valid temporal sample already covers the pixel;
+        // running the neighbour disk on top is what draws the faint close-up streaks that vanish
+        // the moment you walk (TAA smears a frozen 4-tap star). Close to the camera, RIS itself
+        // is high quality and spatial is skipped even on a temporal miss.
         bool runSpatial = restirSpatialReuse() && spatialMCap > 0.0
                 && restirSpatialSamples() > 0u
-                && !(lockedSample && stickiness >= 0.50);
+                && !hasTemporal
+                && cameraDistance >= RESTIR_CLOSE_CAMERA;
         if (runSpatial) {
             // Pixel-only hash: no frameIndex, so the neighbour set is temporally stable.
             uint spatialHash = pixel.x * 1973u + pixel.y * 9277u;
@@ -768,12 +796,14 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
             ? result.wSum / (result.M * result.phat) : 0.0;
     float selectedLuminanceW = result.phat >= RESTIR_MIN_PHAT
             ? maxLum / result.phat : 0.0;
-    result.W = rawW > 0.0 ? min(rawW, min(maxW, selectedLuminanceW)) : 0.0;
+    float connectionDist2 = max(dot(result.pos - hitPos, result.pos - hitPos), 1.0);
+    float rangeW = restirDistanceCap(maxW, connectionDist2, RESTIR_W_DIST);
+    result.W = rawW > 0.0 ? min(rawW, min(min(maxW, selectedLuminanceW), rangeW)) : 0.0;
     // Same-emitter temporal lock: blend W toward the previous frame so intensity does not jump
     // every time a new fresh candidate slightly changes the stream sum.
     if (lockedSample && temporalBlend < 1.0 && lockedW > 0.0 && result.W > 0.0) {
         result.W = lerp(lockedW, result.W, temporalBlend);
-        result.W = min(result.W, min(maxW, selectedLuminanceW));
+        result.W = min(result.W, min(min(maxW, selectedLuminanceW), rangeW));
     }
     result.sourcePos = hitPos;
     result.sourceNormal = n;
@@ -815,7 +845,7 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
         // larger. Hue is preserved by scaling all channels together.
         float shadedLuminance = luminance(shaded);
         if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
-        float maxLum = restirMaxLuminance();
+        float maxLum = restirDistanceCap(restirMaxLuminance(), dist * dist, RESTIR_FIREFLY_DIST);
         if (shadedLuminance > maxLum) {
             shaded *= maxLum / shadedLuminance;
         }
@@ -861,7 +891,7 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
             outSpec = float3(0.0, 0.0, 0.0);
             return;
         }
-        float maxLum = restirMaxLuminance();
+        float maxLum = restirDistanceCap(restirMaxLuminance(), dist * dist, RESTIR_FIREFLY_DIST);
         if (shadedLuminance > maxLum) {
             float scale = maxLum / shadedLuminance;
             outDiff *= scale;

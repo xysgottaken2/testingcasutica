@@ -90,6 +90,28 @@ final class RestirReservoirMathTest {
     }
 
     @Test
+    void sameFaceWalkMovesTowardTheFreshSampleInsteadOfFreezing() {
+        double history = 0.0;
+        double fresh = 1.0;
+        double walk = 0.12;
+        double walked = history * (1.0 - walk) + fresh * walk;
+        assertEquals(0.12, walked, 1.0e-12);
+        assertTrue(walked > history);
+        assertTrue(walked < fresh);
+    }
+
+    @Test
+    void distanceCapTightensFarConnectionsButLeavesNearFieldAlone() {
+        double maxValue = 16.0;
+        double coeff = 0.035;
+        double near = maxValue / (1.0 + coeff * 1.0);
+        double far = maxValue / (1.0 + coeff * (32.0 * 32.0));
+        assertEquals(16.0 / 1.035, near, 1.0e-12);
+        assertTrue(far < 0.5);
+        assertTrue(near > 15.0);
+    }
+
+    @Test
     void sameLightTemporalWBlendsTowardHistory() {
         double previousW = 4.0;
         double currentW = 6.0;
