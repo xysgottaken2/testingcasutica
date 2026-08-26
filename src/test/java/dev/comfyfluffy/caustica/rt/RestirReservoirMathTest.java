@@ -53,14 +53,14 @@ final class RestirReservoirMathTest {
     @Test
     void sameEmitterKeepsTheOlderSampleAndDoesNotStochasticReplace() {
         Reservoir destination = new Reservoir(4.0, 8.0, 2.0);
-        destination.packedLe = 0xABCDu;
+        destination.packedLe = 0xABCD;
         destination.age = 0;
         Reservoir source = new Reservoir(24.0, 0.0, 2.0);
-        source.packedLe = 0xABCDu;
+        source.packedLe = 0xABCD;
         source.age = 12;
         source.w = 0.5;
         mergeSticky(destination, source, 2.0, 0.88, 0.99);
-        assertEquals(0xABCDu, destination.packedLe);
+        assertEquals(0xABCD, destination.packedLe);
         assertEquals(13, destination.age);
         assertEquals(MAX_M, destination.m, 0.0);
         assertEquals(2.0, destination.selectedTarget, 1.0e-12);
