@@ -107,6 +107,7 @@ public static const float CLOUD_MAX_SLAB_CROSSINGS = 3.5;
 // lane for the same reason; the cellular model samples its lattices directly and needs no scale lane
 // at all — see the cellular-field note below. The 3D cauliflower detail inside cloudVolumeDensity
 // carries its own explicit wrap masks instead.)
+public static const float CLOUD_WARP_DIV = 2.0;
 // How much wider a cloud gets around its belly than at its base/crown. Deliberately modest and
 // base-heavy (the belly peak sits in the lower-middle of each cloud) — a strong symmetric bulge is
 // what made clouds read as barrels. See the note in cloudVolumeDensity.
