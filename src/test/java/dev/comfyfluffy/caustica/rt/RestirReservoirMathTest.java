@@ -203,6 +203,9 @@ final class RestirReservoirMathTest {
         private double m;
         private double weightSum;
         private double selectedTarget;
+        private int packedLe;
+        private int age;
+        private double w;
 
         private Reservoir(double m, double weightSum, double selectedTarget) {
             this.m = m;
