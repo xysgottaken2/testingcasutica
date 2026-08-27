@@ -434,6 +434,12 @@ public final class RtComposite {
     // ~0.5 the world reads as permanently misty; above ~0.8 the fog stops hiding the chunk-load edge it
     // exists for. 0.62 leaves distant terrain clearly readable while its silhouette softens.
     private static final float FOG_HORIZON_TRANSMITTANCE = 0.62f;
+    // The Nether is authored to be hazier than the Overworld — a dimension of red gloom — but not
+    // opaque: 0.35 keeps the last chunk visible as a silhouette inside the haze instead of replacing it.
+    private static final float NETHER_FOG_HORIZON_TRANSMITTANCE = 0.35f;
+    // The End barely hazes at all: its look is a dark void with readable islands, so this sits close to
+    // the End's previous fixed density rather than to the Overworld's.
+    private static final float END_FOG_HORIZON_TRANSMITTANCE = 0.70f;
     // Fog is calibrated against a fraction of the render distance rather than the whole of it: chunks
     // stop at the render distance, so aiming the ramp slightly inside that keeps the last ring already
     // faded by the time it unloads, instead of fading exactly as it disappears.
@@ -2379,33 +2385,53 @@ public final class RtComposite {
     }
 
     /**
-     * Distance-medium parameters ({@code WorldPush.ambientFog}: rgb in-scatter radiance, w extinction
-     * per block). Pass A writes a per-pixel effective depth; Pass B composites the medium once after path
-     * aggregation, keeping it stable across water/glass Fresnel branches instead of injecting it into
-     * every path segment.
+     * Distance-medium parameters ({@code WorldPush.ambientFog}: rgb authored in-scatter radiance, w
+     * extinction per block). Pass A writes a per-pixel effective depth; Pass B composites the medium
+     * once after path aggregation, keeping it stable across water/glass Fresnel branches instead of
+     * injecting it into every path segment.
+     *
+     * <p>The rgb lanes are a BASE brightness, not a finished colour: the shader reshapes them per pixel
+     * by the direction the pixel looks in relative to the light ({@code hazeScatterShape} in
+     * medium.slang), so the haze glows toward the sun and picks up the light's own hue at sunset. The
+     * shaping is mean-1 over the sphere, so these values remain the honest "how much haze does this
+     * dimension have" control.
      *
      * <p>Overworld depth is multiplied by sky visibility so caves/interiors remain clear. The Nether and
-     * End intentionally keep their original haze at full primary depth: those dimension-wide atmospheres
-     * are part of their authored looks rather than Overworld-style outdoor fog. Disabling the live fog
-     * option still zeros every dimension's parameters as well as the shader feature bit.
+     * End keep their authored dimension-wide colour at full primary depth: those atmospheres are part of
+     * their look rather than Overworld-style outdoor fog. Disabling the live fog option still zeros
+     * every dimension's parameters as well as the shader feature bit.
      *
-     * <p>Densities are per block: the Nether's 0.012 halves radiance at roughly 58 blocks, while the End's
-     * 0.0016 does so at roughly 430 blocks.
+     * <p><b>Density is solved, not hand-picked.</b> Every dimension derives its per-block sigma from a
+     * target horizon transmittance over {@link #fogDistanceBlocks()}, the same way
+     * {@link #overworldFog} does. A fixed sigma cannot survive a render-distance change: the Nether's
+     * old 0.012 left only 10% of the radiance at 192 blocks, so at 12 chunks it was an opaque red wall
+     * standing well inside the chunk-load edge it exists to hide, and on a server capping the view
+     * distance the wall moved with it. Keying each dimension to the distance its chunks actually stop
+     * makes the haze scale-invariant in all three.
      */
     private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor) {
         if (!CausticaConfig.Rt.Composite.FOG.value()) {
             return new Float4(0.0f, 0.0f, 0.0f, 0.0f);
         }
         return switch (dimension) {
-            case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);
-            case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);
-            // Investigative disable of the Overworld day/night distance haze (see overworldFog).
-            // The reported block/shadow/water artifacts are suspected to come from this fog, so it is
-            // zeroed out to confirm the cause while the authored Nether/End haze and the cloud fog
-            // (clouds.slang) are deliberately kept intact. To restore the normal look, return
-            // -> overworldFog(weather, dayFactor);
-            default -> new Float4(0.0f, 0.0f, 0.0f, 0.0f);
+            case DIMENSION_NETHER -> dimensionFog(0.052f, 0.0125f, 0.0065f, NETHER_FOG_HORIZON_TRANSMITTANCE);
+            case DIMENSION_END -> dimensionFog(0.010f, 0.0055f, 0.016f, END_FOG_HORIZON_TRANSMITTANCE);
+            default -> overworldFog(weather, dayFactor);
         };
+    }
+
+    /**
+     * Authored dimension haze (Nether, End) at a target horizon transmittance.
+     *
+     * <p>Inverts Beer-Lambert the same way {@link #overworldFog} does — {@code sigma = -ln(t) / d} — so
+     * the colour stays authored while the DENSITY tracks where the terrain actually ends. The Nether is
+     * deliberately hazier than the Overworld (it is a dimension of red gloom) and the End only slightly,
+     * since its authored look is a dark void where the islands should stay readable.
+     */
+    private static Float4 dimensionFog(float r, float g, float b, float horizonTransmittance) {
+        float distance = fogDistanceBlocks();
+        float density = (float) (-Math.log(horizonTransmittance) / Math.max(distance, 16.0));
+        return new Float4(r, g, b, density);
     }
 
     /**

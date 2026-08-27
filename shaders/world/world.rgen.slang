@@ -879,8 +879,16 @@ void main() {
     // converged into one pixel. Besides excluding covered caves/interiors, this prevents each Fresnel
     // branch around a thin waterfall from independently sampling emissive in-scatter (the old bright,
     // noisy outline). Miss pixels store zero, so dimension skyboxes remain untouched.
+    //
+    // The in-scatter is additionally shaped by where this pixel looks relative to the light (see
+    // hazeScatterShape) — the one thing the ray-marched cloud deck had that this medium did not. The
+    // view direction is rebuilt from the same invViewProj Pass A used, deliberately UNJITTERED: the
+    // haze is a low-frequency signal, and feeding it jitter-rate noise would only hand the denoiser
+    // work. Two matrix multiplies per pixel, no new binding, no push-constant change.
     float fogDepth = fogEnabled() ? max(gFogDepthMask[pix], 0.0) : 0.0;
-    AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);
+    float2 fogNdc = (float2(pix) + 0.5) / float2(dimensions) * 2.0 - 1.0;
+    AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth,
+            hazeScatterShape(worldPush, primaryRayDir(fogNdc)));
     radiance = radiance * screenFog.transmittance + screenFog.inScatter;
 
     // Sanitize the combined radiance every downstream consumer reads. A single non-finite sample

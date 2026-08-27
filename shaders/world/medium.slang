@@ -1,5 +1,5 @@
-// Participating media: the tint-to-extinction mappings and the depth-2 medium stack the dielectric
-// interface pushes and pops. Depends on core only.
+// Participating media: the tint-to-extinction mappings, the atmospheric haze's directional shaping,
+// and the depth-2 medium stack the dielectric interface pushes and pops. Depends on core + math only.
 
 // Per-channel Beer–Lambert extinction from a water body's biome tint (carried in payload.albedo for
 // water hits, or worldPush.waterParams.xyz for the camera's own biome when starting submerged). A blue ocean
@@ -8,6 +8,7 @@
 
 import world_common;
 import world_core;
+import math;
 
 public static const float WATER_DENSITY = 0.1;
 public static const float3 WATER_ABSORB_FLOOR = float3(0.015, 0.010, 0.008);
@@ -59,7 +60,78 @@ public struct AmbientFog {
     public float3 transmittance; // what survives of the radiance coming from beyond it
 };
 
-public AmbientFog evalAmbientFog(float4 ambientFog, float distance) {
+// ---- Directional shaping of that medium (the part the cloud march had and this did not).
+//
+// WHY THIS IS NOT A MARCH. It is tempting to "just use the cloud fog here", but marching a
+// HOMOGENEOUS medium is provably the same computation that is already closed-form below. cloudMarch
+// accumulates `scatter += transmittance * S * (1 - exp(-sigma*stepLen)); transmittance *= ...`, which
+// for a constant S telescopes to exactly `S * (1 - exp(-sigma*total))` — the two lines in
+// evalAmbientFog. So a haze march would cost CLOUD_MARCH_STEPS x CLOUD_LIGHT_STEPS per pixel per
+// bounce and return the number we already have.
+//
+// What the cloud march buys that the flat haze lacked is not the integration, it is that each sample
+// is SHADED: a Henyey-Greenstein phase against the light, and a tint from the light's own colour. For
+// a homogeneous medium both of those are constant along the ray, so they factor straight out of the
+// integral. Evaluating them once per pixel here gives the whole angular response for the price of two
+// matrix multiplies and one phase evaluation.
+//
+// The shape multiplies the AUTHORED ambientFog.xyz rather than replacing it, so:
+//   * the Java side still owns how much haze each dimension has and what its base colour is;
+//   * a dimension with no light (Nether/End push a zero lightRadiance — see RtComposite.skyPush)
+//     returns exactly 1.0 and keeps its authored flat haze bit-for-bit;
+//   * the phase is mean-1 over the sphere, so this redistributes brightness and cannot quietly add
+//     energy the exposure pass then has to absorb.
+
+// Aerosol anisotropy. Clouds use 0.72 for water droplets; a dry haze is a broad Mie scatterer, so the
+// lobe is deliberately wider. A tight one puts a hard bright disc around the sun instead of the soft
+// sky-wide glow that reads as atmosphere.
+public static const float HAZE_HG_G = 0.35;
+public static const float HAZE_HG_BACK = -0.25;      // weak backward lobe, so the anti-sun side is not flat
+public static const float HAZE_FORWARD_WEIGHT = 0.8; // forward/back lobe mix
+// Blend between the authored flat haze (0, the exact old behaviour) and the fully directional one (1).
+public static const float HAZE_PHASE_STRENGTH = 0.85;
+// How strongly the light's own hue tints the haze. At noon lightRadiance is near-white so this does
+// almost nothing; at sunset it is deep orange, which is what turns the horizon gold.
+public static const float HAZE_TINT_STRENGTH = 0.6;
+// lightRadiance magnitude treated as "the sun is fully up". The Overworld sun peaks around 21
+// (RtComposite.skyPush sunPeak) and the moon around 0.2, so this saturates on any real daylight while
+// moonlight stays near the flat haze — a moonlit night should not get a sun glow.
+public static const float HAZE_SUN_FULL_RADIANCE = 1.5;
+// Floor on the scalar shape, so looking directly away from the sun dims the haze but can never punch a
+// hole in the distance or hand a negative in-scatter to the composite.
+public static const float HAZE_MIN_SHAPE = 0.05;
+
+/**
+ * Per-pixel multiplier on the authored in-scatter, from the direction this pixel looks in.
+ *
+ * @param push     the frame's world data (light direction and radiance).
+ * @param viewDir  the camera ray direction of the pixel whose fog depth was captured.
+ */
+public float3 hazeScatterShape(WorldPush push, float3 viewDir) {
+    float3 flat = float3(1.0, 1.0, 1.0);
+    float sunStrength = clamp(luminance(push.lightRadiance.xyz) / HAZE_SUN_FULL_RADIANCE, 0.0, 1.0);
+    if (sunStrength <= 0.0) {
+        return flat; // no directional light: authored flat haze, unchanged
+    }
+    float3 lightDir = push.lightDir.xyz;
+    float lightLen = length(lightDir);
+    if (lightLen < 1.0e-4) {
+        return flat;
+    }
+    float cosT = dot(viewDir, lightDir / lightLen);
+    // hg() is 4*pi-normalised (it integrates to 1 over the sphere), so scaling by 4*pi makes this term
+    // mean-1 over all directions: the authored brightness is redistributed, not amplified on average.
+    float phase = lerp(hg(cosT, HAZE_HG_BACK), hg(cosT, HAZE_HG_G), HAZE_FORWARD_WEIGHT) * (4.0 * PI);
+    float amount = HAZE_PHASE_STRENGTH * sunStrength;
+    float shape = max(1.0 + amount * (phase - 1.0), HAZE_MIN_SHAPE);
+    // Normalising the light by its brightest channel gives its HUE with no hand-authored sunset ramp:
+    // lightRadiance already carries the atmosphere's own Rayleigh+Mie transmittance curve.
+    float maxChannel = max(push.lightRadiance.r, max(push.lightRadiance.g, push.lightRadiance.b));
+    float3 tint = push.lightRadiance.xyz / max(maxChannel, 1.0e-5);
+    return shape * lerp(flat, tint, HAZE_TINT_STRENGTH * sunStrength);
+}
+
+public AmbientFog evalAmbientFog(float4 ambientFog, float distance, float3 scatterShape) {
     AmbientFog result;
     result.inScatter = float3(0.0, 0.0, 0.0);
     result.transmittance = float3(1.0, 1.0, 1.0);
@@ -72,7 +144,7 @@ public AmbientFog evalAmbientFog(float4 ambientFog, float distance) {
     // thousands of blocks), which some drivers handle at a large penalty.
     float t = exp(-min(density * distance, 32.0));
     result.transmittance = float3(t, t, t);
-    result.inScatter = ambientFog.xyz * (1.0 - t);
+    result.inScatter = ambientFog.xyz * scatterShape * (1.0 - t);
     return result;
 }
 
