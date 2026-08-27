@@ -67,6 +67,7 @@ public final class CausticaConfig {
             Rt.Sharc.TEMPORAL_BLEND, Rt.Sharc.START_BOUNCE, Rt.Sharc.STRENGTH, Rt.Sharc.MAX_DISTANCE,
             Rt.Sharc.FRAME_LIFETIME, Rt.Sharc.NORMAL_THRESHOLD, Rt.Sharc.STABLE_FRAMES, Rt.Sharc.DEBUG,
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
+            Rt.Lights.POINT_BLOCK_LIGHTS, Rt.Lights.TEXTURE_PACK_LIGHTS,
             Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
@@ -849,6 +850,12 @@ public final class CausticaConfig {
                     lightIntensity("caustica.rt.dynamicLightIntensity", "lights.dynamic-intensity", 1.0f);
             public static final FloatSetting BLOCK_INTENSITY =
                     lightIntensity("caustica.rt.blockLightIntensity", "lights.block-emissive-intensity", 2.0f);
+            /** Render every collected emissive block as an analytic point light instead of RIS sampling. */
+            public static final BooleanSetting POINT_BLOCK_LIGHTS =
+                    bool("caustica.rt.pointBlockLights", "lights.point-block-lights", false);
+            /** Preserve resource-pack albedo/emission colour on analytic block lights. */
+            public static final BooleanSetting TEXTURE_PACK_LIGHTS =
+                    bool("caustica.rt.texturePackLights", "lights.texture-pack-lights", true);
             /**
              * Reservoir-based spatio-temporal resampling for emitter NEE. When disabled, every shading
              * vertex uses the original independent per-frame RIS reservoir and no history allocation is

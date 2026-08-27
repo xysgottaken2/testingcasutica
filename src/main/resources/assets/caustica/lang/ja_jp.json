@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Caustica独自エンジンによるフレーム生成：このGPUにはDLSS Frame Generationがないため（RTX 40/50シリーズのみ）、Causticaのネイティブなモーションベクトル補間エンジンが引き継ぎます — 同じトグルで、倍率は最大4x。GPU負荷と遅延がわずかに増えます。",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex低遅延モード：ドライバーがフレーム提出を制御し、ディスプレイに間に合うちょうどそのタイミングでフレームが完成するようにします — 入力から画面までの遅延が減ります。フレーム生成と特に相性が良いです（FGは約1フレーム分の遅延を増やしますが、Reflexはキューの残りを除去します）。最大FPSがわずかに下がることがあります — 遅延とスループットのトレードオフです。",
-	"caustica.options.rt.reflex.unsupported.tooltip": "利用できません：このデバイスではVK_NV_low_latency2拡張が有効になっていません（新しいNVIDIAドライバーが必要です）。"
+	"caustica.options.rt.reflex.unsupported.tooltip": "利用できません：このデバイスではVK_NV_low_latency2拡張が有効になっていません（新しいNVIDIAドライバーが必要です）。",
+	"caustica.options.rt.pointBlockLights": "発光ブロックにポイントライトを使用",
+	"caustica.options.rt.pointBlockLights.tooltip": "表示されている発光ブロックをRISでサンプリングせず、解析的なポイントライトとして扱います。非常に重くなりますが、発光によるノイズのないきれいなスクリーンショットに便利です。",
+	"caustica.options.rt.texturePackLights": "テクスチャパックの光データを使用",
+	"caustica.options.rt.texturePackLights.tooltip": "リソースパックのアルベド、発光色、発光度をブロックのポイントライトに使用します。無効にすると均一な白色の発光になります。"
 }

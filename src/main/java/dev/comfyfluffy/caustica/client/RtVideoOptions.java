@@ -196,6 +196,8 @@ public final class RtVideoOptions {
     public static OptionInstance<?>[] lightOptions() {
         return new OptionInstance<?>[] {
             heldItemLight(),
+            pointBlockLights(),
+            texturePackLights(),
             blockEmissiveIntensity(),
             dynamicIntensity(),
             restirSampling(),
@@ -305,6 +307,14 @@ public final class RtVideoOptions {
     /** Master toggle for the analytic light a luminous held item casts (torch in a cave, ...). */
     private static OptionInstance<Boolean> heldItemLight() {
         return bool("caustica.options.rt.heldItemLight", CausticaConfig.Rt.Lights.HELD_ITEM_LIGHT);
+    }
+
+    private static OptionInstance<Boolean> pointBlockLights() {
+        return bool("caustica.options.rt.pointBlockLights", CausticaConfig.Rt.Lights.POINT_BLOCK_LIGHTS);
+    }
+
+    private static OptionInstance<Boolean> texturePackLights() {
+        return bool("caustica.options.rt.texturePackLights", CausticaConfig.Rt.Lights.TEXTURE_PACK_LIGHTS);
     }
 
     private static OptionInstance<Boolean> restirSampling() {

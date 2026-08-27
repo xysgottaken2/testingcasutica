@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "透過 Caustica 自有引擎的畫面生成：此 GPU 沒有 DLSS Frame Generation（僅限 RTX 40/50 系列），因此由 Caustica 的原生運動向量插值引擎接管 —— 同一開關，倍率最高 4x。會多消耗一點 GPU 與延遲。",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex 低延遲模式：驅動會調度幀提交，讓幀恰好趕在顯示前完成——減少輸入到畫面之間的延遲。與幀生成特別搭配（幀生成會增加約一幀的延遲，Reflex 則消除其餘的佇列延遲）。可能會略微降低最高 FPS——這是延遲與吞吐的權衡。",
-	"caustica.options.rt.reflex.unsupported.tooltip": "不可用：此裝置未啟用 VK_NV_low_latency2 擴充功能（需要較新的 NVIDIA 驅動）。"
+	"caustica.options.rt.reflex.unsupported.tooltip": "不可用：此裝置未啟用 VK_NV_low_latency2 擴充功能（需要較新的 NVIDIA 驅動）。",
+	"caustica.options.rt.pointBlockLights": "為發光方塊使用點光源",
+	"caustica.options.rt.pointBlockLights.tooltip": "將每個可見的發光方塊作為解析點光源處理，而不是透過 RIS 取樣。效能開銷極高，但適合拍攝沒有發光雜訊的乾淨截圖。",
+	"caustica.options.rt.texturePackLights": "使用材質包光照資料",
+	"caustica.options.rt.texturePackLights.tooltip": "為方塊點光源使用資源包的反照率、發光顏色與發光強度。關閉後使用簡單的統一白色發光源。"
 }

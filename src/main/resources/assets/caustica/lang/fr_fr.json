@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Frame Generation via le moteur propre de Caustica : ce GPU n'a pas DLSS Frame Generation (séries RTX 40/50 uniquement), donc le moteur natif d'interpolation par vecteurs de mouvement de Caustica prend le relais — même interrupteur, multiplicateur jusqu'à 4x. Coûte un peu de GPU et de latence en plus.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex (faible latence) : le driver cadence la soumission des images pour qu'elles soient prêtes juste à temps pour l'affichage — moins de délai entre votre entrée et l'écran. Se combine particulièrement bien avec le Frame Generation (la FG coûte environ une image de latence ; Reflex retire le reste de la file). Peut réduire légèrement les FPS maximum — c'est l'échange latence/débit.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "Indisponible : l'extension VK_NV_low_latency2 n'a pas été activée sur ce périphérique (pilote NVIDIA récent requis)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "Indisponible : l'extension VK_NV_low_latency2 n'a pas été activée sur ce périphérique (pilote NVIDIA récent requis).",
+	"caustica.options.rt.pointBlockLights": "Sources ponctuelles pour blocs émissifs",
+	"caustica.options.rt.pointBlockLights.tooltip": "Traite chaque bloc émissif visible comme une source ponctuelle analytique au lieu de l’échantillonner via RIS. Très coûteux, mais pratique pour des captures propres sans bruit d’émission.",
+	"caustica.options.rt.texturePackLights": "Utiliser les données lumineuses du pack de textures",
+	"caustica.options.rt.texturePackLights.tooltip": "Utilise l’albédo, la couleur d’émission et l’émissivité du pack de ressources pour les sources des blocs. Désactivez cette option pour un émetteur blanc uniforme."
 }

@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Caustica 자체 엔진을 통한 프레임 생성: 이 GPU에는 DLSS Frame Generation이 없으므로(RTX 40/50 시리즈 전용), Caustica의 네이티브 모션 벡터 보간 엔진이 대신합니다 — 동일한 토글, 배율은 최대 4x. GPU 부하와 지연이 약간 늘어납니다.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex 저지연 모드: 드라이버가 프레임 제출을 조율하여 디스플레이에 딱 맞춰 프레임이 끝나도록 합니다 — 입력과 화면 사이의 지연이 줄어듭니다. 프레임 생성과 특히 잘 어울립니다(FG는 렌더링된 프레임 하나 정도의 지연을 더하고, Reflex는 나머지 큐를 제거합니다). 최대 FPS가 약간 줄어들 수 있습니다 — 지연/처리량의 교환입니다.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "사용 불가: 이 기기에서 VK_NV_low_latency2 확장이 활성화되지 않았습니다(최신 NVIDIA 드라이버 필요)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "사용 불가: 이 기기에서 VK_NV_low_latency2 확장이 활성화되지 않았습니다(최신 NVIDIA 드라이버 필요).",
+	"caustica.options.rt.pointBlockLights": "발광 블록에 점 광원 사용",
+	"caustica.options.rt.pointBlockLights.tooltip": "보이는 모든 발광 블록을 RIS로 샘플링하지 않고 분석적 점 광원으로 처리합니다. 매우 무겁지만 발광 조명의 노이즈가 없는 깨끗한 스크린샷에 유용합니다.",
+	"caustica.options.rt.texturePackLights": "텍스처 팩 조명 데이터 사용",
+	"caustica.options.rt.texturePackLights.tooltip": "리소스 팩의 알베도, 발광 색상과 발광도를 블록 점 광원에 사용합니다. 끄면 단순한 균일한 흰색 발광체를 사용합니다."
 }

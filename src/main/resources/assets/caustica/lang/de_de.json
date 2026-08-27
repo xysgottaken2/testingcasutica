@@ -154,5 +154,9 @@
 	"caustica.options.rt.frameGeneration.nativeFallback.tooltip": "Frame Generation über Causticas eigene Engine: Diese GPU hat kein DLSS Frame Generation (nur RTX 40/50er-Serie), daher übernimmt Causticas native Motion-Vector-Interpolation — gleicher Schalter, Multiplikator bis 4x. Kostet etwas zusätzliche GPU-Leistung und Latenz.",
 	"caustica.options.rt.reflex": "NVIDIA Reflex",
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex (niedrige Latenz): der Driver taktet die Frame-Abgabe so, dass Frames genau rechtzeitig fürs Display fertig werden — weniger Verzögerung zwischen Eingabe und Bild. Besonders sinnvoll mit Frame Generation (FG kostet etwa einen Frame Latenz, Reflex entfernt den Rest der Warteschlange). Kann das FPS-Maximum leicht senken — der Latenz/Durchsatz-Kompromiss.",
-	"caustica.options.rt.reflex.unsupported.tooltip": "Nicht verfügbar: die VK_NV_low_latency2-Erweiterung wurde auf diesem Gerät nicht aktiviert (aktuelle NVIDIA-Treiber erforderlich)."
+	"caustica.options.rt.reflex.unsupported.tooltip": "Nicht verfügbar: die VK_NV_low_latency2-Erweiterung wurde auf diesem Gerät nicht aktiviert (aktuelle NVIDIA-Treiber erforderlich).",
+	"caustica.options.rt.pointBlockLights": "Punktlichter für leuchtende Blöcke",
+	"caustica.options.rt.pointBlockLights.tooltip": "Behandelt jeden sichtbaren leuchtenden Block als analytisches Punktlicht statt ihn über RIS abzutasten. Extrem teuer, aber ideal für saubere Screenshots ohne Rauschen bei der Emissionsbeleuchtung.",
+	"caustica.options.rt.texturePackLights": "Texturpack-Lichtdaten verwenden",
+	"caustica.options.rt.texturePackLights.tooltip": "Verwendet Albedo, Emissionsfarbe und Emissivität des Ressourcenpakets für analytische Blocklichter. Deaktivieren, um einen einfachen weißen Emitter zu verwenden."
 }

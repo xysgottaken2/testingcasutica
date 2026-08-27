@@ -1689,7 +1689,8 @@ public final class RtComposite {
                     CausticaConfig.Rt.Lights.RIS_CANDIDATES.value(),
                     new Float4(CausticaConfig.Rt.Lights.BLOCK_INTENSITY.value(),
                             CausticaConfig.Rt.Lights.DYNAMIC_INTENSITY.value(),
-                            0.0f, 0.0f),
+                            CausticaConfig.Rt.Lights.POINT_BLOCK_LIGHTS.value() ? 1.0f : 0.0f,
+                            CausticaConfig.Rt.Lights.TEXTURE_PACK_LIGHTS.value() ? 1.0f : 0.0f),
                     new Float4(weather.rain(), weather.thunder(), weather.skyDarken(),
                             weather.lightAttenuation()),
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the

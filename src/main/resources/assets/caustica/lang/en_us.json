@@ -205,5 +205,9 @@
 	"caustica.options.rt.reflex.tooltip": "NVIDIA Reflex low-latency mode: the driver paces frame submission so frames finish just in time for the display — less delay between your input and the screen. Pairs especially well with Frame Generation (FG costs about one rendered frame of latency; Reflex removes the rest of the pipeline queue). May slightly reduce maximum FPS — that's the latency/throughput trade.",
 	"caustica.options.rt.reflex.unsupported.tooltip": "Unavailable: the VK_NV_low_latency2 extension was not enabled on this device (requires a recent NVIDIA driver).",
 	"caustica.options.rt.metallicShininess": "Metallic Shininess",
-	"caustica.options.rt.metallicShininess.tooltip": "Polishes surfaces authored as metallic by reducing their roughness. 0% keeps the resource pack's material response; higher values make metallic reflections sharper without changing non-metal blocks or bloom."
+	"caustica.options.rt.metallicShininess.tooltip": "Polishes surfaces authored as metallic by reducing their roughness. 0% keeps the resource pack's material response; higher values make metallic reflections sharper without changing non-metal blocks or bloom.",
+	"caustica.options.rt.pointBlockLights": "Point Lights for Emissive Blocks",
+	"caustica.options.rt.pointBlockLights.tooltip": "Treat every visible emissive block as an analytic point light instead of sampling it through RIS. Extremely expensive, but useful for clean screenshots with no emissive-light noise.",
+	"caustica.options.rt.texturePackLights": "Use Texture Pack Light Data",
+	"caustica.options.rt.texturePackLights.tooltip": "Use the resource pack's albedo, emission colour and emissivity for analytic block lights. Disable for a simpler uniform white emitter."
 }
