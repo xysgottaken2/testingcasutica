@@ -33,6 +33,11 @@ final class RtDenoiserShaderRegressionTest {
     private static final Path SVGF_ATROUS = REPO_ROOT.resolve("shaders/display/svgf_atrous.comp");
     private static final Path NRD_DENOISER =
             REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/pipeline/RtNrdDenoiser.java");
+    private static final Path RR_PREFILTER = REPO_ROOT.resolve("shaders/display/rr_prefilter.comp");
+    private static final Path RR_PREFILTER_PIPELINE =
+            REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/pipeline/RtRrPrefilterPipeline.java");
+    private static final Path COMPOSITE =
+            REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
 
     /**
      * The demodulation floors must agree between the shader that divides the material out and the
@@ -568,5 +573,42 @@ final class RtDenoiserShaderRegressionTest {
                 "the specular pre-pass must use the scaled radius");
         assertTrue(denoiser.contains("private static final float MIN_PREPASS_BLUR_RADIUS"),
                 "the pre-pass must never scale to zero; NRD requires it for probabilistic input");
+    }
+
+    /**
+     * DLSS Ray Reconstruction is the denoiser on that path — SVGF never runs, and the player cannot
+     * turn RR off — so 1-spp fireflies and 1-px contact holes have to be cut on the colour RR
+     * actually evaluates. NVIDIA forbids pre-blurring the RR input; this pass is an outlier clamp
+     * (6-of-8 neighbours agree), not a blur, and it cannot run in place because a 3x3 neighbourhood
+     * spans workgroups.
+     */
+    @Test
+    void dlssRrReadsASpeckledFilteredTraceNotTheRawOutput() throws Exception {
+        String composite = Files.readString(COMPOSITE);
+        String shader = Files.readString(RR_PREFILTER);
+        String pipeline = Files.readString(RR_PREFILTER_PIPELINE);
+
+        assertTrue(composite.contains("rrPrefilterPipeline.dispatch(cmd, renderW, renderH);"),
+                "the pre-RR speckle pass must run before evaluate");
+        assertTrue(composite.contains("evaluate(cmd.address(), rrColor, gDepth, gMotion, gAlbedo,"),
+                "RR must read the filtered colour, not the raw trace");
+        assertFalse(composite.contains("evaluate(cmd.address(), output, gDepth, gMotion, gAlbedo,"),
+                "feeding the raw trace to RR is the bug this pass exists to close");
+        assertTrue(composite.contains("rrPrefilter = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16B16A16_SFLOAT,"),
+                "the filter needs a second rgba16f; a 3x3 cannot run in place across workgroups");
+
+        assertTrue(shader.contains("if (hot >= 6 && lum > 0.0)"),
+                "bright fireflies need a 6-of-8 neighbourhood vote");
+        assertTrue(shader.contains("if (hole >= 6)"),
+                "isolated dark 1-px contact lines need a 6-of-8 neighbourhood vote");
+        assertTrue(shader.contains("if (!(z > 1.0e-5))"),
+                "sky skip must use hardware reversed-Z (gDepth ≈ 0), not gViewZ which RR never writes");
+        assertFalse(shader.contains("gViewZ"),
+                "FEATURE_VIEWZ is off on the RR path; the filter must not depend on it");
+
+        assertTrue(pipeline.contains("rr_prefilter.comp.spv"),
+                "the compute pipeline must load the prefilter SPIR-V");
+        assertTrue(pipeline.contains("setImages(long colorInView, long colorOutView, long depthView)"),
+                "bindings are colour in, colour out, hardware depth");
     }
 }

@@ -76,6 +76,7 @@ import dev.comfyfluffy.caustica.rt.pipeline.RtNativeFrameGenPipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtSvgfDenoiser;
 import dev.comfyfluffy.caustica.rt.pipeline.RtNrdDenoiser;
 import dev.comfyfluffy.caustica.rt.pipeline.RtNrdCombinePipeline;
+import dev.comfyfluffy.caustica.rt.pipeline.RtRrPrefilterPipeline;
 import dev.comfyfluffy.caustica.rt.overlay.RtWorldOverlay;
 import dev.comfyfluffy.caustica.rt.pipeline.RtHdrCompositePipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtSdrPresentPipeline;
@@ -740,6 +741,11 @@ public final class RtComposite {
     private RtImage nrdValidation;
     private RtNrdCombinePipeline nrdCombinePipeline;
     private boolean renderSizeNrdEnabled;
+    // Pre-DLSS-RR speckle filter. SVGF never runs on the RR path, so 1-spp fireflies and 1-px
+    // contact holes have to be cut on the colour image RR actually reads. Cannot filter in place
+    // (3x3 neighbourhood spans workgroups), so this is a second rgba16f at render res.
+    private RtImage rrPrefilter;
+    private RtRrPrefilterPipeline rrPrefilterPipeline;
     // Display-res RT image the display mapper reads: DLSS-RR writes it (render -> display denoise+upscale), or a
     // linear blit of `output` fills it when RR is off/unavailable (the no-RR reference / fallback).
     private RtImage rrOutput;
@@ -1296,6 +1302,10 @@ public final class RtComposite {
             rrOutput.destroy();
             rrOutput = null;
         }
+        if (rrPrefilter != null) {
+            rrPrefilter.destroy();
+            rrPrefilter = null;
+        }
     }
 
     /**
@@ -1390,6 +1400,7 @@ public final class RtComposite {
         boolean svgfEnabled = !rrEnabled && !nrdEnabled && CausticaConfig.Rt.Denoise.ENABLED.value();
         if (output != null && continuationQueue != null
                 && displayImage != null && hdrDisplayImage != null && rrOutput != null && exposure.ready()
+                && (rrPrefilter != null) == rrEnabled
                 && displayW == width && displayH == height
                 && renderSizeRrEnabled == rrEnabled && renderSizeRrQuality == rrQuality
                 && renderSizeFsrEnabled == fsrEnabled && renderSizeFsrQuality == fsrQuality
@@ -1530,6 +1541,18 @@ public final class RtComposite {
                     output.view, gAlbedo.view, gViewZ.view, gSpecAlbedo.view, gNormal.view);
             // NRD's own temporal history cannot survive a resolution change either.
             RtNrdDenoiser.INSTANCE.resetHistory();
+        }
+        // Speckle-filter target + pipeline exist only while RR actually reads the trace. NVIDIA
+        // forbids blurring before Ray Reconstruction; this pass is an outlier clamp, not a blur.
+        if (rrEnabled) {
+            rrPrefilter = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16B16A16_SFLOAT,
+                    "rr prefilter " + renderW + "x" + renderH);
+            if (rrPrefilterPipeline == null) {
+                rrPrefilterPipeline = RtRrPrefilterPipeline.create(ctx);
+            } else {
+                rrPrefilterPipeline.invalidateBindings();
+            }
+            rrPrefilterPipeline.setImages(output.view, rrPrefilter.view, gDepth.view);
         }
         // Display-res RT image the display mapper reads. Always present (DLSS-RR target, or blit-upscale fallback).
         rrOutput = ctx.createStorageImage(width, height, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "DLSS-RR output " + width + "x" + height);
@@ -1934,12 +1957,22 @@ public final class RtComposite {
                 denoisedSource = nrdValidation;
             }
 
-            // DLSS-RR denoise + upscale. The RT pass wrote noisy color (render res) + guides;
-            // RR reads them and writes the display-res denoised result straight into rrOutput.
+            // DLSS-RR denoise + upscale. SVGF never runs on this path, so 1-spp fireflies and
+            // 1-px contact holes are cut here — on the colour RR actually evaluates — then RR
+            // writes the display-res reconstructed image into rrOutput. Outlier clamp only:
+            // NVIDIA forbids pre-blurring the RR input.
             if (rrPath && RtDlssRr.INSTANCE.ensureFeature(cmd.address(), renderW, renderH, displayW, displayH)) {
+                RtImage rrColor = output;
+                if (rrPrefilterPipeline != null && rrPrefilter != null && gDepth != null) {
+                    try (RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.rrPrefilter")) {
+                        rrPrefilterPipeline.dispatch(cmd, renderW, renderH);
+                    }
+                    VulkanCommandEncoder.memoryBarrier(cmd, stack); // filtered colour visible to RR
+                    rrColor = rrPrefilter;
+                }
                 try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "DLSS-RR evaluate");
                      RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.dlssRr")) {
-                    rrDone = RtDlssRr.INSTANCE.evaluate(cmd.address(), output, gDepth, gMotion, gAlbedo,
+                    rrDone = RtDlssRr.INSTANCE.evaluate(cmd.address(), rrColor, gDepth, gMotion, gAlbedo,
                             gSpecAlbedo, gNormal, gSpecMotion, rrOutput, renderW, renderH, displayW, displayH,
                             -jitterX, -jitterY, frameViewRotation, frameProjection);
                 }
@@ -2911,6 +2944,10 @@ public final class RtComposite {
         if (nrdCombinePipeline != null) {
             nrdCombinePipeline.destroy();
             nrdCombinePipeline = null;
+        }
+        if (rrPrefilterPipeline != null) {
+            rrPrefilterPipeline.destroy();
+            rrPrefilterPipeline = null;
         }
         if (svgfDenoiser != null) {
             svgfDenoiser.destroy();
@@ -3941,6 +3978,19 @@ public final class RtComposite {
      * raw FG sky (the pre-mask artifact state) instead of killing FG entirely.
      */
     private void ensureFgSkyMask(RtContext ctx) {
+        if (fgSkyMaskPipeline != null || fgSkyMaskFailed) {
+            return;
+        }
+        try {
+            fgSkyMaskPipeline = RtFgSkyMaskPipeline.create(ctx);
+            CausticaMod.LOGGER.info("FG sky mask active (generated frames copy the real frame's sky)");
+        } catch (Throwable t) {
+            fgSkyMaskFailed = true;
+            CausticaMod.LOGGER.error("FG sky mask pipeline creation failed; generated frames keep raw FG sky", t);
+        }
+    }
+}
+SkyMask(RtContext ctx) {
         if (fgSkyMaskPipeline != null || fgSkyMaskFailed) {
             return;
         }

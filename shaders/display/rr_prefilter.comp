@@ -1,0 +1,82 @@
+#version 460
+
+// Pre-DLSS-RR speckle filter. RR is the denoiser on this path — SVGF never runs — so 1-spp
+// outliers have to be cut HERE, on the colour RR actually reads.
+//
+// Two complementary 3x3 tests (centre excluded, 6-of-8 neighbours must agree) so a real shadow
+// edge or a torch is left alone:
+//   * firefly: centre much brighter than its neighbours → scale down to the neighbourhood
+//   * hole / 1-px contact line: centre much darker → lift toward the neighbourhood mean
+// The second case is the "faint close-up lines that vanish while walking": RR locks a stable
+// dark speckle into reconstructed detail when the camera is still, then smears it under motion.
+//
+// Sky (reversed-Z far ≈ 0) is passed through so the sun disc is not treated as a firefly.
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, set = 0, rgba16f) uniform readonly  image2D colorIn;
+layout(binding = 1, set = 0, rgba16f) uniform writeonly image2D colorOut;
+layout(binding = 2, set = 0, r32f)    uniform readonly  image2D depth;
+
+layout(push_constant) uniform Push {
+    int width;
+    int height;
+} pc;
+
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+vec3 load(ivec2 p) {
+    ivec2 q = clamp(p, ivec2(0), ivec2(pc.width - 1, pc.height - 1));
+    vec3 c = imageLoad(colorIn, q).rgb;
+    if (any(isnan(c)) || any(isinf(c))) {
+        return vec3(0.0);
+    }
+    return clamp(c, vec3(0.0), vec3(65504.0));
+}
+
+void main() {
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= pc.width || pix.y >= pc.height) {
+        return;
+    }
+    vec3 cur = load(pix);
+    // Hardware reversed-Z: near = 1, sky/far ≈ 0. Skip the sky so the sun/moon discs stay intact.
+    float z = imageLoad(depth, pix).r;
+    if (!(z > 1.0e-5)) {
+        imageStore(colorOut, pix, vec4(cur, 1.0));
+        return;
+    }
+
+    float lum = dot(cur, LUMA);
+    vec3 nmean = vec3(0.0);
+    float nLsum = 0.0;
+    int hot = 0;
+    int hole = 0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) {
+                continue;
+            }
+            vec3 n = load(pix + ivec2(dx, dy));
+            nmean += n;
+            float nL = dot(n, LUMA);
+            nLsum += nL;
+            if (lum > nL * 2.5 + 0.04) {
+                hot++;
+            }
+            if (lum < nL * 0.40 - 0.01) {
+                hole++;
+            }
+        }
+    }
+    nmean *= 0.125;
+    float nL = nLsum * 0.125;
+    vec3 outc = cur;
+    if (hot >= 6 && lum > 0.0) {
+        float bound = max(nL * 2.5, nL + 0.04);
+        outc *= bound / lum;
+    } else if (hole >= 6) {
+        outc = mix(cur, nmean, 0.85);
+    }
+    imageStore(colorOut, pix, vec4(max(outc, vec3(0.0)), 1.0));
+}
