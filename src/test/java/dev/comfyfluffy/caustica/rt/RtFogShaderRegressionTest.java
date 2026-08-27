@@ -18,8 +18,13 @@ final class RtFogShaderRegressionTest {
     private static final Path PRIMARY = REPO_ROOT.resolve("shaders/world/world_primary.rgen.slang");
     private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
     private static final Path MISS = REPO_ROOT.resolve("shaders/world/world.rmiss.slang");
+    private static final Path MEDIUM = REPO_ROOT.resolve("shaders/world/medium.slang");
     private static final Path JAVA =
             REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
+    private static final Path CONFIG =
+            REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/CausticaConfig.java");
+    private static final Path OPTIONS =
+            REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/client/RtVideoOptions.java");
 
     @Test
     void primaryPassWritesDepthAndSkyVisibilityIntoFogMaskTexture() throws IOException {
@@ -51,12 +56,79 @@ final class RtFogShaderRegressionTest {
     void netherAndEndRetainTheirAuthoredDistanceHaze() throws IOException {
         String java = Files.readString(JAVA);
 
+        // The COLOURS stay authored. Only the density moved from a hand-picked per-block constant to
+        // one solved from the render distance (RtComposite.dimensionFog): a fixed sigma cannot survive a
+        // view-distance change, and the Nether's old 0.012 left just 10% of the radiance at 192 blocks —
+        // an opaque wall standing well inside the chunk-load edge it exists to hide.
+        assertTrue(java.contains("case DIMENSION_NETHER -> dimensionFog(0.052f, 0.0125f, 0.0065f, "
+                        + "NETHER_FOG_HORIZON_TRANSMITTANCE);"),
+                "the Nether's original warm fog colour must not be cleared with cave fog");
+        assertTrue(java.contains("case DIMENSION_END -> dimensionFog(0.010f, 0.0055f, 0.016f, "
+                        + "END_FOG_HORIZON_TRANSMITTANCE);"),
+                "the End's original violet fog colour must not be cleared with cave fog");
+        assertTrue(java.contains("default -> overworldFog(weather, dayFactor, lightRadiance);"),
+                "the Overworld haze must not be hard-zeroed again");
+
+        // Neither dimension has a sun or a moon, so skyPush zeroes lightRadiance there; routing them
+        // through the light-relative cap would erase their haze outright.
+        String dimensionFog =
+                slice(java, "private static Float4 dimensionFog(", "private static Float4 overworldFog(");
+        assertFalse(dimensionFog.contains("luminance("),
+                "the authored Nether/End haze must not be scaled by a light it does not have");
+    }
+
+    @Test
+    void overworldHazeInScatterIsCappedAgainstTheFrameLight() throws IOException {
+        String java = Files.readString(JAVA);
+
+        // The night-grey regression this guards. The three fog colours are ABSOLUTE radiance, and the
+        // night entry was only ~11x darker than the day one while moonlight is ~200x dimmer than
+        // sunlight — so after dusk the in-scatter ran 30-200x stronger relative to the light than by
+        // day, and being near-neutral it desaturated distant blocks to grey. The cap is the fix.
         assertTrue(java.contains(
-                        "case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);"),
-                "the Nether's original warm fog colour and density must not be cleared with cave fog");
+                        "float light = Math.min(1.0f, luminance(lightRadiance) / FOG_MIN_LIGHT_FOR_FULL_HAZE);"),
+                "the Overworld in-scatter must be capped against the frame's own light level");
         assertTrue(java.contains(
-                        "case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);"),
-                "the End's original violet fog colour and density must not be cleared with cave fog");
+                        "return new Float4(clear[0] * light, clear[1] * light, clear[2] * light, density);"),
+                "the cap must scale the in-scatter while leaving the extinction untouched");
+        assertTrue(java.contains("private static final float FOG_MIN_LIGHT_FOR_FULL_HAZE"),
+                "the cap threshold must be a named constant, not an inline literal");
+    }
+
+    @Test
+    void hazeInScatterIsShapedByTheLightDirection() throws IOException {
+        String medium = Files.readString(MEDIUM);
+
+        // The one thing cloudMarch had that the haze lacked: each sample is SHADED. For a homogeneous
+        // medium the angular response is constant along the ray, so it factors out of the integral and
+        // is evaluated once per pixel rather than marched.
+        String shape = slice(medium, "public float3 hazeScatterShape(", "public AmbientFog evalAmbientFog(");
+        assertTrue(shape.contains("* (4.0 * PI)"),
+                "the phase must be mean-1 over the sphere, so shaping redistributes brightness and never adds it");
+        assertTrue(shape.contains("if (sunStrength <= 0.0) {") && shape.contains("return flat;"),
+                "a dimension with no directional light must keep its authored flat haze bit-for-bit");
+        assertTrue(shape.contains("max(1.0 + amount * (phase - 1.0), HAZE_MIN_SHAPE)"),
+                "the shape must stay positive so it cannot punch a hole in the distance");
+
+        String eval = slice(medium, "public AmbientFog evalAmbientFog(", "// ---- Participating medium");
+        assertTrue(eval.contains("result.inScatter = ambientFog.xyz * scatterShape * (1.0 - t);"),
+                "the shape must multiply the authored in-scatter, not replace it");
+    }
+
+    @Test
+    void fogThicknessIsPlayerControllableAndLive() throws IOException {
+        String config = Files.readString(CONFIG);
+        String options = Files.readString(OPTIONS);
+        String java = Files.readString(JAVA);
+
+        assertTrue(config.contains("clampedFloat(\"caustica.rt.fogStrength\", \"composite.fog-strength\""),
+                "the haze thickness must be a persisted, clamped runtime setting");
+        assertTrue(options.contains("caustica.options.rt.fogStrength"),
+                "the slider must be exposed in the RT video options");
+        assertTrue(java.contains("float strength = Math.clamp("
+                                + "CausticaConfig.Rt.Composite.FOG_HORIZON_STRENGTH.value(), 0.0f, 0.9f);")
+                        && java.contains("return 1.0f - strength;"),
+                "the slider is authored as a strength; the haze math needs the surviving transmittance");
     }
 
     @Test
@@ -72,7 +144,8 @@ final class RtFogShaderRegressionTest {
         assertInOrder(world,
                 "float3 radiance = frameRadiance / float(spp);",
                 "float fogDepth = fogEnabled() ? max(gFogDepthMask[pix], 0.0) : 0.0;",
-                "AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);",
+                "AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth,",
+                "hazeScatterShape(worldPush, primaryRayDir(fogNdc)));",
                 "radiance = radiance * screenFog.transmittance + screenFog.inScatter;");
         assertTrue(world.contains("diffRad = diffRad * screenFog.transmittance + screenFog.inScatter;")
                         && world.contains("specRad *= screenFog.transmittance;"),

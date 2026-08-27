@@ -114,58 +114,29 @@ abstract class CompileShaders extends DefaultTask {
 		// like world_common.slang match no stage glob and are picked up only via `import`.
 		def stageIncludes = ["rgen", "rchit", "rahit", "rmiss", "rcall", "comp", "vert", "frag"]
 				.collectMany { stage -> ["**/*.${stage}", "**/*.${stage}.slang"] }
-		// TEMP DIAGNOSTIC (revert before merge): the Actions log host is unreachable from the
-		// review environment, so re-emit tool output as workflow annotations, which ARE readable
-		// through the check-runs API.
-		def diag = { String tag, ByteArrayOutputStream buf ->
-			buf.toString().readLines().findAll { it.trim() }.take(40).each { println "::error::${tag} ${it}" }
-		}
 		def validate = { File spv ->
-			def errBuf = new ByteArrayOutputStream()
-			def outBuf = new ByteArrayOutputStream()
-			try {
-				execOps.exec {
-					commandLine spirvVal.get(), "--target-env", "vulkan1.2", spv.absolutePath
-					errorOutput = errBuf
-					standardOutput = outBuf
-				}
-			} catch (Exception e) {
-				diag("SPIRVVAL ${spv.name}:", errBuf); diag("SPIRVVAL ${spv.name}:", outBuf)
-				throw e
+			execOps.exec {
+				commandLine spirvVal.get(), "--target-env", "vulkan1.2", spv.absolutePath
 			}
 		}
 		def compileOne = { File src, File spv, List<String> defines ->
-			def errBuf = new ByteArrayOutputStream()
-			def outBuf = new ByteArrayOutputStream()
-			try { execOps.exec {
+			execOps.exec {
 				// -g (OpLine/OpSource debug info), not -gVS: the NonSemantic.Shader.DebugInfo form (-gVS)
 				// emits OpExtInstWithForwardRefsKHR (SPV_KHR_relaxed_extended_instruction), which trips a
 				// validation error unless the shaderRelaxedExtendedInstruction device feature is enabled.
 				// -g keeps source-level debug info for Nsight/RenderDoc without needing that extension.
 				commandLine([glslang.get(), "-V", "--target-env", "vulkan1.2", "-g"] + defines
 						+ [src.absolutePath, "-o", spv.absolutePath])
-				errorOutput = errBuf
-				standardOutput = outBuf
-			} } catch (Exception e) {
-				diag("GLSLANG ${src.name}:", errBuf); diag("GLSLANG ${src.name}:", outBuf)
-				throw e
 			}
 			validate(spv)
 		}
 		def compileOneSlang = { File src, File spv, List<String> extra ->
-			def errBuf = new ByteArrayOutputStream()
-			def outBuf = new ByteArrayOutputStream()
-			try { execOps.exec {
+			execOps.exec {
 				// Embed Slang source and line mappings in SPIR-V for RenderDoc/Nsight source debugging.
 				commandLine([slangc.get(), src.absolutePath, "-target", "spirv",
 						"-profile", "spirv_1_5", "-matrix-layout-column-major",
 						"-warnings-as-errors", "all", "-warnings-disable", "41012", "-g"] + extra
 						+ ["-o", spv.absolutePath])
-				errorOutput = errBuf
-				standardOutput = outBuf
-			} } catch (Exception e) {
-				diag("SLANGC ${src.name}:", errBuf); diag("SLANGC ${src.name}:", outBuf)
-				throw e
 			}
 			validate(spv)
 		}
@@ -570,24 +541,4 @@ publishing {
 			from components.java
 		}
 	}
-}
-
-// ---- TEMP DIAGNOSTIC (revert before merge) ---------------------------------------------
-// The Actions log host is unreachable from the review environment, so mirror the build
-// console into memory and re-emit compiler diagnostics as workflow annotations on failure.
-try {
-	def diagCaptured = new StringBuilder()
-	gradle.useLogger({ CharSequence out -> diagCaptured.append(out) } as org.gradle.api.logging.StandardOutputListener)
-	gradle.taskGraph.afterTask { t ->
-		if (t.state.failure != null) {
-			println "::error::FAILED TASK ${t.path}: ${t.state.failure.message}"
-			diagCaptured.toString().readLines()
-					.findAll { it.contains("error:") || it.contains("warning:") || it =~ /\.(slang|java|groovy)[:(]\d+/ }
-					.take(60)
-					.each { println "::error::DIAG ${it}" }
-			diagCaptured.setLength(0)
-		}
-	}
-} catch (Throwable ignored) {
-	println "::error::DIAG capture unavailable: ${ignored}"
 }
