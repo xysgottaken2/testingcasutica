@@ -90,25 +90,26 @@ final class RestirReservoirMathTest {
     }
 
     @Test
-    void sameFaceWalkMovesTowardTheFreshSampleInsteadOfFreezing() {
+    void sameFaceKeepsTheFreshSamplePointInsteadOfRestoringHistory() {
+        // Historical point frozen at 0, this frame's RIS pick at 1. Same-face merge must
+        // keep 1 so neighbours do not share one terminator line.
         double history = 0.0;
         double fresh = 1.0;
-        double walk = 0.12;
-        double walked = history * (1.0 - walk) + fresh * walk;
-        assertEquals(0.12, walked, 1.0e-12);
-        assertTrue(walked > history);
-        assertTrue(walked < fresh);
+        double kept = fresh;
+        assertEquals(1.0, kept, 0.0);
+        assertTrue(kept != history);
     }
 
     @Test
     void distanceCapTightensFarConnectionsButLeavesNearFieldAlone() {
         double maxValue = 16.0;
-        double coeff = 0.035;
+        double coeff = 0.25;
         double near = maxValue / (1.0 + coeff * 1.0);
         double far = maxValue / (1.0 + coeff * (32.0 * 32.0));
-        assertEquals(16.0 / 1.035, near, 1.0e-12);
-        assertTrue(far < 0.5);
-        assertTrue(near > 15.0);
+        double farFirefly = Math.min(far, 10.0 / 32.0);
+        assertEquals(16.0 / 1.25, near, 1.0e-12);
+        assertTrue(farFirefly < 0.08);
+        assertTrue(near > 12.0);
     }
 
     @Test

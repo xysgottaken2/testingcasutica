@@ -45,17 +45,13 @@ public static const uint RESTIR_MAX_AGE = 60u;
 public static const uint RESTIR_FLAG_TEMPORAL = 1u;
 public static const uint RESTIR_FLAG_SPATIAL = 2u;
 public static const uint RESTIR_FLAG_INVALIDATE_ON_LIGHT_CHANGE = 4u;
-// Same-face lock may walk this fraction toward the fresh RIS point each frame so a frozen
-// sample does not draw a hard terminator line on nearby blocks.
-public static const float RESTIR_SAMPLE_WALK = 0.12;
-// Distance-adaptive firefly / W caps. A torch at range has tiny p-hat, so raw W explodes and
-// visibility / GGX jitter reads as moving pinpricks. The physical 1/r^2 term is already in
-// contrib; these only cut the unphysical tail.
-public static const float RESTIR_FIREFLY_DIST = 0.035;
-public static const float RESTIR_W_DIST = 0.012;
-// Close to the camera, RIS already sees the light well. Spatial reuse here is what draws the
-// faint neighbour-disk streaks that smear away the moment you walk.
-public static const float RESTIR_CLOSE_CAMERA = 12.0;
+// Same-face lock keeps the CURRENT frame's sample point (already random on that face) so
+// neighbouring pixels do not share one frozen terminator line. Historical W/M still dominate.
+public static const float RESTIR_FIREFLY_DIST = 0.25;
+public static const float RESTIR_W_DIST = 0.08;
+// Spatial reuse is a hole-filler for FAR disocclusion only. Inside this range, and whenever
+// stickiness is high, the neighbour disk is what paints the streaks that smear when you walk.
+public static const float RESTIR_CLOSE_CAMERA = 32.0;
 public static const float RESTIR_SAME_FACE_DOT = 0.85;
 
 public float restirMaxM() {
@@ -153,6 +149,13 @@ public float restirDistanceCap(float maxValue, float dist2, float coeff) {
     return maxValue / (1.0 + coeff * max(dist2, 1.0));
 }
 
+// Last-line shade cap: the 1/r falloff is what actually kills cave pinpricks (a 0.4 spike
+// on 0.02 ambient is still a firefly). Close lights keep nearly the full maxLum.
+public float restirFireflyCap(float maxLum, float dist) {
+    float d = max(dist, 1.0);
+    return min(restirDistanceCap(maxLum, d * d, RESTIR_FIREFLY_DIST), 10.0 / d);
+}
+
 public Reservoir resEmpty() {
     Reservoir r;
     r.pos = float3(0.0, 0.0, 0.0);
@@ -224,6 +227,11 @@ public float3 evalSampleContribSplit(float3 sp, float3 lnrm, float3 le, float ar
         }
         outDiff = brdfDiff * le * (G * area);
         outSpec = brdfSpec * le * (G * area);
+        float specLum = luminance(outSpec);
+        float specCap = max(8.0 * max(luminance(outDiff), 0.02), 4.0);
+        if (specLum > specCap) {
+            outSpec *= specCap / specLum;
+        }
         contrib = outDiff + outSpec;
     } else if (sss > 0.0) {
         float backNdl = -ndl;
@@ -620,12 +628,11 @@ public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
     dst.M = min(dst.M + acceptedM, hardMaxM);
     dst.wSum += w;
     if (same) {
-        // Keep the older face so the torch does not hop, but walk the sample point a little
-        // toward this frame's RIS pick. A fully frozen point is a hard contact line on nearby
-        // blocks that only smears away while the camera moves.
+        // Keep this frame's sample point (dst.pos, already a random point on the same face).
+        // Restoring the historical point is what drew the close-up contact lines: every
+        // neighbour locked to the same spot, and TAA only smeared it while you walked.
         float3 freshPos = dst.pos;
         if (source.age >= dst.age) {
-            dst.pos = lerp(source.pos, freshPos, RESTIR_SAMPLE_WALK);
             dst.lnrm = source.lnrm;
             dst.le = source.le;
             dst.area = source.area;
@@ -634,6 +641,7 @@ public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
         } else {
             dst.age = min(dst.age + 1u, restirMaxAge());
         }
+        dst.pos = freshPos;
         dst.phat = safeTarget;
         return;
     }
@@ -772,6 +780,7 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
         bool runSpatial = restirSpatialReuse() && spatialMCap > 0.0
                 && restirSpatialSamples() > 0u
                 && !hasTemporal
+                && stickiness < 0.50
                 && cameraDistance >= RESTIR_CLOSE_CAMERA;
         if (runSpatial) {
             // Pixel-only hash: no frameIndex, so the neighbour set is temporally stable.
@@ -845,7 +854,7 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
         // larger. Hue is preserved by scaling all channels together.
         float shadedLuminance = luminance(shaded);
         if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
-        float maxLum = restirDistanceCap(restirMaxLuminance(), dist * dist, RESTIR_FIREFLY_DIST);
+        float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
         if (shadedLuminance > maxLum) {
             shaded *= maxLum / shadedLuminance;
         }
@@ -891,7 +900,7 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
             outSpec = float3(0.0, 0.0, 0.0);
             return;
         }
-        float maxLum = restirDistanceCap(restirMaxLuminance(), dist * dist, RESTIR_FIREFLY_DIST);
+        float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
         if (shadedLuminance > maxLum) {
             float scale = maxLum / shadedLuminance;
             outDiff *= scale;
