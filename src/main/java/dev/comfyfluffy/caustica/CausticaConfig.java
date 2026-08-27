@@ -677,13 +677,18 @@ public final class CausticaConfig {
              * player thinks — drag it UP for thicker fog. Capped below 1.0 because a fully opaque
              * horizon means infinite extinction per block.
              *
+             * <p>Defaults to 0.30 rather than the 0.38 that reproduces {@code FOG_HORIZON_TRANSMITTANCE}
+             * exactly. The Overworld haze has a bug history (it was hard-disabled on {@code main}), so
+             * this starts deliberately lighter than the old authored calibration; the slider is live, so
+             * raising it needs no rebuild.
+             *
              * <p>Overworld only. The Nether and End keep their authored dimension-wide haze
              * ({@code NETHER_FOG_HORIZON_TRANSMITTANCE} / {@code END_FOG_HORIZON_TRANSMITTANCE}), so
              * this cannot wash out either dimension's look. Read every frame, so it applies on the next
              * one like every other RT option.
              */
             public static final FloatSetting FOG_HORIZON_STRENGTH =
-                    clampedFloat("caustica.rt.fogStrength", "composite.fog-strength", 0.38f, 0.0f, 0.9f);
+                    clampedFloat("caustica.rt.fogStrength", "composite.fog-strength", 0.30f, 0.0f, 0.9f);
             /**
              * Weather-driven lighting. Rain and thunderstorms attenuate the sun/moon NEE radiance,
              * darken and desaturate the sky toward an overcast grey, hide the celestial discs and the

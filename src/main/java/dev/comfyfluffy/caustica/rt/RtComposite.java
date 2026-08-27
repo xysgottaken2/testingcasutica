@@ -434,7 +434,8 @@ public final class RtComposite {
     // fraction of its radiance. Below ~0.5 the world reads as permanently misty; above ~0.8 the fog
     // stops hiding the chunk-load edge it exists for. 0.62 leaves distant terrain clearly readable
     // while its silhouette softens. The player slider (Rt.Composite.FOG_HORIZON_STRENGTH) overrides it
-    // live — its default is 1 - this — and the constant is kept as the documented calibration point.
+    // live and defaults to 0.30, i.e. a slightly lighter 0.70, because the Overworld haze has a bug
+    // history; this constant stays as the documented calibration point the slider was derived from.
     private static final float FOG_HORIZON_TRANSMITTANCE = 0.62f;
     // The Nether is authored to be hazier than the Overworld — a dimension of red gloom — but not
     // opaque: 0.35 keeps the last chunk visible as a silhouette inside the haze instead of replacing it.
@@ -456,6 +457,16 @@ public final class RtComposite {
     private static final float[] FOG_DAY_COLOR = {0.052f, 0.066f, 0.090f};
     private static final float[] FOG_NIGHT_COLOR = {0.0045f, 0.0060f, 0.0105f};
     private static final float[] FOG_RAIN_COLOR = {0.062f, 0.067f, 0.076f};
+    // Minimum light luminance for the haze to keep its full authored strength. Below it the in-scatter
+    // is scaled down in proportion to the light, so the haze can never out-glow whatever is illuminating
+    // the scene. THE NIGHT-GREY BUG: these colours are absolute radiance, and the night entry was only
+    // ~11x darker than the day one while moonlight is ~200x dimmer than sunlight — so at night the
+    // in-scatter ran 30-200x stronger RELATIVE TO THE LIGHT than by day. FOG_NIGHT_COLOR is near-neutral
+    // and comparable in magnitude to moonlit terrain radiance, so it swamped the surface colour and
+    // desaturated distant blocks to grey. 1.0 sits below every daytime state (noon ~19.3, sunset ~7.6,
+    // a thunderstorm ~3.5, all as luminance of WorldPush.lightRadiance) and far above every night one
+    // (~0.01-0.06), so the day look is bit-identical to before and only the night is corrected.
+    private static final float FOG_MIN_LIGHT_FOR_FULL_HAZE = 1.0f;
     private static final Identifier SUN_ID = Identifier.withDefaultNamespace("sun");
     private static final Identifier[] MOON_IDS = createMoonIds();
     // Celestial rotation axis (the pole the sun/moon arc about): perpendicular to the east-west arc,
@@ -1702,7 +1713,9 @@ public final class RtComposite {
                             weather.lightAttenuation()),
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the
                     // haze follows the same dusk curve as the light rather than switching at an angle.
-                    ambientFog(dimension, weather, sky.sunDir().w()),
+                    // lightRadiance caps the in-scatter against the frame's own light level, which is
+                    // what stops the haze out-glowing moonlight and greying distant blocks at night.
+                    ambientFog(dimension, weather, sky.sunDir().w(), sky.lightRadiance()),
                     clouds.clouds(),
                     clouds.anchor(),
                     clouds.color(),
@@ -2411,14 +2424,19 @@ public final class RtComposite {
      * distance the wall moved with it. Keying each dimension to the distance its chunks actually stop
      * makes the haze scale-invariant in all three.
      */
-    private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor) {
+    private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor,
+                                     Float4 lightRadiance) {
         if (!CausticaConfig.Rt.Composite.FOG.value()) {
             return new Float4(0.0f, 0.0f, 0.0f, 0.0f);
         }
         return switch (dimension) {
+            // Deliberately NOT light-scaled: neither dimension has a sun or a moon, so
+            // RtComposite.skyPush zeroes lightRadiance there and a light-relative cap would erase their
+            // haze outright. Their in-scatter is authored against their own skyboxes, not against a
+            // directional light, so it stays an absolute value.
             case DIMENSION_NETHER -> dimensionFog(0.052f, 0.0125f, 0.0065f, NETHER_FOG_HORIZON_TRANSMITTANCE);
             case DIMENSION_END -> dimensionFog(0.010f, 0.0055f, 0.016f, END_FOG_HORIZON_TRANSMITTANCE);
-            default -> overworldFog(weather, dayFactor);
+            default -> overworldFog(weather, dayFactor, lightRadiance);
         };
     }
 
@@ -2454,16 +2472,27 @@ public final class RtComposite {
      * density is solved from what the fog should *do*: leave {@link #fogHorizonTransmittance()} of the
      * radiance at the far plane. Beer-Lambert inverts to {@code sigma = -ln(t) / d}, so the haze is
      * scale-invariant by construction and every render distance gets the same visual amount of it. The
-     * target is the live player slider ({@code Rt.Composite.FOG_HORIZON_STRENGTH}, read every frame),
-     * whose default reproduces {@link #FOG_HORIZON_TRANSMITTANCE} exactly.
+     * target is the live player slider ({@code Rt.Composite.FOG_HORIZON_STRENGTH}, read every frame);
+     * its default is deliberately lighter than {@link #FOG_HORIZON_TRANSMITTANCE}, which remains the
+     * calibration point the slider's range was derived from.
      *
      * <p><b>Colour.</b> Daytime haze is the pale blue of scattered sky; at night it goes to a much darker
      * blue so it reads as gloom rather than a grey veil glowing in the dark. Rain overrides both with a
      * flat desaturated grey and multiplies the density, which is what makes a downpour genuinely close
      * the view in. All three are the same medium — one colour and one density — so they cross-fade
      * instead of fighting.
+     *
+     * <p><b>Capped against the light.</b> All three colours are absolute radiance, so on their own they
+     * say nothing about whether the haze is bright or dim relative to the scene it sits in — and that
+     * gap is exactly what made distant blocks turn grey at night: see
+     * {@link #FOG_MIN_LIGHT_FOR_FULL_HAZE}. The resolved in-scatter is therefore scaled by the frame's
+     * own light luminance, which keeps every daytime state bit-identical to the authored values while
+     * pulling the night haze down to the scale of the moonlight that is supposed to be scattering into
+     * it. The extinction (the {@code w} lane) is deliberately left alone: distant terrain should still
+     * fade with distance at night, it just should not fade into a grey veil that is brighter than the
+     * ground it hides.
      */
-    private static Float4 overworldFog(WeatherState weather, float dayFactor) {
+    private static Float4 overworldFog(WeatherState weather, float dayFactor, Float4 lightRadiance) {
         float distance = fogDistanceBlocks();
         // sigma such that exp(-sigma * distance) == fogHorizonTransmittance() at the far plane.
         float baseDensity = (float) (-Math.log(fogHorizonTransmittance()) / Math.max(distance, 16.0));
@@ -2487,7 +2516,20 @@ public final class RtComposite {
                 clear[i] = Mth.lerp(rain, clear[i], FOG_RAIN_COLOR[i] * scale);
             }
         }
-        return new Float4(clear[0], clear[1], clear[2], density);
+
+        // One cap on the finished colour, after every state has cross-faded, so day/night/rain all obey
+        // the same rule instead of each needing its own hand-tuned night value. Rec.709 luminance, the
+        // same weights the shader's own luminance() uses.
+        float light = Math.min(1.0f, luminance(lightRadiance) / FOG_MIN_LIGHT_FOR_FULL_HAZE);
+        return new Float4(clear[0] * light, clear[1] * light, clear[2] * light, density);
+    }
+
+    /**
+     * Rec.709 luminance of a pushed rgb lane triple. Mirrors {@code luminance()} in math.slang so the
+     * host and the shader agree about how bright a colour is.
+     */
+    private static float luminance(Float4 rgb) {
+        return 0.2126f * rgb.x() + 0.7152f * rgb.y() + 0.0722f * rgb.z();
     }
 
     /**
