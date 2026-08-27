@@ -34,6 +34,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "Atténue la lumière du soleil et de la lune et assombrit le ciel pendant la pluie et les orages, en masquant le soleil, la lune et les étoiles derrière les nuages. Désactivé, conserve l'éclairage d'un ciel dégagé par tous les temps.",
 	"caustica.options.rt.fog": "Brouillard masqué",
 	"caustica.options.rt.fog.tooltip": "Applique le brouillard de distance de façon sélective selon la profondeur et la visibilité du ciel. Les grottes et intérieurs couverts restent nets, tandis que les zones extérieures conservent la brume météo et lointaine. Le désactiver ne modifie pas les ciels des dimensions.",
+	"caustica.options.rt.fogStrength": "Brouillard de distance",
+	"caustica.options.rt.fogStrength.tooltip": "Épaisseur de la brume de l'Overworld au plan lointain. Plus la valeur est élevée, moins vous voyez loin. La densité est calculée à partir de la distance d'affichage, donc la brume tombe toujours là où les chunks s'arrêtent. Overworld uniquement : le Nether et l'End gardent leur propre brume.",
 	"caustica.options.rt.denoiser": "Filtre de débruitage",
 	"caustica.options.rt.denoiser.tooltip": "Applique le filtre de débruitage DLSS Ray Reconstruction à l'image en path tracing. Désactivé, affiche le rendu brut et bruité en pleine résolution — utile comme vue de référence, mais bien plus granuleux à faible nombre d'échantillons. Nécessite la prise en charge de DLSS Ray Reconstruction.",
 	"caustica.options.rt.handFov": "Champ de vision de la main",

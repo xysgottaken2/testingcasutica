@@ -34,6 +34,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "雨や雷雨の間、太陽光と月光を弱めて空を暗くし、太陽・月・星を雲の後ろに隠します。オフにすると、どの天候でも快晴時の照明を維持します。",
 	"caustica.options.rt.fog": "マスク付きフォグ",
 	"caustica.options.rt.fog.tooltip": "深度と空への可視性を使い、距離フォグを選択的に適用します。覆われた洞窟や屋内は鮮明なまま、屋外には天候と地平線の霞が残ります。オフにしてもディメンションの空は変わりません。",
+	"caustica.options.rt.fogStrength": "距離の霧",
+	"caustica.options.rt.fogStrength.tooltip": "オーバーワールドの遠方での霧の濃さ。値が大きいほど遠くが見えなくなります。描画距離から密度を算出するため、霧は常にチャンクが終わる位置に一致します。オーバーワールドのみ対象で、ネザーとジ・エンドはそれぞれの霧を維持します。",
 	"caustica.options.rt.denoiser": "ノイズ除去フィルター",
 	"caustica.options.rt.denoiser.tooltip": "パストレーシング画像に DLSS Ray Reconstruction のノイズ除去フィルターを適用します。オフにすると、生のノイズを含むトレース結果をフル解像度で表示します。参照用としては便利ですが、サンプル数が少ないと非常に粗くなります。DLSS Ray Reconstruction 対応が必要です。",
 	"caustica.options.rt.handFov": "手の視野角",

@@ -667,6 +667,24 @@ public final class CausticaConfig {
             public static final BooleanSetting FOG =
                     bool("caustica.rt.fog", "composite.fog", true);
             /**
+             * How much of the distant Overworld the haze has already eaten by the far plane, 0..0.9.
+             * The remaining fraction (1 - this) is the transmittance the haze density is solved from,
+             * so this is the player-facing end of the same quantity {@code RtComposite.overworldFog}
+             * used to hard-code: 0 leaves the far terrain fully bright (no horizon haze at all), 0.9
+             * keeps only 10% of it and the world genuinely closes in.
+             *
+             * <p>Deliberately a strength rather than a transmittance so that the slider runs the way the
+             * player thinks — drag it UP for thicker fog. Capped below 1.0 because a fully opaque
+             * horizon means infinite extinction per block.
+             *
+             * <p>Overworld only. The Nether and End keep their authored dimension-wide haze
+             * ({@code NETHER_FOG_HORIZON_TRANSMITTANCE} / {@code END_FOG_HORIZON_TRANSMITTANCE}), so
+             * this cannot wash out either dimension's look. Read every frame, so it applies on the next
+             * one like every other RT option.
+             */
+            public static final FloatSetting FOG_HORIZON_STRENGTH =
+                    clampedFloat("caustica.rt.fogStrength", "composite.fog-strength", 0.38f, 0.0f, 0.9f);
+            /**
              * Weather-driven lighting. Rain and thunderstorms attenuate the sun/moon NEE radiance,
              * darken and desaturate the sky toward an overcast grey, hide the celestial discs and the
              * stars behind the cloud deck, and add a light haze to the air.

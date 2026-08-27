@@ -34,6 +34,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "Atenúa la luz del sol y de la luna y oscurece el cielo durante la lluvia y las tormentas, ocultando el sol, la luna y las estrellas tras las nubes. Desactivado, mantiene la iluminación de cielo despejado con cualquier clima.",
 	"caustica.options.rt.fog": "Niebla enmascarada",
 	"caustica.options.rt.fog.tooltip": "Aplica la niebla de distancia de forma selectiva usando la profundidad y la visibilidad del cielo. Las cuevas e interiores cubiertos permanecen despejados, mientras que el exterior conserva la bruma del clima y del horizonte. Desactivarla no cambia los cielos de las dimensiones.",
+	"caustica.options.rt.fogStrength": "Niebla de distancia",
+	"caustica.options.rt.fogStrength.tooltip": "Cuán densa es la bruma del Overworld en el plano lejano. Más alto significa que ves menos lejos. La densidad se calcula a partir de la distancia de renderizado, así que la bruma siempre cae donde terminan los chunks. Solo Overworld: el Nether y el End conservan su propia bruma.",
 	"caustica.options.rt.denoiser": "Filtro de reducción de ruido",
 	"caustica.options.rt.denoiser.tooltip": "Aplica el filtro de reducción de ruido de DLSS Ray Reconstruction a la imagen con trazado de rutas. Desactivado, muestra el trazado en bruto y con ruido a resolución completa: útil como vista de referencia, pero mucho más granulado con pocas muestras. Requiere compatibilidad con DLSS Ray Reconstruction.",
 	"caustica.options.rt.handFov": "FOV de la mano",

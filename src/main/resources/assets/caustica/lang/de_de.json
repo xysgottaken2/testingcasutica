@@ -34,6 +34,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "Dämpft Sonnen- und Mondlicht und verdunkelt den Himmel bei Regen und Gewitter; Sonne, Mond und Sterne verschwinden hinter den Wolken. Aus behält bei jedem Wetter die Beleuchtung eines klaren Himmels bei.",
 	"caustica.options.rt.fog": "Maskierter Nebel",
 	"caustica.options.rt.fog.tooltip": "Wendet Entfernungsnebel anhand von Tiefe und Sicht zum Himmel nur gezielt an. Höhlen und Innenräume bleiben klar, während Gelände im Freien Wetter- und Horizontdunst behält. Aus deaktiviert Nebel, ohne Dimensionshimmel zu ändern.",
+	"caustica.options.rt.fogStrength": "Entfernungsnebel",
+	"caustica.options.rt.fogStrength.tooltip": "Wie dicht der Dunst der Oberwelt am Fernpunkt ist. Höher bedeutet geringere Sichtweite. Die Dichte wird aus der Sichtweite berechnet, sodass der Dunst immer dort liegt, wo die Chunks enden. Nur Oberwelt: Nether und Ende behalten ihren eigenen Dunst.",
 	"caustica.options.rt.denoiser": "Rauschunterdrückungsfilter",
 	"caustica.options.rt.denoiser.tooltip": "Wendet den Rauschunterdrückungsfilter von DLSS Ray Reconstruction auf das pfadverfolgte Bild an. Aus zeigt den rohen, verrauschten Trace in voller Auflösung – als Referenzansicht nützlich, bei wenigen Samples aber deutlich körniger. Erfordert DLSS-Ray-Reconstruction-Unterstützung.",
 	"caustica.options.rt.handFov": "Hand-Sichtfeld",

@@ -67,6 +67,7 @@ public final class RtVideoOptions {
             // pairs them two per row, so they read as one block rather than scattered checkboxes.
             subsurfaceScattering(),
             fog(),
+            fogStrength(),
             weatherLighting(),
             // Clouds: the on/off toggle followed by its two tuning sliders, so the control that gates
             // the other two reads immediately before them.
@@ -142,6 +143,7 @@ public final class RtVideoOptions {
         return new OptionInstance<?>[] {
             subsurfaceScattering(),
             fog(),
+            fogStrength(),
             weatherLighting(),
             metallicShininess(),
         };
@@ -403,6 +405,25 @@ public final class RtVideoOptions {
     /** Selective outdoor distance fog; cave and indoor pixels are excluded by a depth/sky mask. */
     private static OptionInstance<Boolean> fog() {
         return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /**
+     * How thick the Overworld distance haze is at the far plane. Higher = you see less far.
+     *
+     * <p>Authored as a strength rather than the transmittance the haze math solves from, so the slider
+     * runs the way players drag it. Capped at 90% because a fully opaque horizon would mean infinite
+     * extinction per block. Overworld only — the Nether and End keep their authored dimension haze, so
+     * this cannot wash either of them out. Read per frame, so a drag applies on the next one.
+     */
+    private static OptionInstance<Integer> fogStrength() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_HORIZON_STRENGTH;
+        return new OptionInstance<>(
+            "caustica.options.rt.fogStrength",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.fogStrength.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, Component.literal(value + "%")),
+            new OptionInstance.IntRange(0, 90),
+            Math.clamp(Math.round(setting.value() * 100.0f), 0, 90),
+            value -> setting.set(value / 100.0f));
     }
 
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */

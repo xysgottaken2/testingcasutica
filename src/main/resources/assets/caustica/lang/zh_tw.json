@@ -34,6 +34,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "在下雨與雷暴期間減弱陽光與月光並壓暗天空，同時將太陽、月亮和星星隱藏在雲層之後。關閉後，任何天氣下都維持晴空光照。",
 	"caustica.options.rt.fog": "遮罩霧效",
 	"caustica.options.rt.fog.tooltip": "使用深度和天空可見性選擇性套用遠距離霧效。被遮擋的洞穴和室內保持清晰，露天區域保留天氣和地平線霧霾。關閉後不會改變各維度的天空。",
+	"caustica.options.rt.fogStrength": "距離霧",
+	"caustica.options.rt.fogStrength.tooltip": "主世界遠景霧的濃度。數值越高，看得越近。密度依算繪距離計算，因此霧總是落在區塊實際結束的地方。僅作用於主世界：地獄和終界保留各自的霧。",
 	"caustica.options.rt.denoiser": "降噪濾鏡",
 	"caustica.options.rt.denoiser.tooltip": "對路徑追蹤影像套用 DLSS Ray Reconstruction 降噪濾鏡。關閉後會以完整解析度顯示原始的雜訊追蹤結果——可作為參考畫面，但在低取樣數下顆粒感明顯更強。需要 DLSS Ray Reconstruction 支援。",
 	"caustica.options.rt.handFov": "手部視野",

@@ -430,9 +430,11 @@ public final class RtComposite {
 
     // ---- Overworld distance haze (see overworldFog).
     //
-    // The haze is calibrated so that terrain at the far plane keeps this fraction of its radiance. Below
-    // ~0.5 the world reads as permanently misty; above ~0.8 the fog stops hiding the chunk-load edge it
-    // exists for. 0.62 leaves distant terrain clearly readable while its silhouette softens.
+    // The DEFAULT horizon transmittance: the haze is calibrated so terrain at the far plane keeps this
+    // fraction of its radiance. Below ~0.5 the world reads as permanently misty; above ~0.8 the fog
+    // stops hiding the chunk-load edge it exists for. 0.62 leaves distant terrain clearly readable
+    // while its silhouette softens. The player slider (Rt.Composite.FOG_HORIZON_STRENGTH) overrides it
+    // live — its default is 1 - this — and the constant is kept as the documented calibration point.
     private static final float FOG_HORIZON_TRANSMITTANCE = 0.62f;
     // The Nether is authored to be hazier than the Overworld — a dimension of red gloom — but not
     // opaque: 0.35 keeps the last chunk visible as a silhouette inside the haze instead of replacing it.
@@ -2449,9 +2451,11 @@ public final class RtComposite {
      *
      * <p><b>Density from a target transmittance.</b> Picking a per-block sigma by hand does not survive a
      * render-distance change (a value that looks right at 12 chunks is invisible at 32). Instead the
-     * density is solved from what the fog should *do*: leave {@link #FOG_HORIZON_TRANSMITTANCE} of the
+     * density is solved from what the fog should *do*: leave {@link #fogHorizonTransmittance()} of the
      * radiance at the far plane. Beer-Lambert inverts to {@code sigma = -ln(t) / d}, so the haze is
-     * scale-invariant by construction and every render distance gets the same visual amount of it.
+     * scale-invariant by construction and every render distance gets the same visual amount of it. The
+     * target is the live player slider ({@code Rt.Composite.FOG_HORIZON_STRENGTH}, read every frame),
+     * whose default reproduces {@link #FOG_HORIZON_TRANSMITTANCE} exactly.
      *
      * <p><b>Colour.</b> Daytime haze is the pale blue of scattered sky; at night it goes to a much darker
      * blue so it reads as gloom rather than a grey veil glowing in the dark. Rain overrides both with a
@@ -2461,8 +2465,8 @@ public final class RtComposite {
      */
     private static Float4 overworldFog(WeatherState weather, float dayFactor) {
         float distance = fogDistanceBlocks();
-        // sigma such that exp(-sigma * distance) == FOG_HORIZON_TRANSMITTANCE at the far plane.
-        float baseDensity = (float) (-Math.log(FOG_HORIZON_TRANSMITTANCE) / Math.max(distance, 16.0));
+        // sigma such that exp(-sigma * distance) == fogHorizonTransmittance() at the far plane.
+        float baseDensity = (float) (-Math.log(fogHorizonTransmittance()) / Math.max(distance, 16.0));
         float day = Math.clamp(dayFactor, 0f, 1f);
         float rain = weather.rain();
 
@@ -2498,6 +2502,20 @@ public final class RtComposite {
         Minecraft mc = Minecraft.getInstance();
         int chunks = mc != null && mc.options != null ? mc.options.getEffectiveRenderDistance() : 12;
         return Math.max(chunks, 2) * 16f * FOG_RENDER_DISTANCE_FRACTION;
+    }
+
+    /**
+     * The fraction of a far-plane surface's radiance the Overworld haze leaves behind, from the live
+     * player slider.
+     *
+     * <p>The slider is authored as a STRENGTH (higher = thicker) because that is the direction players
+     * drag it in; the haze math wants the surviving transmittance, so this is the one place the two
+     * meet. The lower bound keeps {@code -ln(t)} finite — a fully opaque horizon would be an infinite
+     * extinction per block — and matches the setting's own clamp.
+     */
+    private static float fogHorizonTransmittance() {
+        float strength = Math.clamp(CausticaConfig.Rt.Composite.FOG_HORIZON_STRENGTH.value(), 0.0f, 0.9f);
+        return 1.0f - strength;
     }
 
     /**

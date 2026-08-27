@@ -75,6 +75,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "Reduz a luz do sol e da lua e escurece o céu durante chuvas e tempestades, além de ocultar o sol, a lua e as estrelas atrás das nuvens. Desativado, mantém a iluminação de céu limpo em qualquer clima.",
 	"caustica.options.rt.fog": "Névoa mascarada",
 	"caustica.options.rt.fog.tooltip": "Aplica a névoa de distância seletivamente usando profundidade e visibilidade do céu. Cavernas e interiores cobertos ficam limpos, enquanto áreas externas mantêm a névoa do clima e do horizonte. Desativar não altera os céus das dimensões.",
+	"caustica.options.rt.fogStrength": "Névoa de distância",
+	"caustica.options.rt.fogStrength.tooltip": "Quão espessa é a névoa do Overworld no plano distante. Quanto maior, menos longe você vê. A densidade é calculada a partir da distância de renderização, então a névoa sempre cai onde os chunks de fato terminam. Apenas Overworld: o Nether e o End mantêm a névoa própria de cada dimensão.",
 	"caustica.options.rt.denoiser": "Filtro de redução de ruído",
 	"caustica.options.rt.denoiser.tooltip": "Aplica o filtro de redução de ruído do DLSS Ray Reconstruction à imagem com path tracing. Desativado, mostra o traçado bruto e ruidoso em resolução total — útil como referência, mas bem mais granulado com poucas amostras. Requer suporte a DLSS Ray Reconstruction.",
 	"caustica.options.rt.handFov": "FOV da mão",

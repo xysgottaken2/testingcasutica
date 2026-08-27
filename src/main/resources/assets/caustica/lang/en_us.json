@@ -75,6 +75,8 @@
 	"caustica.options.rt.weatherLighting.tooltip": "Dim sunlight and moonlight and darken the sky during rain and thunderstorms, and hide the sun, moon and stars behind the clouds. Off keeps clear-sky lighting in all weather.",
 	"caustica.options.rt.fog": "Masked Fog",
 	"caustica.options.rt.fog.tooltip": "Apply distance fog selectively using primary depth and sky visibility. Covered cave and indoor pixels stay clear, while exposed outdoor terrain keeps weather and horizon haze. Off disables fog without changing dimension skyboxes.",
+	"caustica.options.rt.fogStrength": "Distance Fog",
+	"caustica.options.rt.fogStrength.tooltip": "How thick the Overworld haze is at the far plane. Higher means you see less far. Density is solved from the render distance, so the haze always lands where the chunks actually stop. Overworld only: the Nether and End keep their own authored haze.",
 	"caustica.options.rt.clouds": "Ray-Traced Clouds",
 	"caustica.options.rt.clouds.tooltip": "Draw a cloud deck in the ray-traced sky. Caustica replaces the vanilla world renderer, which is where vanilla's own clouds are drawn, so this is what puts clouds back in the sky. The deck is visible in reflections and can shadow the world below.",
 	"caustica.options.rt.cloudStyle": "Cloud Style",
