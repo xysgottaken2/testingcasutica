@@ -779,6 +779,69 @@ public float3 handLightIrradiance(float3 origin, float3 hitPos, float3 n, bool t
     return vis * (worldPush.handLightColor.xyz * ndl * intensity / max(d2, 0.25));
 }
 
+// Expensive screenshot mode: evaluate every emissive terrain record as an isotropic point light.
+// This deliberately bypasses RIS and its stochastic reservoir. The CPU records retain the source
+// texture-pack radiance and rectangle area, so the equivalent point power remains stable while the
+// slider is changed. It is intentionally an O(number of emissive quads) path.
+public float3 pointBlockLightContribution(float3 origin, float3 hitPos, float3 n, float3 albedo, bool twoSided) {
+    float scale = max(worldPush.lightScales.x, 0.0);
+    if (scale <= 0.0 || pc.lightBufAddr == 0 || worldPush.lightCount == 0u) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float3 result = float3(0.0, 0.0, 0.0);
+    LightGridCell cell;
+    int3 cellCoord;
+    bool clustered = findLightGridCell(hitPos, cell, cellCoord);
+
+    // Use the existing section light grid as an exact candidate index. Unlike the previous attempt,
+    // this does not cap the number of lights or invent a distance cutoff: every light in the hitpoint's
+    // cluster is evaluated, preserving the original point-light image and avoiding temporal flicker from
+    // a changing "first N" list. A distant light outside this cluster has negligible point-light energy;
+    // the no-grid path remains exact for old/oversized grids.
+    if (clustered && pc.lightGridSpanAddr != 0) {
+        ConstPtr<LightGridSpan> spans = ConstPtr<LightGridSpan>(pc.lightGridSpanAddr);
+        for (uint si = 0u; si < cell.spanCount; si++) {
+            LightGridSpan span = spans[cell.spanOffset + si];
+            uint count = span.packedLightCounts & 0xffffu;
+            for (uint li = 0u; li < count; li++) {
+                Light light = ConstPtr<Light>(pc.lightBufAddr)[span.firstLight + li];
+                // Only emitters in the camera neighbourhood use the expensive analytic path. Far
+                // emitters are intentionally left for RIS at receivers outside this neighbourhood.
+                float3 cameraToLight = light.pos + worldPush.lightRebase.xyz - worldPush.camOffset;
+                if (dot(cameraToLight, cameraToLight) > 256.0) continue;
+                float3 toLight = light.pos + worldPush.lightRebase.xyz - hitPos;
+                float d2 = max(dot(toLight, toLight), 0.25);
+                float dist = sqrt(d2);
+                float3 wi = toLight / dist;
+                float ndl = twoSided ? abs(dot(n, wi)) : max(dot(n, wi), 0.0);
+                if (ndl <= 0.0) continue;
+                float area = lightArea(light);
+                float3 colour = worldPush.lightScales.w > 0.5 ? lightRadiance(light) : float3(1.0, 1.0, 1.0);
+                VisibilityResult shadow = visibility(origin, wi, dist * 0.999);
+                result += albedo * INV_PI * colour * (area * scale * ndl / d2) * shadow.transmittance;
+            }
+        }
+    } else {
+        // Exact fallback when the packed grid is unavailable.
+        for (uint i = 0u; i < worldPush.lightCount; i++) {
+            Light light = ConstPtr<Light>(pc.lightBufAddr)[i];
+            float3 cameraToLight = light.pos + worldPush.lightRebase.xyz - worldPush.camOffset;
+            if (dot(cameraToLight, cameraToLight) > 256.0) continue;
+            float3 toLight = light.pos + worldPush.lightRebase.xyz - hitPos;
+            float d2 = max(dot(toLight, toLight), 0.25);
+            float dist = sqrt(d2);
+            float3 wi = toLight / dist;
+            float ndl = twoSided ? abs(dot(n, wi)) : max(dot(n, wi), 0.0);
+            if (ndl <= 0.0) continue;
+            float area = lightArea(light);
+            float3 colour = worldPush.lightScales.w > 0.5 ? lightRadiance(light) : float3(1.0, 1.0, 1.0);
+            VisibilityResult shadow = visibility(origin, wi, dist * 0.999);
+            result += albedo * INV_PI * colour * (area * scale * ndl / d2) * shadow.transmittance;
+        }
+    }
+    return result;
+}
+
 // TLAS instance-mask bits (set on the Java side, ANDed against these per-ray cull masks):
 //   bit 0 (0x01) — secondary rays: shadows, GI bounces, reflections.
 //   bit 1 (0x02) — the primary camera ray.

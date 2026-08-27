@@ -410,7 +410,13 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // RIS direct lighting from block emitters (lava, glowstone, torches, ...) — same reservoir
             // sampler as terrain/entities, but two-sided: a billboard has no back face, so light
             // striking either side of the quad should still land (matches the sun/moon NEE above).
-            if (risOn) {
+            if (worldPush.lightScales.z > 0.5 && pc.lightBufAddr != 0
+                    && dot(hitPos - worldPush.camOffset, hitPos - worldPush.camOffset) <= 256.0) {
+                float3 pointBlock = pointBlockLightContribution(hitPos + n * SURF_BIAS, hitPos, n, albedo, true);
+                L += throughput * pointBlock;
+                if (channel == 2) Lspec += throughput * pointBlock;
+                else Ldiff += throughput * pointBlock;
+            } else if (risOn) {
                 bool shadeWithRestir = restirReceiverPending && restirOwner;
                 bool skipSiblingRis = restirReceiverPending && !restirOwner;
                 restirReceiverPending = false;
@@ -642,7 +648,13 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // sibling SPP samples omit this one receiver, so frame averaging contains the ReSTIR result rather
         // than silently blending it back toward RIS. OFF and deeper vertices execute the original RIS path.
         // Front lobe + SSS backlighting still share one shadow ray.
-        if (risOn) {
+        if (worldPush.lightScales.z > 0.5 && pc.lightBufAddr != 0
+                    && dot(hitPos - worldPush.camOffset, hitPos - worldPush.camOffset) <= 256.0) {
+            float3 pointBlock = pointBlockLightContribution(p, hitPos, n, diffAlb, isDynamicEntityEarly);
+            L += throughput * pointBlock;
+            if (channel == 2) Lspec += throughput * pointBlock;
+            else Ldiff += throughput * pointBlock;
+        } else if (risOn) {
             bool shadeWithRestir = restirReceiverPending && restirOwner;
             bool skipSiblingRis = restirReceiverPending && !restirOwner;
             restirReceiverPending = false;

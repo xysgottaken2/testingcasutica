@@ -90,7 +90,7 @@ public struct WorldPush {
     public int4     lightGridDims;       // xyz dense grid dimensions, w reserved
     public uint     lightCount;       // packed Light records in pc.lightBufAddr
     public uint     risCandidates;    // RIS candidate count M per diffuse vertex (0 = emitter NEE off)
-    public float4   lightScales;      // x block emitter scale, y dynamic/entity emission scale
+    public float4   lightScales;      // x block scale, y dynamic scale, z point-light mode, w texture-pack colour
     // Weather state, already resolved on the CPU from the client level (see RtComposite.weatherState).
     // The two strengths drive the look (overcast sky, hidden discs/stars); the two multipliers are the
     // single source of truth for how much the weather dims things, so Java's NEE radiance and the sky
