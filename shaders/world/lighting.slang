@@ -848,16 +848,13 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
     float3 vis = shadow.transmittance;
     float appliedW = s.restir != 0u ? min(s.W, restirMaxW()) : s.W;
     float3 shaded = contrib * vis * appliedW;
-    if (s.restir != 0u) {
-        // Last-line firefly suppression after visibility and target re-evaluation. This catches the case
-        // where a capped p-hat was selected but the full RGB contribution at the final receiver is much
-        // larger. Hue is preserved by scaling all channels together.
-        float shadedLuminance = luminance(shaded);
-        if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
-        float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
-        if (shadedLuminance > maxLum) {
-            shaded *= maxLum / shadedLuminance;
-        }
+    // Always: RIS and ReSTIR both emit 1-spp spikes that denoisers turn into crawling
+    // distant dots. The previous gate (`s.restir != 0`) left the RIS/GI path unclamped.
+    float shadedLuminance = luminance(shaded);
+    if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
+    float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
+    if (shadedLuminance > maxLum) {
+        shaded *= maxLum / shadedLuminance;
     }
     return shaded;
 }
@@ -892,20 +889,18 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
     float appliedW = s.restir != 0u ? min(s.W, restirMaxW()) : s.W;
     outDiff = diffPart * vis * appliedW;
     outSpec = specPart * vis * appliedW;
-    if (s.restir != 0u) {
-        // Same luminance clamp as shadeReservoir, applied proportionally so the split keeps the hue.
-        float shadedLuminance = luminance(outDiff + outSpec);
-        if (!(shadedLuminance >= 0.0)) {
-            outDiff = float3(0.0, 0.0, 0.0);
-            outSpec = float3(0.0, 0.0, 0.0);
-            return;
-        }
-        float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
-        if (shadedLuminance > maxLum) {
-            float scale = maxLum / shadedLuminance;
-            outDiff *= scale;
-            outSpec *= scale;
-        }
+    // Same luminance clamp as shadeReservoir (RIS and ReSTIR), applied proportionally.
+    float shadedLuminance = luminance(outDiff + outSpec);
+    if (!(shadedLuminance >= 0.0)) {
+        outDiff = float3(0.0, 0.0, 0.0);
+        outSpec = float3(0.0, 0.0, 0.0);
+        return;
+    }
+    float maxLum = restirFireflyCap(restirMaxLuminance(), dist);
+    if (shadedLuminance > maxLum) {
+        float scale = maxLum / shadedLuminance;
+        outDiff *= scale;
+        outSpec *= scale;
     }
 }
 

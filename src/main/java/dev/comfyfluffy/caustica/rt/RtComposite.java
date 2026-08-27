@@ -2017,16 +2017,28 @@ public final class RtComposite {
                     // what feeds next frame's temporal history (SVGF's own choice: the raw
                     // accumulation is noisier and converges more slowly, while feeding back the
                     // fully filtered image compounds its blur into permanent smearing).
+                    //
+                    // Standing still, the 48-frame window already killed the 1-spp noise. Running
+                    // all five passes (62 px) then paints faint directional streaks along
+                    // iso-luminance contours — the close-up lines that vanish the moment you walk,
+                    // because walking raises variance and the bilateral box-blurs them away. Cap
+                    // the cascade at 3 passes (~15 px) unless the camera translated.
+                    double stillDx = camX - svgfPrevCamX;
+                    double stillDy = camY - svgfPrevCamY;
+                    double stillDz = camZ - svgfPrevCamZ;
+                    boolean cameraMoved = svgfHasHistory
+                            && (stillDx * stillDx + stillDy * stillDy + stillDz * stillDz) > 0.0004;
+                    int atrousPasses = cameraMoved ? RtSvgfDenoiser.ATROUS_PASSES : 3;
                     RtImage src = svgfFilterPing;
                     RtImage dst = svgfFilterPong;
-                    for (int pass = 0; pass < RtSvgfDenoiser.ATROUS_PASSES; pass++) {
+                    for (int pass = 0; pass < atrousPasses; pass++) {
                         // The cascade runs in DEMODULATED lighting space so its kernels never
                         // average across albedo detail (filtering modulated radiance flattens
                         // texture contrast — measured 3.00:1 down to 1.04:1, the "everything looks
                         // like flat poster paint" failure). Only the LAST iteration multiplies the
                         // albedo guide back in, which is also why the history feedback below must
                         // be taken from an earlier, still-demodulated pass.
-                        boolean lastPass = pass == RtSvgfDenoiser.ATROUS_PASSES - 1;
+                        boolean lastPass = pass == atrousPasses - 1;
                         svgfDenoiser.atrous(cmd, renderW, renderH, pass, svgfParity,
                                 src.view, dst.view, gViewZ.view, gNormal.view, momentsOut.view,
                                 gAlbedo.view,

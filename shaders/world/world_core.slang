@@ -95,11 +95,9 @@ public bool cameraSubmerged() { return worldFlag(worldPush, WORLD_FLAG_SUBMERGED
 /** SSS strength after the player toggle: the material value, or a hard zero when SSS is disabled. */
 public float payloadActiveSss() { return sssEnabled() ? payloadSss() : 0.0; }
 
-// Firefly ceiling for the UNDENOISED path. With RR running, a rare very bright sample is exactly the
-// energy the temporal filter is built to absorb, and clamping it would darken the image. With RR off
-// there is no accumulation at all, so that same sample is a permanent white speck in every frame — the
-// single worst artefact of the raw reference view at low SPP. Applied only when the denoiser is off,
-// which keeps the denoised path bit-identical to before this option existed.
+// Firefly ceiling on the combined image. Applied even when a denoiser/upscaler is running: a rare
+// 1-spp spike is exactly what SVGF/DLSS-RR turn into crawling distant dots. The cap sits above
+// sunlit terrain (~5-12) and lava, so it only cuts the HDR tail.
 public static const float UNDENOISED_FIREFLY_MAX_LUMINANCE = 24.0;
 /**
  * Firefly bound for the per-lobe signals handed to NRD, as a MULTIPLE of the pixel's own combined

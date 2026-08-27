@@ -896,10 +896,10 @@ void main() {
     }
     radiance = clamp(radiance, 0.0, 65504.0);
 
-    // Firefly clamp for the raw (undenoised) view only — see UNDENOISED_FIREFLY_MAX_LUMINANCE. Scaling
-    // the whole colour by the luminance ratio preserves hue and saturation, so a clamped highlight
-    // desaturates toward nothing rather than shifting colour.
-    if (!denoiserEnabled()) {
+    // Firefly clamp on the combined image every denoiser / upscaler reads (SVGF, NRD, DLSS-RR).
+    // Leaving 1-spp spikes "for the denoiser" is what turned them into crawling distant dots.
+    // Scaling the whole colour by the luminance ratio preserves hue.
+    {
         float lum = luminance(radiance);
         if (lum > UNDENOISED_FIREFLY_MAX_LUMINANCE) {
             radiance *= UNDENOISED_FIREFLY_MAX_LUMINANCE / lum;

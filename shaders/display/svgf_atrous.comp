@@ -59,7 +59,7 @@ const float KERNEL[5] = float[5](0.0625, 0.25, 0.375, 0.25, 0.0625);
 // LOWER bound on the luminance edge-stop, as a multiple of the pixel's own luminance (plus a floor
 // so near-black pixels still get a usable sigma). A sigma narrower than the residual noise makes
 // the bilateral weight mode-seeking, which darkens shadows; this keeps it honest.
-const float SIGMA_LUMINANCE_MIN_RELATIVE = 0.5;
+const float SIGMA_LUMINANCE_MIN_RELATIVE = 0.22;
 const float SIGMA_LUMINANCE_FLOOR = 0.02;
 // Must match svgf_reproject.comp's constants exactly: the same factor divided out there is
 // multiplied back here, so any mismatch tints the image. See that file for why the factor is total

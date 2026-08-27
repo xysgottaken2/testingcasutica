@@ -74,13 +74,13 @@ const int SPATIAL_VARIANCE_RADIUS = 3;
 //   history + SIGMA * history_spread + RELATIVE * history + FLOOR
 // so it adapts three ways: it widens where the history is genuinely noisy, it allows a fixed
 // proportional headroom for real lighting changes, and the floor keeps near-black pixels workable.
-const float FIREFLY_HISTORY_SIGMA = 3.0;
-const float FIREFLY_HISTORY_RELATIVE = 1.0;
-const float FIREFLY_CLAMP_FLOOR = 0.05;
+const float FIREFLY_HISTORY_SIGMA = 1.25;
+const float FIREFLY_HISTORY_RELATIVE = 0.20;
+const float FIREFLY_CLAMP_FLOOR = 0.02;
 // Spatial fallback, used only where no history survived. Weaker than the temporal bound by
 // necessity, since the neighbourhood it measures is itself single-sample noise.
 const int FIREFLY_SPATIAL_RADIUS = 2;
-const float FIREFLY_SPATIAL_SIGMA = 4.0;
+const float FIREFLY_SPATIAL_SIGMA = 2.0;
 const float SPATIAL_VARIANCE_FRAMES = 4.0;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -179,6 +179,30 @@ void main() {
     vec3 cur = loadCurrent(pix);
 
     float lum = dot(cur, LUMA);
+    // 3x3 neighbour mean (exclude centre): a 1-spp GI/NEE sparkle is a lone spike against
+    // a dark cave floor. History averaging turns that spike into a crawling pinprick;
+    // the temporal bound below only helps once we already have frames. This first cut
+    // also runs on disocclusions and is what actually kills the distant moving dots.
+    {
+        vec3 nmean = vec3(0.0);
+        float ncount = 0.0;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+                nmean += loadCurrent(pix + ivec2(dx, dy));
+                ncount += 1.0;
+            }
+        }
+        nmean /= ncount;
+        float nL = dot(nmean, LUMA);
+        float neighBound = max(nL * 2.5, nL + 0.04) + FIREFLY_CLAMP_FLOOR;
+        if (lum > neighBound && lum > 0.0) {
+            cur *= neighBound / lum;
+            lum = neighBound;
+        }
+    }
     float z = imageLoad(viewZ, pix).r;
     vec3 n = imageLoad(normal, pix).xyz;
     bool sky = isSky(z);
