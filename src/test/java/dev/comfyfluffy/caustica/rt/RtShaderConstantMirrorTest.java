@@ -122,6 +122,33 @@ final class RtShaderConstantMirrorTest {
     }
 
     @Test
+    void restcvModeRequiresCvHistoryAndPushesTheControlVariate() throws IOException {
+        String common = Files.readString(SLANG);
+        String core = Files.readString(WORLD_CORE);
+        String raygen = Files.readString(WORLD_RGEN);
+        String java = Files.readString(JAVA);
+
+        assertTrue(common.contains("public uint64_t restcvPreviousAddr;")
+                        && common.contains("public uint64_t restcvCurrentAddr;"),
+                "ReSTCV needs its own compact colour-estimate ping-pong in WorldPushConstants");
+        assertTrue(common.contains("public float4   restcvParams;"),
+                "WorldPush must carry the ReSTCV M/W/age/blend tuning lanes");
+        assertTrue(core.contains("pc.restirMode == 2u")
+                        && core.contains("pc.restcvPreviousAddr != 0")
+                        && core.contains("pc.restcvCurrentAddr != 0"),
+                "restcvEnabled must require mode 2 plus both CV history buffers");
+        assertTrue(java.contains("restcvPreviousAddress(), restcvCurrentAddress()")
+                        && java.contains("restcvParams()")
+                        && java.contains("restirPreviousAddress(), restirCurrentAddress()"),
+                "RtComposite must publish the CV pair next to the ReSTIR pair and push the tuning lanes");
+        assertTrue(raygen.contains("frameRestcv.ageSum += sampleRestcv.ageSum")
+                        && raygen.contains("frameRestcv.accepted += sampleRestcv.accepted")
+                        && raygen.contains("frameRestcv.restcvSum += sampleRestcv.restcvSum")
+                        && raygen.contains("pc.debugView == RESTCV_DEBUG_VIEW_ID"),
+                "debug view 14 must aggregate the per-pixel ReSTCV statistics into the frame overlay");
+    }
+
+    @Test
     void worldPushCarriesTheFieldsTheNewFeaturesPush() throws IOException {
         String slang = Files.readString(SLANG);
         // These four lanes are what SSS, weather lighting, the dimension skyboxes and the denoiser

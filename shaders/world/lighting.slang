@@ -23,6 +23,10 @@ public struct Reservoir {
     public float3 sourcePos;
     public float3 sourceNormal;
     public uint restir; // 1 only after the hard ReSTIR safety clamps have been applied
+    // ReSTCV accumulated control-variate estimate (average of candidate F/p over the reservoir's M).
+    // cvM==0 means this reservoir carries no ReSTCV estimate and should shade as plain ReSTIR.
+    public float3 cvColor;
+    public float cvM;
 };
 
 public static const uint RESTIR_SPATIAL_SAMPLES = 4u;
@@ -44,6 +48,13 @@ public static const float RESTIR_MAX_WEIGHT_SUM = 4096.0; // MAX_M * MAX_W * MAX
 public static const float RESTIR_JACOBIAN_MIN = 0.2;
 public static const float RESTIR_JACOBIAN_MAX = 5.0;
 public static const uint RESTIR_MAX_AGE = 30u;
+// ReSTCV target budgets. x/y/z of worldPush.restcvParams override these per-frame from the host, so
+// the slider can tune M/W/age live without recompiling. Strength (w) is the share of the accumulated
+// estimate used at the final shade; 1 is the full ReSTCV estimate, 0 is the ReSTIR shade.
+public static const uint RESTCV_DEBUG_VIEW_ID = 14u;
+public static const float RESTCV_MIN_M = 4.0;
+public static const float RESTCV_MAX_M = 16.0;
+public static const float RESTCV_MAX_W = 16.0;
 
 public Reservoir resEmpty() {
     Reservoir r;
@@ -60,6 +71,8 @@ public Reservoir resEmpty() {
     r.sourcePos = float3(0.0, 0.0, 0.0);
     r.sourceNormal = float3(0.0, 0.0, 0.0);
     r.restir = 0u;
+    r.cvColor = float3(0.0, 0.0, 0.0);
+    r.cvM = 0.0;
     return r;
 }
 
@@ -203,6 +216,55 @@ public float unpackUnsignedFloat(uint bits, uint mantissaBits) {
             * exp2(float(int(exponent) - 15));
 }
 
+// ---- ReSTCV parameter accessors ---------------------------------------------------------
+// All ReSTCV tuning comes from worldPush.restcvParams (see world_common.WorldPush). The CPU
+// publishes the sanitized UI values; the shader only clamps once more as a safety belt.
+public float restcvTargetM() {
+    return clamp(worldPush.restcvParams.x, RESTCV_MIN_M, RESTCV_MAX_M);
+}
+
+public float restcvMaxW() {
+    return clamp(worldPush.restcvParams.y, 1.0, RESTCV_MAX_W);
+}
+
+public uint restcvMaxAge() {
+    return uint(clamp(worldPush.restcvParams.z, 1.0, float(RESTIR_MAX_AGE)));
+}
+
+public float restcvBlendStrength() {
+    return saturate(worldPush.restcvParams.w);
+}
+
+public RestcvStats restcvStatsEmpty() {
+    RestcvStats s;
+    s.ageSum = 0.0;
+    s.accepted = 0u;
+    s.rejected = 0u;
+    s.mSum = 0.0;
+    s.wSum = 0.0;
+    s.valid = 0u;
+    s.restirSum = float3(0.0, 0.0, 0.0);
+    s.restcvSum = float3(0.0, 0.0, 0.0);
+    s.samples = 0u;
+    return s;
+}
+
+public uint restcvPackColorRG(float3 color) {
+    return packHalf2(clamp(color.xy, 0.0, HALF_MAX));
+}
+
+public uint restcvPackHalf(float v) {
+    return f32tof16(clamp(v, 0.0, HALF_MAX)) & 0xFFFFu;
+}
+
+public float restcvUnpackHalf(uint p) {
+    return f16tof32(p & 0xFFFFu);
+}
+
+public float2 restcvUnpackColorRG(uint p) {
+    return unpackHalf2(p);
+}
+
 public float3 lightRadiancePacked(uint packed) {
     return float3(unpackUnsignedFloat(packed & 0x7ffu, 6u),
             unpackUnsignedFloat((packed >> 11u) & 0x7ffu, 6u),
@@ -323,6 +385,11 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
             ? max(1u, (candidateCount + 2u) / 4u) : candidateCount;
     uint localCandidateCount = candidateCount - globalCandidateCount;
     float localProbability = float(localCandidateCount) / float(candidateCount);
+    // ReSTCV accumulated control variate. It is the same F/p average the reservoir mathematically
+    // represents (selected F * W), but it keeps all candidate colours instead of the single retained
+    // representative, which is exactly what suppresses per-channel colour flicker from emissive blocks.
+    float3 cvSum = float3(0.0, 0.0, 0.0);
+    uint cvCount = 0u;
     for (uint c = 0u; c < candidateCount; c++) {
         uint li;
         uint globalsBefore = (c * globalCandidateCount) / candidateCount;
@@ -340,7 +407,7 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
         float3 lightNormal = lightGeometricNormal(lg);
         float area = lightArea(lg);
         float phat;
-        evalSampleContrib(sp, lightNormal, le, area, hitPos, n, v, rd,
+        float3 contrib = evalSampleContrib(sp, lightNormal, le, area, hitPos, n, v, rd,
                 diffAlb, F0, rough, twoSided, sss, phat);
         if (phat <= 0.0) {
             continue;
@@ -348,6 +415,10 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
         float sourcePdf = proposalPdf(lg, rawLe, gridCell, gridCellCoord, localProbability);
         float w = phat / max(sourcePdf, 1.0e-20);
         r.wSum += w;
+        // Keep every candidate's unshadowed contribution in the CV accumulator. We do not divide by
+        // candidateCount here so the sum remains exact; restcvFinalize normalizes by cvCount.
+        cvSum += contrib / max(sourcePdf, 1.0e-20);
+        cvCount++;
         if (rndf(seed) * r.wSum < w) { // weighted reservoir update
             r.pos = sp;
             r.lnrm = lightNormal;
@@ -359,6 +430,8 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
         }
     }
     r.W = r.phat > 0.0 ? (r.wSum / (r.M * r.phat)) : 0.0;
+    r.cvColor = cvCount > 0u ? cvSum / float(cvCount) : float3(0.0, 0.0, 0.0);
+    r.cvM = float(cvCount);
     return r;
 }
 
@@ -402,6 +475,89 @@ public void restirInvalidate(uint pixelIndex) {
     PackedRestirReservoir record = {};
     record.meta = 0u;
     DevicePtr<PackedRestirReservoir>(pc.restirCurrentAddr)[pixelIndex] = record;
+}
+
+// ---- ReSTCV accumulated estimate history -------------------------------------------------
+// The representative-reservoir half of the state is still packed in PackedRestirReservoir; these
+// helpers handle only the secondary control-variate estimate half. They reuse the same pixel index
+// and the same reprojection/geometry gates, so an estimate can never survive without a matching
+// validated ReSTIR sample at the same history slot.
+public void restcvInvalidate(uint pixelIndex) {
+    if (pc.restcvCurrentAddr == 0) return;
+    PackedRestcvEstimate record = {};
+    record.M = 0.0;
+    record.W = 0.0;
+    record.colorRG = 0u;
+    record.colorBMeta = 0u;
+    DevicePtr<PackedRestcvEstimate>(pc.restcvCurrentAddr)[pixelIndex] = record;
+}
+
+public bool restcvLoadEstimate(PackedRestcvEstimate record, inout Reservoir candidate) {
+    if (candidate.cvM > 0.0 || candidate.M <= 0.0 || !(record.M > 0.0 && record.W > 0.0)) {
+        return false;
+    }
+    uint age = (record.colorBMeta >> 16u) & 0xffu;
+    uint generation = (record.colorBMeta >> 24u) & 0x7fu;
+    bool valid = (record.colorBMeta & 0x80000000u) != 0u;
+    if (age > restcvMaxAge() || generation != (pc.lightGeneration & 0x7fu) || !valid) {
+        return false;
+    }
+    float2 rg = restcvUnpackColorRG(record.colorRG);
+    float b = restcvUnpackHalf(record.colorBMeta);
+    candidate.cvColor = float3(rg.x, rg.y, b);
+    candidate.cvM = min(record.M, restcvTargetM());
+    // W is stored for diagnostics; the CV estimate itself is a direct F/p average and does not use
+    // the representative reservoir's W. The cap is kept so debug/live toggles see a stable value.
+    if (candidate.cvM > 0.0) {
+        return true;
+    }
+    return false;
+}
+
+public void restcvStore(Reservoir r, uint pixelIndex) {
+    if (!restcvEnabled() || pc.restcvCurrentAddr == 0 || !(r.cvM > 0.0 && r.W > 0.0)) {
+        return;
+    }
+    PackedRestcvEstimate record;
+    record.colorRG = restcvPackColorRG(r.cvColor);
+    uint age = min(r.age, restcvMaxAge());
+    age = min(age, 0xffu);
+    uint generation = pc.lightGeneration & 0x7fu;
+    record.colorBMeta = restcvPackHalf(r.cvColor.z)
+            | (age << 16u)
+            | (generation << 24u)
+            | 0x80000000u;
+    // Keep only positive, bounded effective sample counts. We deliberately do not floor at
+    // RESTCV_MIN_M: a fresh reservoir that saw fewer valid candidates than the configured budget still
+    // stores its true low count, and the M==0 sentinel is already excluded by the caller. Flooring
+    // would inflate a young/reset CV and give it more temporal weight than it has earned.
+    record.M = clamp(r.cvM, 1.0, RESTCV_MAX_M);
+    record.W = min(r.W, restcvMaxW());
+    DevicePtr<PackedRestcvEstimate>(pc.restcvCurrentAddr)[pixelIndex] = record;
+}
+
+// Weighted log-domain-ish blend of two control-variate estimates. We keep it a plain M-weighted
+// average (the paper's resampling-MIS weight is expensive to reconstruct for this compact DI
+// sample) but we never let the estimate grow past the configured M/age budget, which is what makes
+// the experimental mode safe to toggle live.
+public void restcvMergeColor(inout Reservoir dst, Reservoir src) {
+    if (!restcvEnabled() || !(src.cvM > 0.0)) {
+        return;
+    }
+    float dstM = max(dst.cvM, 0.0);
+    float srcM = min(src.cvM, restcvTargetM() - dstM);
+    if (!(srcM > 0.0)) {
+        return; // no remaining capacity (or source empty): dst keeps its established estimate
+    }
+    float totalM = dstM + srcM;
+    float3 blended;
+    if (dstM <= 0.0) {
+        blended = src.cvColor;
+    } else {
+        blended = (dst.cvColor * dstM + src.cvColor * srcM) / totalM;
+    }
+    dst.cvColor = blended;
+    dst.cvM = totalM;
 }
 
 public bool restirLoadCandidate(PackedRestirReservoir record, float3 expectedPreviousSurface,
@@ -504,6 +660,10 @@ public void restirMerge(inout Reservoir dst, Reservoir source, float maxM,
             max(0.0, RESTIR_MAX_WEIGHT_SUM - dst.wSum));
     if (!(w > 0.0)) return;
 
+    // Keep the ReSTCV control variate in lockstep with the representative reservoir merge. Both use
+    // the same acceptedM budget, so a reservoir that is rejected for resource or geometry reasons can
+    // never leak its colour estimate in either.
+    restcvMergeColor(dst, source);
     dst.M = min(dst.M + acceptedM, RESTIR_MAX_M);
     dst.wSum += w;
     if (rndf(seed) * dst.wSum < w) {
@@ -584,7 +744,7 @@ public void restirStore(Reservoir r, uint pixelIndex, float3 surfacePos, float3 
 public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dimensions,
                        float3 hitPos, float3 motionPrev, float3 n, float3 v, float3 rd,
                        float3 diffAlb, float3 F0, float rough, bool twoSided, float sss,
-                       inout uint seed) {
+                       inout uint seed, inout RestcvStats stats) {
     Reservoir result = initial;
     // Normalize the fresh RIS set into a fixed budget before any history enters. Scaling M and wSum by
     // the same ratio preserves its W, then the explicit W/luminance clamps remove pathological tails.
@@ -593,6 +753,7 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
     result.sourcePos = hitPos;
     result.sourceNormal = n;
     result.restir = 1u;
+    // Result starts as the fresh RIS CV estimate; the spatiotemporal merges below fold history in.
     if (initial.W > 0.0 && initial.phat >= RESTIR_MIN_PHAT) {
         float safeTarget = min(initial.phat, RESTIR_MAX_SAMPLE_LUMINANCE);
         float safeW = min(initial.W, min(RESTIR_MAX_W,
@@ -605,6 +766,12 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
         result.wSum = 0.0;
         result.phat = 0.0;
     }
+    // If fresh RIS produced no CV (e.g. all candidates were behind the receiver), keep the estimate
+    // dead but still allow the representative ReSTIR history to merge from a valid neighbour. The
+    // estimate is also capped at the live target M so a large RIS candidate count cannot hand the
+    // compact stored record a value it would clamp later.
+    result.cvM = min(initial.cvM, restcvTargetM());
+    result.cvColor = initial.cvColor;
 
     int2 previousPixel;
     bool hasPreviousPixel = restirPreviousPixel(hitPos, motionPrev, dimensions, previousPixel);
@@ -613,13 +780,28 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
                 ConstPtr<PackedRestirReservoir>(pc.restirPreviousAddr);
         float cameraDistance = length(hitPos - worldPush.camOffset);
         float3 expectedPreviousSurface = hitPos - motionPrev;
-        Reservoir candidate;
         uint previousIndex = uint(previousPixel.y) * dimensions.x + uint(previousPixel.x);
-        if (restirLoadCandidate(history[previousIndex], expectedPreviousSurface, n, twoSided,
-                max(0.20, cameraDistance * 0.01), 0.95, candidate)) {
-            candidate.M = min(candidate.M, RESTIR_TEMPORAL_M_CAP);
-            restirMerge(result, candidate, RESTIR_MAX_M, hitPos, n, v, rd,
-                    diffAlb, F0, rough, twoSided, sss, seed);
+        {
+            Reservoir candidate;
+            if (restirLoadCandidate(history[previousIndex], expectedPreviousSurface, n, twoSided,
+                    max(0.20, cameraDistance * 0.01), 0.95, candidate)) {
+                bool fullHistory = true;
+                if (restcvEnabled()) {
+                    ConstPtr<PackedRestcvEstimate> cvHistory =
+                            ConstPtr<PackedRestcvEstimate>(pc.restcvPreviousAddr);
+                    if (restcvLoadEstimate(cvHistory[previousIndex], candidate)) {
+                        fullHistory = true;
+                    } else {
+                        fullHistory = false;
+                    }
+                }
+                if (fullHistory) stats.accepted++; else stats.rejected++;
+                candidate.M = min(candidate.M, RESTIR_TEMPORAL_M_CAP);
+                restirMerge(result, candidate, RESTIR_MAX_M, hitPos, n, v, rd,
+                        diffAlb, F0, rough, twoSided, sss, seed);
+            } else {
+                stats.rejected++;
+            }
         }
 
         // Read neighbours only from last frame's immutable buffer. Tighter normal acceptance plus the
@@ -631,11 +813,25 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
             int2 neighbour = previousPixel + restirSpatialOffset(i, spatialHash);
             if (any(neighbour < int2(0, 0)) || any(neighbour >= int2(dimensions))) continue;
             uint neighbourIndex = uint(neighbour.y) * dimensions.x + uint(neighbour.x);
+            Reservoir candidate;
             if (restirLoadCandidate(history[neighbourIndex], expectedPreviousSurface, n, twoSided,
                     max(1.5, cameraDistance * 0.05), 0.90, candidate)) {
+                bool fullHistory = true;
+                if (restcvEnabled()) {
+                    ConstPtr<PackedRestcvEstimate> cvHistory =
+                            ConstPtr<PackedRestcvEstimate>(pc.restcvPreviousAddr);
+                    if (restcvLoadEstimate(cvHistory[neighbourIndex], candidate)) {
+                        fullHistory = true;
+                    } else {
+                        fullHistory = false;
+                    }
+                }
+                if (fullHistory) stats.accepted++; else stats.rejected++;
                 candidate.M = min(candidate.M, RESTIR_SPATIAL_M_CAP);
                 restirMerge(result, candidate, RESTIR_MAX_M, hitPos, n, v, rd,
                         diffAlb, F0, rough, twoSided, sss, seed);
+            } else {
+                stats.rejected++;
             }
         }
     }
@@ -649,6 +845,16 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
     result.sourcePos = hitPos;
     result.sourceNormal = n;
     restirStore(result, pixel.y * dimensions.x + pixel.x, hitPos, n, twoSided);
+    if (restcvEnabled() && result.cvM > 0.0) {
+        stats.ageSum += result.age;
+        stats.mSum += result.cvM;
+        stats.wSum += result.W;
+        stats.valid = 1u;
+        stats.samples++;
+        restcvStore(result, pixel.y * dimensions.x + pixel.x);
+    } else {
+        stats.valid = 0u;
+    }
     return result;
 }
 
@@ -679,11 +885,57 @@ public float3 shadeReservoir(Reservoir s, float3 hitPos, float3 n, float3 v, flo
     VisibilityResult shadow = visibility(origin, toL / dist, dist * 0.999);
     float3 vis = shadow.transmittance;
     float appliedW = s.restir != 0u ? min(s.W, RESTIR_MAX_W) : s.W;
-    float3 shaded = contrib * vis * appliedW;
+    float3 restirShaded = contrib * vis * appliedW;
+    // ReSTCV: the representative still produces the visibility for this pixel (no extra shadow ray),
+    // but the final colour is the accumulated CV estimate, optionally blended by the configurable
+    // strength. A CV that failed (cvM == 0) falls back silently to the ReSTIR shade.
+    bool restcvShade = restcvEnabled() && s.restir != 0u && s.cvM > 0.0 && luminance(s.cvColor) > 0.0;
+    float3 cvColor = s.cvColor;
+    float cvLuminance = luminance(cvColor);
+    if (!(cvLuminance >= 0.0)) {
+        restcvShade = false;
+    } else if (cvLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
+        cvColor *= RESTIR_MAX_SAMPLE_LUMINANCE / cvLuminance;
+    }
+    float3 shaded = restcvShade
+            ? lerp(restirShaded, cvColor * vis, restcvBlendStrength())
+            : restirShaded;
     if (s.restir != 0u) {
         // Last-line firefly suppression after visibility and target re-evaluation. This catches the case
         // where a capped p-hat was selected but the full RGB contribution at the final receiver is much
         // larger. Hue is preserved by scaling all channels together.
+        float shadedLuminance = luminance(shaded);
+        if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
+        if (shadedLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
+            shaded *= RESTIR_MAX_SAMPLE_LUMINANCE / shadedLuminance;
+        }
+    }
+    return shaded;
+}
+
+// Debug-only twin of shadeReservoir that deliberately ignores ReSTCV. It exists so debug view 14 can
+// report the actual ReSTIR-vs-ReSTCV difference without changing the production shading path. It is
+// never called on the normal path and therefore pays a second shadow ray only in that debug view.
+public float3 shadeReservoirRestirOnly(Reservoir s, float3 hitPos, float3 n, float3 v, float3 rd, float3 diffAlb,
+                                     float3 F0, float rough, bool twoSided, float sss) {
+    if (s.W <= 0.0 || s.phat <= 0.0) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float phat;
+    float3 contrib = evalSampleContrib(s.pos, s.lnrm, s.le, s.area, hitPos, n, v, rd,
+            diffAlb, F0, rough, twoSided, sss, phat);
+    if (phat <= 0.0) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float side = dot(n, s.pos - hitPos) >= 0.0 ? 1.0 : -1.0;
+    float3 origin = hitPos + side * n * SURF_BIAS;
+    float3 toL = s.pos - origin;
+    float dist = length(toL);
+    VisibilityResult shadow = visibility(origin, toL / dist, dist * 0.999);
+    float3 vis = shadow.transmittance;
+    float appliedW = s.restir != 0u ? min(s.W, RESTIR_MAX_W) : s.W;
+    float3 shaded = contrib * vis * appliedW;
+    if (s.restir != 0u) {
         float shadedLuminance = luminance(shaded);
         if (!(shadedLuminance >= 0.0)) return float3(0.0, 0.0, 0.0);
         if (shadedLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
@@ -721,8 +973,24 @@ public void shadeReservoirSplit(Reservoir s, float3 hitPos, float3 n, float3 v, 
     VisibilityResult shadow = visibility(origin, toL / dist, dist * 0.999);
     float3 vis = shadow.transmittance;
     float appliedW = s.restir != 0u ? min(s.W, RESTIR_MAX_W) : s.W;
-    outDiff = diffPart * vis * appliedW;
-    outSpec = specPart * vis * appliedW;
+    float3 restirDiff = diffPart * vis * appliedW;
+    float3 restirSpec = specPart * vis * appliedW;
+    bool restcvShade = restcvEnabled() && s.restir != 0u && s.cvM > 0.0 && luminance(s.cvColor) > 0.0;
+    float3 cvColor = s.cvColor;
+    float cvLuminance = luminance(cvColor);
+    if (!(cvLuminance >= 0.0)) {
+        restcvShade = false;
+    } else if (cvLuminance > RESTIR_MAX_SAMPLE_LUMINANCE) {
+        cvColor *= RESTIR_MAX_SAMPLE_LUMINANCE / cvLuminance;
+    }
+    float splitScale = 1.0;
+    if (restcvShade) {
+        float restirLum = max(luminance(restirDiff + restirSpec), 1.0e-6);
+        float cvLum = max(luminance(cvColor * vis), 1.0e-6);
+        splitScale = lerp(1.0, cvLum / restirLum, restcvBlendStrength());
+    }
+    outDiff = restirDiff * splitScale;
+    outSpec = restirSpec * splitScale;
     if (s.restir != 0u) {
         // Same luminance clamp as shadeReservoir, applied proportionally so the split keeps the hue.
         float shadedLuminance = luminance(outDiff + outSpec);

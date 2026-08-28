@@ -87,6 +87,14 @@ public bool restirEnabled() {
     return pc.restirMode != 0u
             && pc.restirPreviousAddr != 0 && pc.restirCurrentAddr != 0;
 }
+
+public bool restcvEnabled() {
+    // ReSTCV is a superset of ReSTIR: it keeps the representative reservoir history (for reprojection
+    // and geometry validation) and additionally maintains an accumulated colour control variate.
+    return pc.restirMode == 2u
+            && pc.restcvPreviousAddr != 0 && pc.restcvCurrentAddr != 0
+            && pc.restirPreviousAddr != 0 && pc.restirCurrentAddr != 0;
+}
 public bool waterWavesEnabled() { return worldFlag(worldPush, WORLD_FLAG_WAVES); }
 public bool fogEnabled() { return worldFeature(worldPush, FEATURE_FOG); }
 public bool sharcEnabled() { return worldFeature(worldPush, FEATURE_SHARC); }

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,6 +18,9 @@ final class RestirReservoirMathTest {
     private static final double MAX_SAMPLE_LUMINANCE = 16.0;
     private static final double JACOBIAN_MIN = 0.2;
     private static final double JACOBIAN_MAX = 5.0;
+    private static final double RESTCV_MIN_M = 4.0;
+    private static final double RESTCV_MAX_M = 16.0;
+    private static final double RESTCV_MAX_W = 16.0;
 
     @Test
     void mergedReservoirCarriesEffectiveSamplesButNeverExceedsHardMCap() {
@@ -78,6 +82,78 @@ final class RestirReservoirMathTest {
         assertTrue(Math.abs(sourceWins / (double) trials - 0.75) < 0.005);
     }
 
+    @Test
+    void restcvMergeKeepsTheControlVariateAColourWeightedAverage() {
+        CvEstimate dst = new CvEstimate(8.0, new double[] {1.0, 0.5, 0.25});
+        CvEstimate src = new CvEstimate(8.0, new double[] {0.5, 0.5, 0.5});
+        restcvMergeColor(dst, src, 16.0);
+        assertEquals(16.0, dst.m, 1.0e-12);
+        assertEquals((1.0 * 8.0 + 0.5 * 8.0) / 16.0, dst.color[0], 1.0e-12);
+        assertEquals((0.5 * 8.0 + 0.5 * 8.0) / 16.0, dst.color[1], 1.0e-12);
+        assertEquals((0.25 * 8.0 + 0.5 * 8.0) / 16.0, dst.color[2], 1.0e-12);
+    }
+
+    @Test
+    void restcvMergeNeverBrightensWhenTheCombinedMIsBelowOne() {
+        // The old formula divided by max(totalM, 1.0), which doubled a 0.5+0.5 merge. The merge must
+        // divide by the actual combined effective sample count.
+        CvEstimate dst = new CvEstimate(0.5, new double[] {0.2, 0.4, 0.6});
+        CvEstimate src = new CvEstimate(0.5, new double[] {0.4, 0.2, 0.8});
+        restcvMergeColor(dst, src, 1.0);
+        assertEquals(1.0, dst.m, 1.0e-12);
+        assertEquals(0.3, dst.color[0], 1.0e-12);
+        assertEquals(0.3, dst.color[1], 1.0e-12);
+        assertEquals(0.7, dst.color[2], 1.0e-12);
+    }
+
+    @Test
+    void restcvMergeIgnoresInvalidSourcesAndBouncesTheCap() {
+        CvEstimate dst = new CvEstimate(12.0, new double[] {0.1, 0.2, 0.3});
+        CvEstimate dead = new CvEstimate(0.0, new double[] {9.0, 9.0, 9.0});
+        restcvMergeColor(dst, dead, 16.0);
+        assertEquals(12.0, dst.m, 0.0);
+        assertArrayEquals(new double[] {0.1, 0.2, 0.3}, dst.color, 0.0);
+
+        CvEstimate heavy = new CvEstimate(100.0, new double[] {1.0, 1.0, 1.0});
+        restcvMergeColor(dst, heavy, 12.0);
+        assertEquals(12.0, dst.m, 0.0, "total M must never exceed the live target cap");
+        assertEquals(0.1, dst.color[0], 1.0e-12, "a full dst still owns its colour when the cap is hit");
+    }
+
+    @Test
+    void restcvStoreKeepsSmallPositiveCountsWithoutFlooringThem() {
+        assertEquals(4.0, restcvStoreM(4.0), 0.0);
+        assertEquals(16.0, restcvStoreM(100.0), 0.0);
+        assertEquals(1.0, restcvStoreM(1.0), 0.0, "a young estimate must keep its true low count");
+        assertEquals(3.0, restcvStoreM(3.0), 0.0, "below MIN_M is valid as long as it stays positive");
+        assertEquals(0.0, restcvStoreM(0.0), 0.0, "M==0 remains the invalid sentinel");
+    }
+
+    private static void restcvMergeColor(CvEstimate dst, CvEstimate src, double targetM) {
+        if (!(src.m > 0.0)) {
+            return;
+        }
+        double dstM = Math.max(dst.m, 0.0);
+        double srcM = Math.min(src.m, targetM - dstM);
+        if (!(srcM > 0.0)) {
+            return; // no remaining capacity: dst keeps its established estimate
+        }
+        double totalM = dstM + srcM;
+        if (dstM <= 0.0) {
+            dst.color = src.color.clone();
+            dst.m = srcM;
+        } else {
+            for (int i = 0; i < 3; i++) {
+                dst.color[i] = (dst.color[i] * dstM + src.color[i] * srcM) / totalM;
+            }
+            dst.m = totalM;
+        }
+    }
+
+    private static double restcvStoreM(double m) {
+        return Math.max(1.0, Math.min(m, RESTCV_MAX_M));
+    }
+
     private static void merge(Reservoir destination, double sourceM, double sourceW,
                               double targetAtCurrentReceiver, double uniformRandom) {
         double acceptedM = Math.min(sourceM, Math.max(0.0, MAX_M - destination.m));
@@ -122,6 +198,16 @@ final class RestirReservoirMathTest {
             this.m = m;
             this.weightSum = weightSum;
             this.selectedTarget = selectedTarget;
+        }
+    }
+
+    private static final class CvEstimate {
+        private double m;
+        private double[] color;
+
+        private CvEstimate(double m, double[] color) {
+            this.m = m;
+            this.color = color.clone();
         }
     }
 }

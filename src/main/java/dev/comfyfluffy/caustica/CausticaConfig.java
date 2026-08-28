@@ -67,7 +67,8 @@ public final class CausticaConfig {
             Rt.Sharc.TEMPORAL_BLEND, Rt.Sharc.START_BOUNCE, Rt.Sharc.STRENGTH, Rt.Sharc.MAX_DISTANCE,
             Rt.Sharc.FRAME_LIFETIME, Rt.Sharc.NORMAL_THRESHOLD, Rt.Sharc.STABLE_FRAMES, Rt.Sharc.DEBUG,
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
-            Rt.Lights.RESTIR_SAMPLING, Rt.Hand.FOV_FOLLOWS_CAMERA,
+            Rt.Lights.SAMPLING_MODE, Rt.Lights.RESTCV_M, Rt.Lights.RESTCV_W, Rt.Lights.RESTCV_AGE,
+            Rt.Lights.RESTCV_BLEND, Rt.Lights.RESTCV_STATS, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
@@ -159,12 +160,15 @@ public final class CausticaConfig {
                         + " item casts (torch in hand lighting up a cave); each item casts its own colour.\n"
                         + " dynamic-intensity scales that held-item light and other dynamic emitters;\n"
                         + " block-emissive-intensity scales emissive blocks placed in the world, both their\n"
-                        + " direct-hit emission and sampled area-light contribution. The toggle, both intensity\n"
-                        + " sliders and ReSTIR sampling are exposed in the Video Settings screen. restir-sampling reuses\n"
-                        + " validated light reservoirs across frames and nearby pixels; off keeps the original\n"
-                        + " independent RIS estimator. ris-candidates = 0 disables emitter NEE entirely\n"
-                        + " (emitters just gather on direct hit). min-fill-ratio drops sparse emissive\n"
-                        + " footprints from the light buffer. stats/dump/dump-radius are debug logging.");
+                        + " direct-hit emission and sampled area-light contribution. The sampling-mode\n"
+                        + " selector exposes 0 = Disabled, 1 = ReSTIR (the existing temporal+spatial\n"
+                        + " reservoir reuse) and 2 = ReSTCV Experimental (keeps the ReSTIR reservoir and\n"
+                        + " additionally accumulates a compact colour estimate as a control variate).\n"
+                        + " restcv-m/w/age/blend tune the experimental ReSTCV sample, reservoir-weight and\n"
+                        + " history-age budgets plus the strength of its colour blend. ris-candidates = 0\n"
+                        + " disables emitter NEE entirely (emitters just gather on direct hit).\n"
+                        + " min-fill-ratio drops sparse emissive footprints from the light buffer.\n"
+                        + " stats/dump/dump-radius are debug logging.");
         FILE.setComment("tonemap",
                 " Scene tonemapping after exposure and before writing the vanilla SDR target. operator selects\n"
                         + " the curve; exposure-ev is an extra post-exposure bias; gamma/saturation/contrast\n"
@@ -850,13 +854,42 @@ public final class CausticaConfig {
             public static final FloatSetting BLOCK_INTENSITY =
                     lightIntensity("caustica.rt.blockLightIntensity", "lights.block-emissive-intensity", 2.0f);
             /**
-             * Reservoir-based spatio-temporal resampling for emitter NEE. When disabled, every shading
-             * vertex uses the original independent per-frame RIS reservoir and no history allocation is
-             * retained. The renderer notices live changes, idles before retiring/recreating the two Vulkan
-             * history buffers, and starts newly enabled history from zero.
+             * Reservoir sampling mode for emitter NEE. 0 = Disabled (legacy independent RIS, no history),
+             * 1 = ReSTIR (the existing spatio-temporal reservoir reuse, kept byte-for-byte in behaviour),
+             * 2 = ReSTCV Experimental (keeps representative ReSTIR history and adds a compact accumulated
+             * colour estimate used as a spatio-temporal control variate). The renderer notices live
+             * changes, idles before retiring/recreating the Vulkan history buffers, and starts newly
+             * enabled history from zero.
              */
-            public static final BooleanSetting RESTIR_SAMPLING =
-                    bool("caustica.rt.restir", "lights.restir-sampling", true);
+            public static final IntSetting SAMPLING_MODE =
+                    clampedInt("caustica.rt.samplingMode", "lights.sampling-mode", 1, 0, 2);
+            /**
+             * ReSTCV effective sample-count budget (M cap) for the accumulated colour estimate.
+             */
+            public static final IntSetting RESTCV_M =
+                    clampedInt("caustica.rt.restcvM", "lights.restcv-m", 16, 4, 16);
+            /**
+             * ReSTCV diagnostic/cap for the representative reservoir weight (W cap).
+             */
+            public static final IntSetting RESTCV_W =
+                    clampedInt("caustica.rt.restcvW", "lights.restcv-w", 16, 1, 16);
+            /**
+             * Maximum ReSTCV history age before a stored colour estimate is safely rejected. The
+             * reservoir age itself is capped at the existing ReSTIR budget (30), so 30 is also the
+             * effective maximum for the CV history.
+             */
+            public static final IntSetting RESTCV_AGE =
+                    clampedInt("caustica.rt.restcvAge", "lights.restcv-age", 30, 1, 30);
+            /**
+             * ReSTCV blend strength 0..1. 0 always shades the ReSTIR representative (so it is a perfect
+             * ReSTIR fallback), 1 uses the accumulated control-variate estimate, and intermediate values
+             * damp the transition between the two.
+             */
+            public static final FloatSetting RESTCV_BLEND =
+                    clampedFloat("caustica.rt.restcvBlend", "lights.restcv-blend", 0.85f, 0.0f, 1.0f);
+            /** Periodically log the per-pixel ReSTCV statistics seen by debug view 14. */
+            public static final BooleanSetting RESTCV_STATS =
+                    bool("caustica.rt.restcvStats", "lights.restcv-stats", false);
             public static final IntSetting RIS_CANDIDATES =
                     intAtLeast("caustica.rt.risCandidates", "lights.ris-candidates", 8, 0);
             public static final FloatSetting MIN_FILL_RATIO =

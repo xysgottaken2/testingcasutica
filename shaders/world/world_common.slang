@@ -33,6 +33,11 @@ public struct WorldPushConstants {
     // reachable (or even allocated) on the legacy RIS path.
     public uint64_t restirPreviousAddr;
     public uint64_t restirCurrentAddr;
+    // ReSTCV control-variate estimate ping-pong (mode 2 only). They ride the same zero-address
+    // convention as the ReSTIR pair; ReSTCV keeps the representative ReSTIR history for geometry
+    // validation and adds this compact accumulated-colour estimate on top.
+    public uint64_t restcvPreviousAddr;
+    public uint64_t restcvCurrentAddr;
     public uint frameIndex;
     public uint debugView;
     public uint lightGeneration;         // low bits reject history after the emitter hierarchy changes
@@ -58,6 +63,32 @@ public struct PackedRestirReservoir {
     public uint packedLe;
     public uint surfaceNormal;
     public uint meta;
+};
+
+// Compact per-pixel ReSTCV control-variate state. ReSTIR's representative sample remains in
+// PackedRestirReservoir; this is the second half of the reservoir that the paper calls the
+// accumulated colour estimate. It is intentionally tiny (16 B in Std430): the colour lives as a
+// packed half3 so only M, W and a packed generation/age/validity word remain in full precision.
+// The M==0 sentinel is the invalid state, mirroring PackedRestirReservoir.
+public struct PackedRestcvEstimate {
+    public uint colorRG;     // half2: r,g
+    public uint colorBMeta;  // half(b) | age:8 | generation:7 | valid:1
+    public float M;          // effective control-variate sample count (bounded like ReSTIR M)
+    public float W;          // representative reservoir W (diagnostics; not used to shade the CV)
+};
+
+// Per-pixel ReSTCV diagnostics returned by the shading path. The raygen aggregates on top of it so
+// debug view 14 can report averages without a readback pass.
+public struct RestcvStats {
+    public float ageSum;
+    public uint  accepted;
+    public uint  rejected;
+    public float mSum;
+    public float wSum;
+    public uint  valid;
+    public float3 restirSum;
+    public float3 restcvSum;
+    public uint  samples;
 };
 
 // Per-frame world data, read through a 64-bit device address. WorldPushData.java is generated from this
@@ -151,6 +182,10 @@ public struct WorldPush {
     public float4   sharcParams2;
     public float4   sharcParams3;
     public int4     sharcGridOrigin;
+    // Experimental ReSTCV control-variate tuning (only read when pc.restirMode == 2). x = target M,
+    // y = W cap, z = max age, w = CV blend strength 0..1 (0 still shades ReSTIR, 1 uses the full
+    // accumulated control-variate estimate).
+    public float4   restcvParams;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -169,6 +204,7 @@ public static const uint FEATURE_DENOISER = 4u;          // temporal/spatial den
 public static const uint FEATURE_CLOUDS = 8u;            // cloud deck in the sky + its sun shadow
 public static const uint FEATURE_CLOUDS_VOLUMETRIC = 16u; // clouds are ray-marched, not a flat deck
 public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial emitter-reservoir reuse
+public static const uint FEATURE_RESTCV = 1024u;          // ReSTCV experimental control-variate accumulation (bit inside mode 2)
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_FOG = 256u;             // masked distance fog (authored full-depth Nether/End haze)

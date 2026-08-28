@@ -198,7 +198,12 @@ public final class RtVideoOptions {
             heldItemLight(),
             blockEmissiveIntensity(),
             dynamicIntensity(),
-            restirSampling(),
+            samplingMode(),
+            restcvM(),
+            restcvW(),
+            restcvAge(),
+            restcvBlend(),
+            restcvStats(),
         };
     }
 
@@ -307,8 +312,56 @@ public final class RtVideoOptions {
         return bool("caustica.options.rt.heldItemLight", CausticaConfig.Rt.Lights.HELD_ITEM_LIGHT);
     }
 
-    private static OptionInstance<Boolean> restirSampling() {
-        return bool("caustica.options.rt.restirSampling", CausticaConfig.Rt.Lights.RESTIR_SAMPLING);
+    private static OptionInstance<Integer> samplingMode() {
+        IntSetting setting = CausticaConfig.Rt.Lights.SAMPLING_MODE;
+        return new OptionInstance<>(
+            "caustica.options.rt.samplingMode",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.samplingMode.tooltip")),
+            (caption, value) -> Component.translatable("caustica.options.rt.samplingMode." + value),
+            new OptionInstance.Enum<>(List.of(0, 1, 2), Codec.INT),
+            Math.clamp(setting.value(), 0, 2),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> restcvM() {
+        IntSetting setting = CausticaConfig.Rt.Lights.RESTCV_M;
+        return new OptionInstance<>(
+            "caustica.options.rt.restcvM",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.restcvM.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, value),
+            new OptionInstance.IntRange(4, 16),
+            Math.clamp(setting.value(), 4, 16),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> restcvW() {
+        IntSetting setting = CausticaConfig.Rt.Lights.RESTCV_W;
+        return new OptionInstance<>(
+            "caustica.options.rt.restcvW",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.restcvW.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, value),
+            new OptionInstance.IntRange(1, 16),
+            Math.clamp(setting.value(), 1, 16),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> restcvAge() {
+        IntSetting setting = CausticaConfig.Rt.Lights.RESTCV_AGE;
+        return new OptionInstance<>(
+            "caustica.options.rt.restcvAge",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.restcvAge.tooltip")),
+            (caption, value) -> Options.genericValueLabel(caption, value),
+            new OptionInstance.IntRange(1, 30),
+            Math.clamp(setting.value(), 1, 30),
+            setting::set);
+    }
+
+    private static OptionInstance<Integer> restcvBlend() {
+        return percent("caustica.options.rt.restcvBlend", CausticaConfig.Rt.Lights.RESTCV_BLEND);
+    }
+
+    private static OptionInstance<Boolean> restcvStats() {
+        return bool("caustica.options.rt.restcvStats", CausticaConfig.Rt.Lights.RESTCV_STATS);
     }
 
     private static final List<String> TONEMAP_OPERATORS =
@@ -823,8 +876,9 @@ public final class RtVideoOptions {
             // 10-12 inspect the SVGF denoiser's internal state and, unlike 1-7, leave the denoiser
             // running (see RtComposite.SVGF_DEBUG_FIRST). 8/9 are not exposed here. 13 is the SHaRC
             // cache query overlay (see sharc.slang): pass B paints it so it reflects real queries.
-            new OptionInstance.Enum<>(List.of(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13), Codec.INT),
-            Math.clamp(setting.value(), 0, 13),
+            // 14 is the ReSTCV statistics overlay (see lighting.slang).
+            new OptionInstance.Enum<>(List.of(0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14), Codec.INT),
+            Math.clamp(setting.value(), 0, 14),
             setting::set);
     }
 

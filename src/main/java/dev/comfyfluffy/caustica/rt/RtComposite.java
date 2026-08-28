@@ -11,6 +11,7 @@ import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import dev.comfyfluffy.caustica.client.CausticaJitter;
 import dev.comfyfluffy.caustica.mixin.CommandEncoderAccessor;
+import dev.comfyfluffy.caustica.rt.gen.RestcvEstimateData;
 import dev.comfyfluffy.caustica.rt.gen.RestirReservoirData;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushConstantsData;
 import dev.comfyfluffy.caustica.rt.terrain.RtDistantHorizonsTerrain;
@@ -131,6 +132,8 @@ public final class RtComposite {
     private static final long PATH_RECORD_BYTES = 48L;
     // Reflected from PackedRestirReservoir's std430 array stride (world_layout_probe.slang).
     private static final long RESTIR_RECORD_BYTES = RestirReservoirData.BYTE_SIZE;
+    // Reflected from PackedRestcvEstimate, the compact per-pixel accumulated colour estimate.
+    private static final long RESTCV_RECORD_BYTES = RestcvEstimateData.BYTE_SIZE;
     private static int debugView() {
         return CausticaConfig.Rt.Composite.DEBUG_VIEW.value();
     }
@@ -175,6 +178,9 @@ public final class RtComposite {
     private static final int FEATURE_CLOUDS = 8;
     private static final int FEATURE_CLOUDS_VOLUMETRIC = 16;
     private static final int FEATURE_RESTIR = 32;
+    // ReSTCV experimental control variate (mode 2). It builds on the ReSTIR buffer pair but also owns
+    // the compact colour-estimate history; the diagnostic bit follows featureFlags conventions.
+    private static final int FEATURE_RESTCV = 1024;
     // Per-lobe NRD signal capture: only the NRD path needs it (it costs an extra shadow ray for the
     // lobe split), so it is a feature bit rather than something the tracer always pays for.
     private static final int FEATURE_NRD = 64;
@@ -196,7 +202,7 @@ public final class RtComposite {
      * frame (never cached) so the Video Settings toggles take effect on the next frame, the way every
      * other runtime-tunable option in the renderer does.
      */
-    private static int featureFlags() {
+    private int featureFlags() {
         int flags = 0;
         if (CausticaConfig.Rt.Composite.SSS.value()) {
             flags |= FEATURE_SSS;
@@ -207,8 +213,12 @@ public final class RtComposite {
         if (CausticaConfig.Rt.Composite.FOG.value()) {
             flags |= FEATURE_FOG;
         }
-        if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
+        int mode = restirMode();
+        if (mode > 0) {
             flags |= FEATURE_RESTIR;
+            if (mode == 2) {
+                flags |= FEATURE_RESTCV;
+            }
         }
         if (CausticaConfig.Rt.Sharc.ENABLED.value() && RtSharc.INSTANCE.entryCount() > 0) {
             flags |= FEATURE_SHARC;
@@ -522,6 +532,20 @@ public final class RtComposite {
     private final RtBuffer[] restirReservoirs = new RtBuffer[2];
     private int restirWriteIndex;
     private boolean restirResourcesEnabled;
+    // ReSTCV secondary history: the accumulated estimate is a separate compact pair so the ReSTIR ABI
+    // is untouched and mode 1 costs no extra VRAM. The two buffers share the restirWriteIndex pacing
+    // concept but have their own index because a UI that turns ReSTCV on/off must not leave a stale
+    // half-pair behind.
+    private final RtBuffer[] restcvEstimates = new RtBuffer[2];
+    private int restcvWriteIndex;
+    private boolean restcvResourcesEnabled;
+    // World-scene tracking used to clear both reservoir/estimate histories when the player changes
+    // worlds, dimensions, or leaves to the title (see syncRestirResources/syncRestcvResources).
+    private ClientLevel restcvPrevLevel;
+    private int restcvPrevDimension = Integer.MIN_VALUE;
+    // Restcv stats logging: reports the live tuning and history addresses periodically when enabled.
+    private boolean restcvLoggedActive;
+    private long restcvLastStatsFrame;
     private RtImage displayImage;
     // Parallel PQ-encoded ([0,1], ST.2084) HDR display image. Written alongside displayImage when HDR is
     // enabled. When the PQ swapchain is active, the combined UI overlay is composited over this image, then
@@ -1213,16 +1237,18 @@ public final class RtComposite {
      * OFF releases the VRAM (rather than merely hiding it), and ON can never observe stale reservoirs.
      */
     private void syncRestirResources(RtContext ctx) {
-        boolean desired = CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()
+        boolean desired = samplingMode() > 0
                 && CausticaConfig.Rt.Lights.RIS_CANDIDATES.value() > 0
                 && renderW > 0 && renderH > 0;
         boolean completePair = restirReservoirs[0] != null && restirReservoirs[1] != null;
-        if (desired == restirResourcesEnabled && desired == completePair) {
+        boolean sceneChanged = updateSamplingSceneTracking();
+        if (desired == restirResourcesEnabled && desired == completePair && !sceneChanged) {
             return;
         }
 
         ctx.waitIdle();
         destroyRestirResources();
+        destroyRestcvResources(); // mode 2 history is always cleared whenever the ReSTIR pair resets
         if (!desired) {
             return;
         }
@@ -1250,6 +1276,21 @@ public final class RtComposite {
         }
     }
 
+    /**
+     * Track scene identity for both ReSTIR and ReSTCV histories. A world/dimension change means every
+     * stored camera-relative surface/sample and accumulated colour is for a different scene, so all
+     * history must be dropped rather than reprojected into the new world.
+     */
+    private boolean updateSamplingSceneTracking() {
+        ClientLevel level = Minecraft.getInstance().level;
+        int dimension = dimensionId(level);
+        boolean changed = restcvPrevLevel != null
+                && (restcvPrevLevel != level || restcvPrevDimension != dimension);
+        restcvPrevLevel = level;
+        restcvPrevDimension = dimension;
+        return changed;
+    }
+
     private void destroyRestirResources() {
         for (int i = 0; i < restirReservoirs.length; i++) {
             if (restirReservoirs[i] != null) {
@@ -1269,9 +1310,124 @@ public final class RtComposite {
         return restirResourcesEnabled ? restirReservoirs[restirWriteIndex].deviceAddress : 0L;
     }
 
+    /**
+     * Match the optional ReSTCV estimate history to live state. Like ReSTIR it is a strict
+     * two-buffer ping-pong and is recreated/zeroed on mode, resolution, world or dimension changes.
+     * The record is only 16 bytes, so the two halves add very little VRAM while keeping the ReSTIR
+     * buffer ABI untouched.
+     */
+    private void syncRestcvResources(RtContext ctx) {
+        boolean desired = samplingMode() == 2
+                && CausticaConfig.Rt.Lights.RIS_CANDIDATES.value() > 0
+                && renderW > 0 && renderH > 0;
+        boolean completePair = restcvEstimates[0] != null && restcvEstimates[1] != null;
+        boolean sceneChanged = updateSamplingSceneTracking();
+        if (desired == restcvResourcesEnabled && desired == completePair && !sceneChanged) {
+            if (desired && CausticaConfig.Rt.Lights.RESTCV_STATS.value()) {
+                logRestcvStatsPeriodic();
+            }
+            return;
+        }
+
+        ctx.waitIdle();
+        destroyRestcvResources();
+        if (!desired) {
+            if (restcvLoggedActive) {
+                restcvLoggedActive = false;
+                CausticaMod.LOGGER.info("[ReSTCV] disabled");
+            }
+            return;
+        }
+
+        long pixels = Math.multiplyExact((long) renderW, (long) renderH);
+        long bytes = Math.multiplyExact(pixels, RESTCV_RECORD_BYTES);
+        int usage = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        try {
+            restcvEstimates[0] = ctx.createBuffer(bytes, usage, false,
+                    "ReSTCV estimate history A " + renderW + "x" + renderH);
+            restcvEstimates[1] = ctx.createBuffer(bytes, usage, false,
+                    "ReSTCV estimate history B " + renderW + "x" + renderH);
+            restcvWriteIndex = 0;
+            ctx.submitSync(cmd -> {
+                VK10.vkCmdFillBuffer(cmd, restcvEstimates[0].handle, 0L, bytes, 0);
+                VK10.vkCmdFillBuffer(cmd, restcvEstimates[1].handle, 0L, bytes, 0);
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    VulkanCommandEncoder.memoryBarrier(cmd, stack);
+                }
+            });
+            restcvResourcesEnabled = true;
+            boolean restcvFirstActivation = !restcvLoggedActive;
+            restcvLoggedActive = true;
+            if (CausticaConfig.Rt.Lights.RESTCV_STATS.value() && restcvFirstActivation) {
+                logRestcvStats();
+            }
+        } catch (Throwable failure) {
+            destroyRestcvResources();
+            throw failure;
+        }
+    }
+
+    private void logRestcvStats() {
+        restcvLastStatsFrame = frameCounter;
+        CausticaMod.LOGGER.info("[ReSTCV] active (frame {}): mode={}, M={}, W={}, age={}, blend={}, cvAddr=0x{}, restirAddr=0x{}",
+                frameCounter, samplingMode(),
+                CausticaConfig.Rt.Lights.RESTCV_M.value(),
+                CausticaConfig.Rt.Lights.RESTCV_W.value(),
+                CausticaConfig.Rt.Lights.RESTCV_AGE.value(),
+                CausticaConfig.Rt.Lights.RESTCV_BLEND.value(),
+                Long.toHexString(restcvCurrentAddress()), Long.toHexString(restirCurrentAddress()));
+    }
+
+    private void logRestcvStatsPeriodic() {
+        if (CausticaConfig.Rt.Lights.RESTCV_STATS.value()
+                && restcvResourcesEnabled
+                && frameCounter - restcvLastStatsFrame >= 300L) {
+            logRestcvStats();
+        }
+    }
+
+    private void destroyRestcvResources() {
+        for (int i = 0; i < restcvEstimates.length; i++) {
+            if (restcvEstimates[i] != null) {
+                restcvEstimates[i].destroy();
+                restcvEstimates[i] = null;
+            }
+        }
+        restcvWriteIndex = 0;
+        restcvResourcesEnabled = false;
+    }
+
+    private long restcvPreviousAddress() {
+        return restcvResourcesEnabled ? restcvEstimates[restcvWriteIndex ^ 1].deviceAddress : 0L;
+    }
+
+    private long restcvCurrentAddress() {
+        return restcvResourcesEnabled ? restcvEstimates[restcvWriteIndex].deviceAddress : 0L;
+    }
+
+    /** Sanitized 0/1/2 sampler selector from the config. */
+    private static int samplingMode() {
+        return Math.clamp(CausticaConfig.Rt.Lights.SAMPLING_MODE.value(), 0, 2);
+    }
+
+    /** WorldPush.restcvParams: x M, y W, z age, w blend strength. */
+    private static Float4 restcvParams() {
+        return new Float4(CausticaConfig.Rt.Lights.RESTCV_M.value(),
+                CausticaConfig.Rt.Lights.RESTCV_W.value(),
+                CausticaConfig.Rt.Lights.RESTCV_AGE.value(),
+                CausticaConfig.Rt.Lights.RESTCV_BLEND.value());
+    }
+
     /** Explicit shader mode uniform; unlike the descriptive feature bit this is tied to real bindings. */
     private int restirMode() {
-        return restirResourcesEnabled && CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value() ? 1 : 0;
+        int mode = samplingMode();
+        if (mode == 0 || !(restirResourcesEnabled && restirReservoirs[0] != null && restirReservoirs[1] != null)) {
+            return 0;
+        }
+        if (mode == 2 && !restcvResourcesEnabled) {
+            return 1; // CV buffers unavailable: degrade to plain ReSTIR, never to legacy RIS
+        }
+        return mode;
     }
 
     private void ensureOutput(RtContext ctx, int width, int height) {
@@ -1305,6 +1461,7 @@ public final class RtComposite {
                 && renderSizeSvgfEnabled == svgfEnabled
                 && renderSizeNrdEnabled == nrdEnabled) {
             syncRestirResources(ctx);
+            syncRestcvResources(ctx);
             return;
         }
         ctx.waitIdle(); // resize is rare; no in-flight frame may use the old image/descriptor
@@ -1329,6 +1486,7 @@ public final class RtComposite {
             continuationQueue.destroy();
             continuationQueue = null;
         }
+        destroyRestcvResources();
         destroyRestirResources();
         destroyGuideImages();
 
@@ -1373,6 +1531,7 @@ public final class RtComposite {
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false,
                 "path continuation queue " + renderW + "x" + renderH + "x2");
         syncRestirResources(ctx);
+        syncRestcvResources(ctx);
         displayImage = ctx.createStorageImage(width, height, VK10.VK_FORMAT_R8G8B8A8_UNORM, "RT display image " + width + "x" + height);
         // PQ-encoded ([0,1], ST.2084) HDR display image, written in parallel by display.comp when HDR mode is active.
         hdrDisplayImage = ctx.createStorageImage(width, height, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "RT HDR display image " + width + "x" + height);
@@ -1720,7 +1879,9 @@ public final class RtComposite {
                     sharcParams(),
                     sharcParams2(),
                     sharcParams3(),
-                    sharcGridOrigin(terrain)
+                    sharcGridOrigin(terrain),
+                    // ReSTCV control-variate tuning, only read when the shader is in mode 2.
+                    restcvParams()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -1762,6 +1923,7 @@ public final class RtComposite {
                     terrain.lightLocalAliasBufferAddress(), terrain.lightGridCellBufferAddress(),
                     terrain.lightGridSpanBufferAddress(), continuationQueue.deviceAddress,
                     restirPreviousAddress(), restirCurrentAddress(),
+                    restcvPreviousAddress(), restcvCurrentAddress(),
                     // The SVGF debug ids are consumed by the denoiser, not the tracer: forwarding
                     // them would make the raygen paint a guide overlay over the very image we are
                     // trying to inspect. The tracer sees 0 (normal shading) for those.
@@ -2083,6 +2245,9 @@ public final class RtComposite {
         // this frame just wrote and writes the other half. Advance only after execute accepted the command.
         if (restirResourcesEnabled) {
             restirWriteIndex ^= 1;
+        }
+        if (restcvResourcesEnabled) {
+            restcvWriteIndex ^= 1;
         }
         // Do not attach a merely reserved token: failed recording may never signal it. Once execute succeeds,
         // every owner in this frame's manifest is protected through the final overlay consumer.
@@ -2841,6 +3006,7 @@ public final class RtComposite {
             continuationQueue.destroy();
             continuationQueue = null;
         }
+        destroyRestcvResources();
         destroyRestirResources();
         destroyGuideImages();
         exposure.destroy();

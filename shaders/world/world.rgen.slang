@@ -43,12 +43,22 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                  bool restirEligiblePath, bool restirOwner, float restirSampleScale,
                  uint2 dimensions,
                  out float3 outLdiff, out float3 outLspec,
-                 out float outHitDiff, out float outHitSpec) {
+                 out float outHitDiff, out float outHitSpec,
+                 out RestcvStats restcvStats) {
     float3 L = float3(0.0, 0.0, 0.0);
     float3 Ldiff = float3(0.0, 0.0, 0.0);
     float3 Lspec = float3(0.0, 0.0, 0.0);
     float hitDiff = 0.0;
     float hitSpec = 0.0;
+    restcvStats.ageSum = 0.0;
+    restcvStats.accepted = 0u;
+    restcvStats.rejected = 0u;
+    restcvStats.mSum = 0.0;
+    restcvStats.wSum = 0.0;
+    restcvStats.valid = 0u;
+    restcvStats.restirSum = float3(0.0, 0.0, 0.0);
+    restcvStats.restcvSum = float3(0.0, 0.0, 0.0);
+    restcvStats.samples = 0u;
     // channel: 0 = not yet classified (diffuse catch-all), 1 = diffuse path, 2 = specular path.
     int channel = seg.bounce > 0 ? 2 : 0;
     // Segments split off a dielectric start mid-flight: their first trace inside this call IS the
@@ -424,11 +434,23 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                     if (shadeWithRestir) {
                         r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
                                 n, v, rd, albedo, float3(0.0, 0.0, 0.0),
-                                1.0, true, 0.0, seed);
+                                1.0, true, 0.0, seed, restcvStats);
                     }
                     float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                    float3 particleRis = throughput * shadeReservoir(r, hitPos, n, v, rd, albedo,
-                            float3(0.0, 0.0, 0.0), 1.0, true, 0.0) * estimatorScale;
+                    float3 shade;
+                    if (shadeWithRestir && pc.debugView == RESTCV_DEBUG_VIEW_ID && restcvEnabled()) {
+                        float3 restirOnly = shadeReservoirRestirOnly(r, hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0);
+                        float3 restcv = shadeReservoir(r, hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0);
+                        restcvStats.restirSum += restirOnly;
+                        restcvStats.restcvSum += restcv;
+                        shade = restcv;
+                    } else {
+                        shade = shadeReservoir(r, hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0);
+                    }
+                    float3 particleRis = throughput * shade * estimatorScale;
                     L += particleRis;
                     // twoSided shading has no specular term — the whole estimate is diffuse.
                     if (channel == 2) {
@@ -654,11 +676,24 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                         activeSss, freshCandidates, seed, proposalSeed);
                 if (shadeWithRestir) {
                     r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
-                            n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed);
+                            n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed,
+                            restcvStats);
                 }
                 float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                float3 ris = throughput * shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
-                        twoSidedEmitter, activeSss) * estimatorScale;
+                float3 shade;
+                if (shadeWithRestir && pc.debugView == RESTCV_DEBUG_VIEW_ID && restcvEnabled()) {
+                    float3 restirOnly = shadeReservoirRestirOnly(r, hitPos, n, v, rd,
+                            diffAlb, F0, rough, twoSidedEmitter, activeSss);
+                    float3 restcv = shadeReservoir(r, hitPos, n, v, rd,
+                            diffAlb, F0, rough, twoSidedEmitter, activeSss);
+                    restcvStats.restirSum += restirOnly;
+                    restcvStats.restcvSum += restcv;
+                    shade = restcv;
+                } else {
+                    shade = shadeReservoir(r, hitPos, n, v, rd,
+                            diffAlb, F0, rough, twoSidedEmitter, activeSss);
+                }
+                float3 ris = throughput * shade * estimatorScale;
                 L += ris;
                 if (nrdEnabled()) {
                     if (channel == 0) {
@@ -829,7 +864,11 @@ void main() {
         // frame, or a frame with no emitters cannot leave stale current-buffer history behind.
         restirInvalidate(pixelIndex);
     }
-    if (pc.debugView != 0u && pc.debugView != SHARC_DEBUG_VIEW_ID) {
+    if (restcvEnabled()) {
+        restcvInvalidate(pixelIndex);
+    }
+    if (pc.debugView != 0u && pc.debugView != SHARC_DEBUG_VIEW_ID
+            && pc.debugView != RESTCV_DEBUG_VIEW_ID) {
         return; // pass A owns guide visualization output
     }
     int2 pix = int2(dispatchIndex);
@@ -846,6 +885,7 @@ void main() {
     // for specular hit distances is a min; 0 is reserved for "no data" and skipped).
     float frameHitDiff = 0.0;
     float frameHitSpec = 0.0;
+    RestcvStats frameRestcv = restcvStatsEmpty();
     uint recordIndex = pixelIndex;
     for (uint leaf = 0u; leaf < MAX_PATH_SEGMENTS; ++leaf) {
         PackedPathSegment packed = queue[recordIndex];
@@ -855,11 +895,21 @@ void main() {
             float3 sampleSpec;
             float sampleHitDiff;
             float sampleHitSpec;
+            RestcvStats sampleRestcv = restcvStatsEmpty();
             frameRadiance += tracePath(segment, uint2(pix), s + leaf * spp,
                     leaf == 0u, leaf == 0u && s == 0u, float(spp), dimensions,
-                    sampleDiff, sampleSpec, sampleHitDiff, sampleHitSpec);
+                    sampleDiff, sampleSpec, sampleHitDiff, sampleHitSpec, sampleRestcv);
             frameDiff += sampleDiff;
             frameSpec += sampleSpec;
+            frameRestcv.ageSum += sampleRestcv.ageSum;
+            frameRestcv.accepted += sampleRestcv.accepted;
+            frameRestcv.rejected += sampleRestcv.rejected;
+            frameRestcv.mSum += sampleRestcv.mSum;
+            frameRestcv.wSum += sampleRestcv.wSum;
+            frameRestcv.valid += sampleRestcv.valid;
+            frameRestcv.restirSum += sampleRestcv.restirSum;
+            frameRestcv.restcvSum += sampleRestcv.restcvSum;
+            frameRestcv.samples += sampleRestcv.samples;
             if (sampleHitDiff > 0.0) {
                 frameHitDiff = frameHitDiff > 0.0 ? min(frameHitDiff, sampleHitDiff) : sampleHitDiff;
             }
@@ -921,6 +971,32 @@ void main() {
             sharcDbg = float3(0.12, 0.12, 0.14);
         }
         radiance = sharcDbg;
+    }
+    // ReSTCV diagnostics: each channel carries one live average so the overlay does not need a GPU
+    // readback. Red = average W, green = average M, blue = average age (all over frameRestcv.samples).
+    // A red boost shows accepted/rejected history loss, and cyan shows the ReSTIR-vs-ReSTCV
+    // luminance difference. Dark grey = no ReSTCV reservoir available at this pixel.
+    if (pc.debugView == RESTCV_DEBUG_VIEW_ID) {
+        float3 restcvDbg = float3(0.10, 0.10, 0.10);
+        if (frameRestcv.samples > 0u) {
+            float avgAge = frameRestcv.ageSum / float(frameRestcv.samples);
+            float avgM = frameRestcv.mSum / float(frameRestcv.samples);
+            float avgW = frameRestcv.wSum / float(frameRestcv.samples);
+            uint totalHistory = frameRestcv.accepted + frameRestcv.rejected;
+            float acceptRate = totalHistory > 0u
+                    ? float(frameRestcv.accepted) / float(totalHistory) : 1.0;
+            float ageNorm = clamp(avgAge / float(RESTIR_MAX_AGE), 0.0, 2.0);
+            float mNorm = clamp(avgM / RESTIR_MAX_M, 0.0, 1.0);
+            float wNorm = clamp(avgW / RESTIR_MAX_W, 0.0, 1.0);
+            restcvDbg = float3(wNorm, mNorm, min(ageNorm, 1.0));
+            restcvDbg.r += (1.0 - acceptRate) * 0.5;
+            float diffLum = luminance(frameRestcv.restcvSum - frameRestcv.restirSum);
+            restcvDbg.b += clamp(diffLum / RESTIR_MAX_SAMPLE_LUMINANCE, 0.0, 0.5);
+            if (frameRestcv.valid == 0u) {
+                restcvDbg *= 0.3;
+            }
+        }
+        radiance = restcvDbg;
     }
     outImage[pix] = float4(radiance, 1.0);
 

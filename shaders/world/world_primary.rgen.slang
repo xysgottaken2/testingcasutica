@@ -264,9 +264,10 @@ void main() {
     queue[pixelIndex] = packPathSegment(terminal, nextRecord);
 
     writeGuides(pix, dir, jndc, size, rayConeSpread);
-    // 13 is the SHaRC cache view (SHARC_DEBUG_VIEW_ID in sharc.slang): the cache is queried by pass
-    // B's path tracer, so pass B owns that overlay and pass A must not paint its guide output here.
-    if (pc.debugView != 0u && pc.debugView != 13u) {
+    // 13 is the SHaRC cache view (SHARC_DEBUG_VIEW_ID in sharc.slang) and 14 is the ReSTCV view
+    // (RESTCV_DEBUG_VIEW_ID in lighting.slang): both are owned by pass B, which must still receive
+    // this frame's continuation queue and guides, so pass A does not paint its guide output here.
+    if (pc.debugView != 0u && pc.debugView != 13u && pc.debugView != 14u) {
         writeDebugView(pix);
     }
 }

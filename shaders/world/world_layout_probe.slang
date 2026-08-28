@@ -15,9 +15,14 @@ struct RestirReservoirLayoutProbe {
     PackedRestirReservoir values[2]; // reflected stride is the per-pixel persistent record size
 };
 
+struct RestcvEstimateLayoutProbe {
+    PackedRestcvEstimate values[2]; // reflected stride is the per-pixel registered CV estimate size
+};
+
 [[vk::binding(0, 0)]] StructuredBuffer<WorldPushLayoutProbe, Std430DataLayout> worldPushLayoutProbe;
 [[vk::binding(1, 0)]] StructuredBuffer<MaterialHeaderLayoutProbe, Std430DataLayout> materialHeaderLayoutProbe;
 [[vk::binding(2, 0)]] StructuredBuffer<RestirReservoirLayoutProbe, Std430DataLayout> restirReservoirLayoutProbe;
+[[vk::binding(3, 0)]] StructuredBuffer<RestcvEstimateLayoutProbe, Std430DataLayout> restcvEstimateLayoutProbe;
 [[vk::push_constant]] WorldPushConstants pushConstantsLayoutProbe;
 
 [shader("compute")]
@@ -28,6 +33,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         float sink = worldPushLayoutProbe[0].values[0].invViewProj[0][0]
                 + materialHeaderLayoutProbe[0].values[0].params.x
                 + restirReservoirLayoutProbe[0].values[0].W
+                + restcvEstimateLayoutProbe[0].values[0].W
                 + float(pushConstantsLayoutProbe.frameIndex);
     }
 }
