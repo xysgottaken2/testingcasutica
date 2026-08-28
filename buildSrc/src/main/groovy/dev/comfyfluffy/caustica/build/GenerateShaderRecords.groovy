@@ -239,6 +239,15 @@ abstract class GenerateShaderRecords extends DefaultTask {
         Map restirReservoirType = restirProbeArray.type.elementType as Map
         int restirReservoirByteSize = restirProbeArray.type.uniformStride as int
 
+        def restcvParameter = reflection.parameters.find { it.name == "restcvEstimateLayoutProbe" }
+        def restcvProbeArray = restcvParameter?.type?.resultType?.fields?.find { it.name == "values" }
+        if (restcvProbeArray?.type?.kind != "array"
+                || restcvProbeArray.type.elementType?.name != "PackedRestcvEstimate") {
+            throw new GradleException("unexpected PackedRestcvEstimate reflection probe shape")
+        }
+        Map restcvEstimateType = restcvProbeArray.type.elementType as Map
+        int restcvEstimateByteSize = restcvProbeArray.type.uniformStride as int
+
         def pushParameter = reflection.parameters.find { it.name == "pushConstantsLayoutProbe" }
         if (pushParameter?.type?.elementType?.name != "WorldPushConstants") {
             throw new GradleException("Slang reflection omitted pushConstantsLayoutProbe")
@@ -260,5 +269,7 @@ abstract class GenerateShaderRecords extends DefaultTask {
                 generateJava(materialHeaderType, materialHeaderByteSize, "MaterialHeaderData"), "UTF-8")
         new File(packageDir, "RestirReservoirData.java").setText(
                 generateJava(restirReservoirType, restirReservoirByteSize, "RestirReservoirData"), "UTF-8")
+        new File(packageDir, "RestcvEstimateData.java").setText(
+                generateJava(restcvEstimateType, restcvEstimateByteSize, "RestcvEstimateData"), "UTF-8")
     }
 }
