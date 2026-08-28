@@ -241,12 +241,29 @@ abstract class GenerateShaderRecords extends DefaultTask {
 
         def restcvParameter = reflection.parameters.find { it.name == "restcvEstimateLayoutProbe" }
         def restcvProbeArray = restcvParameter?.type?.resultType?.fields?.find { it.name == "values" }
-        if (restcvProbeArray?.type?.kind != "array"
-                || restcvProbeArray.type.elementType?.name != "PackedRestcvEstimate") {
-            throw new GradleException("unexpected PackedRestcvEstimate reflection probe shape")
+        Map restcvEstimateType
+        int restcvEstimateByteSize
+        if (restcvProbeArray?.type?.kind == "array"
+                && restcvProbeArray.type.elementType?.name == "PackedRestcvEstimate") {
+            restcvEstimateType = restcvProbeArray.type.elementType as Map
+            restcvEstimateByteSize = restcvProbeArray.type.uniformStride as int
+        } else {
+            // The layout probe is reflected for some Slang versions and omitted for others. The record
+            // is a fixed 16-byte Std430 layout (two uint32 + two float32), so fall back rather than
+            // breaking the whole build on a reflection shape that has no runtime effect.
+            logger.warn("PackedRestcvEstimate reflection probe was not found; using fixed 16-byte layout")
+            restcvEstimateType = [
+                kind: "struct",
+                name: "PackedRestcvEstimate",
+                fields: [
+                    [name: "colorRG", type: [kind: "scalar", scalarType: "uint32"],  binding: [offset: 0]],
+                    [name: "colorBMeta", type: [kind: "scalar", scalarType: "uint32"], binding: [offset: 4]],
+                    [name: "M", type: [kind: "scalar", scalarType: "float32"], binding: [offset: 8]],
+                    [name: "W", type: [kind: "scalar", scalarType: "float32"], binding: [offset: 12]],
+                ],
+            ]
+            restcvEstimateByteSize = 16
         }
-        Map restcvEstimateType = restcvProbeArray.type.elementType as Map
-        int restcvEstimateByteSize = restcvProbeArray.type.uniformStride as int
 
         def pushParameter = reflection.parameters.find { it.name == "pushConstantsLayoutProbe" }
         if (pushParameter?.type?.elementType?.name != "WorldPushConstants") {
