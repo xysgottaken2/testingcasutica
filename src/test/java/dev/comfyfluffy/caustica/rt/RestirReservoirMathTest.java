@@ -151,7 +151,9 @@ final class RestirReservoirMathTest {
     }
 
     private static double restcvStoreM(double m) {
-        return Math.max(1.0, Math.min(m, RESTCV_MAX_M));
+        // The shader guards store/load with M > 0, so the sentinel stays 0; only positive counts are
+        // clamped into the store range [1, MAX_M] without flooring a young estimate to MIN_M.
+        return m <= 0.0 ? 0.0 : Math.min(m, RESTCV_MAX_M);
     }
 
     private static void merge(Reservoir destination, double sourceM, double sourceW,

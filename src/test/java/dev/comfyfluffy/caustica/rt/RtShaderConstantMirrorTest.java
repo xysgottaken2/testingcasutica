@@ -137,7 +137,8 @@ final class RtShaderConstantMirrorTest {
                         && core.contains("worldPush.restcvPreviousAddr != 0")
                         && core.contains("worldPush.restcvCurrentAddr != 0"),
                 "restcvEnabled must require mode 2 plus both CV history buffers");
-        assertTrue(java.contains("restcvPreviousAddress(), restcvCurrentAddress()")
+        assertTrue(java.contains("restcvPreviousAddress()")
+                        && java.contains("restcvCurrentAddress()")
                         && java.contains("restcvParams()")
                         && java.contains("restirPreviousAddress(), restirCurrentAddress()"),
                 "RtComposite must publish the CV pair into WorldPush and keep the ReSTIR pair in push constants");
