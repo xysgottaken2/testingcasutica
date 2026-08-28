@@ -1880,7 +1880,11 @@ public final class RtComposite {
                     sharcParams2(),
                     sharcParams3(),
                     sharcGridOrigin(terrain),
-                    // ReSTCV control-variate tuning, only read when the shader is in mode 2.
+                    // ReSTCV control-variate history addresses and tuning (mode 2 only). They travel
+                    // through WorldPush rather than the hot push block so the push block stays within
+                    // the Vulkan 128-byte guarantee.
+                    restcvPreviousAddress(),
+                    restcvCurrentAddress(),
                     restcvParams()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
@@ -1923,7 +1927,6 @@ public final class RtComposite {
                     terrain.lightLocalAliasBufferAddress(), terrain.lightGridCellBufferAddress(),
                     terrain.lightGridSpanBufferAddress(), continuationQueue.deviceAddress,
                     restirPreviousAddress(), restirCurrentAddress(),
-                    restcvPreviousAddress(), restcvCurrentAddress(),
                     // The SVGF debug ids are consumed by the denoiser, not the tracer: forwarding
                     // them would make the raygen paint a guide overlay over the very image we are
                     // trying to inspect. The tracer sees 0 (normal shading) for those.

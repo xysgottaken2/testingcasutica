@@ -130,17 +130,17 @@ final class RtShaderConstantMirrorTest {
 
         assertTrue(common.contains("public uint64_t restcvPreviousAddr;")
                         && common.contains("public uint64_t restcvCurrentAddr;"),
-                "ReSTCV needs its own compact colour-estimate ping-pong in WorldPushConstants");
+                "ReSTCV needs its own compact colour-estimate ping-pong (carried in WorldPush)");
         assertTrue(common.contains("public float4   restcvParams;"),
                 "WorldPush must carry the ReSTCV M/W/age/blend tuning lanes");
         assertTrue(core.contains("pc.restirMode == 2u")
-                        && core.contains("pc.restcvPreviousAddr != 0")
-                        && core.contains("pc.restcvCurrentAddr != 0"),
+                        && core.contains("worldPush.restcvPreviousAddr != 0")
+                        && core.contains("worldPush.restcvCurrentAddr != 0"),
                 "restcvEnabled must require mode 2 plus both CV history buffers");
         assertTrue(java.contains("restcvPreviousAddress(), restcvCurrentAddress()")
                         && java.contains("restcvParams()")
                         && java.contains("restirPreviousAddress(), restirCurrentAddress()"),
-                "RtComposite must publish the CV pair next to the ReSTIR pair and push the tuning lanes");
+                "RtComposite must publish the CV pair into WorldPush and keep the ReSTIR pair in push constants");
         assertTrue(raygen.contains("frameRestcv.ageSum += sampleRestcv.ageSum")
                         && raygen.contains("frameRestcv.accepted += sampleRestcv.accepted")
                         && raygen.contains("frameRestcv.restcvSum += sampleRestcv.restcvSum")

@@ -30,14 +30,11 @@ public struct WorldPushConstants {
     public uint64_t lightGridSpanAddr;   // packed weighted section spans referenced by cell headers
     public uint64_t pathQueueAddr;       // packed primary -> indirect continuation records
     // ReSTIR ping-pong history. Both are zero while the player toggle is off, so no history memory is
-    // reachable (or even allocated) on the legacy RIS path.
+    // reachable (or even allocated) on the legacy RIS path. ReSTCV rides the same zero-address
+    // convention but its addresses live in WorldPush (this push block is already at the Vulkan
+    // 128-byte minimum).
     public uint64_t restirPreviousAddr;
     public uint64_t restirCurrentAddr;
-    // ReSTCV control-variate estimate ping-pong (mode 2 only). They ride the same zero-address
-    // convention as the ReSTIR pair; ReSTCV keeps the representative ReSTIR history for geometry
-    // validation and adds this compact accumulated-colour estimate on top.
-    public uint64_t restcvPreviousAddr;
-    public uint64_t restcvCurrentAddr;
     public uint frameIndex;
     public uint debugView;
     public uint lightGeneration;         // low bits reject history after the emitter hierarchy changes
@@ -182,6 +179,11 @@ public struct WorldPush {
     public float4   sharcParams2;
     public float4   sharcParams3;
     public int4     sharcGridOrigin;
+    // Experimental ReSTCV accumulated colour estimate ping-pong (mode 2 only). They live here rather
+    // than in the hot push-constant block so the push block stays within the Vulkan 128-byte
+    // guarantee; shaders load them through worldPush like the other ReSTCV tuning.
+    public uint64_t restcvPreviousAddr;
+    public uint64_t restcvCurrentAddr;
     // Experimental ReSTCV control-variate tuning (only read when pc.restirMode == 2). x = target M,
     // y = W cap, z = max age, w = CV blend strength 0..1 (0 still shades ReSTIR, 1 uses the full
     // accumulated control-variate estimate).

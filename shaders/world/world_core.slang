@@ -91,8 +91,10 @@ public bool restirEnabled() {
 public bool restcvEnabled() {
     // ReSTCV is a superset of ReSTIR: it keeps the representative reservoir history (for reprojection
     // and geometry validation) and additionally maintains an accumulated colour control variate.
+    // The CV addresses live in WorldPush to keep the push-constant block within Vulkan's 128-byte
+    // guarantee; the live mode and ReSTIR addresses stay in the hot push block.
     return pc.restirMode == 2u
-            && pc.restcvPreviousAddr != 0 && pc.restcvCurrentAddr != 0
+            && worldPush.restcvPreviousAddr != 0 && worldPush.restcvCurrentAddr != 0
             && pc.restirPreviousAddr != 0 && pc.restirCurrentAddr != 0;
 }
 public bool waterWavesEnabled() { return worldFlag(worldPush, WORLD_FLAG_WAVES); }

@@ -483,13 +483,13 @@ public void restirInvalidate(uint pixelIndex) {
 // and the same reprojection/geometry gates, so an estimate can never survive without a matching
 // validated ReSTIR sample at the same history slot.
 public void restcvInvalidate(uint pixelIndex) {
-    if (pc.restcvCurrentAddr == 0) return;
+    if (worldPush.restcvCurrentAddr == 0) return;
     PackedRestcvEstimate record = {};
     record.M = 0.0;
     record.W = 0.0;
     record.colorRG = 0u;
     record.colorBMeta = 0u;
-    DevicePtr<PackedRestcvEstimate>(pc.restcvCurrentAddr)[pixelIndex] = record;
+    DevicePtr<PackedRestcvEstimate>(worldPush.restcvCurrentAddr)[pixelIndex] = record;
 }
 
 public bool restcvLoadEstimate(PackedRestcvEstimate record, inout Reservoir candidate) {
@@ -515,7 +515,7 @@ public bool restcvLoadEstimate(PackedRestcvEstimate record, inout Reservoir cand
 }
 
 public void restcvStore(Reservoir r, uint pixelIndex) {
-    if (!restcvEnabled() || pc.restcvCurrentAddr == 0 || !(r.cvM > 0.0 && r.W > 0.0)) {
+    if (!restcvEnabled() || worldPush.restcvCurrentAddr == 0 || !(r.cvM > 0.0 && r.W > 0.0)) {
         return;
     }
     PackedRestcvEstimate record;
@@ -533,7 +533,7 @@ public void restcvStore(Reservoir r, uint pixelIndex) {
     // would inflate a young/reset CV and give it more temporal weight than it has earned.
     record.M = clamp(r.cvM, 1.0, RESTCV_MAX_M);
     record.W = min(r.W, restcvMaxW());
-    DevicePtr<PackedRestcvEstimate>(pc.restcvCurrentAddr)[pixelIndex] = record;
+    DevicePtr<PackedRestcvEstimate>(worldPush.restcvCurrentAddr)[pixelIndex] = record;
 }
 
 // Weighted log-domain-ish blend of two control-variate estimates. We keep it a plain M-weighted
@@ -788,7 +788,7 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
                 bool fullHistory = true;
                 if (restcvEnabled()) {
                     ConstPtr<PackedRestcvEstimate> cvHistory =
-                            ConstPtr<PackedRestcvEstimate>(pc.restcvPreviousAddr);
+                            ConstPtr<PackedRestcvEstimate>(worldPush.restcvPreviousAddr);
                     if (restcvLoadEstimate(cvHistory[previousIndex], candidate)) {
                         fullHistory = true;
                     } else {
@@ -819,7 +819,7 @@ public Reservoir restirSpatiotemporal(Reservoir initial, uint2 pixel, uint2 dime
                 bool fullHistory = true;
                 if (restcvEnabled()) {
                     ConstPtr<PackedRestcvEstimate> cvHistory =
-                            ConstPtr<PackedRestcvEstimate>(pc.restcvPreviousAddr);
+                            ConstPtr<PackedRestcvEstimate>(worldPush.restcvPreviousAddr);
                     if (restcvLoadEstimate(cvHistory[neighbourIndex], candidate)) {
                         fullHistory = true;
                     } else {

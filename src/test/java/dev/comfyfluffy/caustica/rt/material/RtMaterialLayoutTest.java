@@ -36,14 +36,14 @@ final class RtMaterialLayoutTest {
 
     @Test
     void reflectedWorldPushConstantsIncludeLightAndRestirBuffers() {
-        // 16 uint64_t addresses (world/table/entity, DH table + hand-off mask, material, 5 light
-        // buffers, path queue, 2 ReSTIR buffers, 2 ReSTCV buffers) followed by
-        // frame/debug/light-generation/restir-mode.
-        assertEquals(144, WorldPushConstantsData.BYTE_SIZE);
+        // 14 uint64_t addresses (world/table/entity, DH table + hand-off mask, material, 5 light
+        // buffers, path queue, 2 ReSTIR buffers) followed by frame/debug/light-generation/restir-mode.
+        // ReSTCV address rides in WorldPush instead, keeping this block at the Vulkan 128-byte minimum.
+        assertEquals(128, WorldPushConstantsData.BYTE_SIZE);
         ByteBuffer data = ByteBuffer.allocateDirect(WorldPushConstantsData.BYTE_SIZE)
                 .order(ByteOrder.nativeOrder());
         new WorldPushConstantsData(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L, 14L,
-                15L, 16L, 17, 18, 19, 20).write(data);
+                15, 16, 17, 18).write(data);
         assertEquals(4L, data.getLong(24));   // dhTableAddr
         assertEquals(5L, data.getLong(32));   // dhReadyMaskAddr
         assertEquals(6L, data.getLong(40));   // materialTableAddr
@@ -52,12 +52,10 @@ final class RtMaterialLayoutTest {
         assertEquals(12L, data.getLong(88));  // pathQueueAddr
         assertEquals(13L, data.getLong(96));  // restirPreviousAddr
         assertEquals(14L, data.getLong(104)); // restirCurrentAddr
-        assertEquals(15L, data.getLong(112)); // restcvPreviousAddr
-        assertEquals(16L, data.getLong(120)); // restcvCurrentAddr
-        assertEquals(17, data.getInt(128));   // frameIndex
-        assertEquals(18, data.getInt(132));   // debugView
-        assertEquals(19, data.getInt(136));   // lightGeneration
-        assertEquals(20, data.getInt(140));   // restirMode: authoritative live shading branch
+        assertEquals(15, data.getInt(112));   // frameIndex
+        assertEquals(16, data.getInt(116));   // debugView
+        assertEquals(17, data.getInt(120));   // lightGeneration
+        assertEquals(18, data.getInt(124));   // restirMode: authoritative live shading branch
     }
 
     @Test
