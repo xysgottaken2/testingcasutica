@@ -221,6 +221,16 @@ tasks.named("test", Test) {
 	useJUnitPlatform()
 }
 
+// TEMP diagnostic: surface the Gradle failure as a GitHub annotation so it is visible through the
+// checks API even when CI step logs are not readable. Remove after diagnosing the build failure.
+gradle.buildFinished { result ->
+	if (result.failure != null) {
+		def message = result.failure.toString()
+		def escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+		println "::error::GRADLE_FAILED: ${escaped}"
+	}
+}
+
 sourceSets.main.java.srcDir(files(layout.buildDirectory.dir("generated/sources/shaderRecords")).builtBy(generateShaderRecords))
 
 // Emit the .spv into the main resources so they land in the jar / on the runClient classpath at the
