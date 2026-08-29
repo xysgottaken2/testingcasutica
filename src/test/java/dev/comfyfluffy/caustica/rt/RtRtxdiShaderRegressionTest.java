@@ -149,6 +149,19 @@ final class RtRtxdiShaderRegressionTest {
                 "the next frame must validate history against this frame's light generation");
     }
 
+    @Test
+    void temporalBackprojectionIsClampedBeforeTheReservoirLoad() throws IOException {
+        String st = Files.readString(VENDORED_SDK.resolve("DI/SpatioTemporalResampling.hlsli"));
+        // The reservoir buffer is reached through raw device pointers, which have none of the
+        // descriptor-based bounds robustness the SDK's sample app leans on: the fused pairwise
+        // pass loads the temporal reservoir UNCONDITIONALLY at the backprojected position, and an
+        // offscreen backprojection (first frame after a world load, camera cut, fast pan) wraps
+        // to a giant uint2 index and device-losts the GPU. That position must be clamped into
+        // the view first, exactly the idiom the spatial loop already uses.
+        assertTrue(st.contains("centralIdx = RAB_ClampSamplePositionIntoView(centralIdx, true);"),
+                "the temporal central load must clamp its backprojected position into the view");
+    }
+
     private static Path repoRoot() {
         Path dir = Path.of("").toAbsolutePath();
         while (dir != null && !Files.isDirectory(dir.resolve("shaders/world"))) {

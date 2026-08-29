@@ -117,6 +117,13 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResamplingWithPairwiseMIS(
     state.canonicalWeight = 0.0f;    // Important this is 0 for temporal
 
     // Load the "temporal" reservoir at the temporally backprojected "central" pixel
+    // CAUSTICA: the reservoir buffer is addressed through raw device pointers, which have none of
+    // the descriptor-based bounds robustness the SDK's sample app leans on - a backprojection that
+    // left the view (first frame after a world load, camera cut, fast pan, or the bridge's own
+    // 1e6 behind-camera sentinel) would wrap to a giant uint2 index and fault the whole GPU.
+    // Clamp into the view first, the same idiom the spatial loop below uses; the sample is only
+    // streamed when foundTemporalSurface, so a clamped read is inert.
+    centralIdx = RAB_ClampSamplePositionIntoView(centralIdx, true);
     RTXDI_DIReservoir prevSample = RTXDI_LoadDIReservoir(reservoirParams,
         RTXDI_PixelPosToReservoirPos(centralIdx, params.activeCheckerboardField), sourceBufferIndex);
     prevSample.M = min(prevSample.M, historyLimit);
