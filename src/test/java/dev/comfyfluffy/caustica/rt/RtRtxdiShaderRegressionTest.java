@@ -145,8 +145,9 @@ final class RtRtxdiShaderRegressionTest {
                 "restirMode must publish 2 while RTXDI owns direct lighting");
         assertTrue(composite.contains("rtxdiWriteIndex ^= 1;"),
                 "the reservoir layers must ping-pong at frame end");
-        assertTrue(composite.contains("rtxdiPrevLightGeneration = terrain.lightGeneration();"),
-                "the next frame must validate history against this frame's light generation");
+        assertTrue(composite.contains("rtxdiPrevLightGeneration = frameLightGeneration;"),
+                "the next frame must validate history against the generation this frame's trace"
+                        + " actually used (captured once at push time, not re-read at frame end)");
     }
 
     @Test

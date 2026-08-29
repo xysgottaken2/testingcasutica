@@ -960,6 +960,11 @@ public final class RtComposite {
             if (!loggedActive) {
                 loggedActive = true;
                 CausticaMod.LOGGER.info("RT composite active (terrain): {}x{}, RT output replaces the world target", width, height);
+                CausticaMod.LOGGER.info("RT direct-light reservoir engine: {}", switch (restirMode()) {
+                    case 2 -> "NVIDIA RTXDI (restirMode 2)";
+                    case 1 -> "built-in ReSTIR (restirMode 1)";
+                    default -> "independent RIS (no reservoirs)";
+                });
             }
             return true;
         } catch (Throwable t) {
@@ -1326,8 +1331,12 @@ public final class RtComposite {
         }
 
         ctx.waitIdle();
+        boolean wasEnabled = rtxdiResourcesEnabled;
         destroyRtxdiResources();
         if (!desired) {
+            if (wasEnabled) {
+                CausticaMod.LOGGER.info("RTXDI reservoirs released");
+            }
             return;
         }
 
@@ -1353,6 +1362,8 @@ public final class RtComposite {
                 }
             });
             rtxdiResourcesEnabled = true;
+            CausticaMod.LOGGER.info("RTXDI reservoirs engaged: {}x{}, 2 layers, {} MiB history buffers",
+                    renderW, renderH, (reservoirBytes + surfaceBytes * 2L) / (1024L * 1024L));
         } catch (Throwable failure) {
             destroyRtxdiResources();
             throw failure;
@@ -1437,22 +1448,28 @@ public final class RtComposite {
     }
 
     /**
-     * WorldPush.rtxdiSampling: SDK-tuned initial/spatial sample counts and radius
-     * (GetDefaultReSTIRDISpatioTemporalResamplingParams), with the history length bounded so
-     * packed M can never exceed RTXDI_PackedDIReservoir_MaxM.
+     * WorldPush.rtxdiSampling, straight from the SDK's own defaults
+     * (GetDefaultReSTIRDIInitialSamplingParams + GetDefaultReSTIRDISpatioTemporalResamplingParams):
+     * x initial light samples (8 — the SDK default; still capped by the live RIS candidates slider
+     * the way every other engine is, because when temporal history breaks the whole estimate rests
+     * on these candidates), y spatial samples (1 — the fused pass leans on temporal reuse, and
+     * spatial kicks in through the 8-sample disocclusion boost), z sampling radius, w max history
+     * length (bounded so packed M can never exceed RTXDI_PackedDIReservoir_MaxM).
      */
     private Float4 rtxdiSampling() {
-        return new Float4(2.0f, 1.0f, 32.0f, 20.0f);
+        int initial = Math.min(Math.max(CausticaConfig.Rt.Lights.RIS_CANDIDATES.value(), 1), 8);
+        return new Float4(initial, 1.0f, 32.0f, 20.0f);
     }
 
     /**
-     * WorldPush.rtxdiReuse: depth/normal similarity thresholds (the normal gate tightened from the
-     * SDK's 0.5 to 0.9 for Minecraft's axis-aligned block faces), plus the flag bits and the
-     * disocclusion-boost sample count from the same SDK defaults.
+     * WorldPush.rtxdiReuse: the SDK's default similarity gates and flags. The normal threshold
+     * stays at the SDK's 0.5 — tightening it to 0.9 for Minecraft's axis-aligned faces rejected
+     * too much temporal history on stairs/slabs and visibly amplified flicker; 0.5 keeps reuse
+     * alive between surfaces up to ~60° apart. Flag bits in z: bit0 material similarity test,
+     * bit1 permutation sampling, bit2 discount naive samples — all ON, as the SDK defaults them.
      */
     private Float4 rtxdiReuse() {
-        // bit0 enableMaterialSimilarityTest, bit1 discountNaiveSamples (bit2 reserved).
-        return new Float4(0.1f, 0.9f, 3.0f, 8.0f);
+        return new Float4(0.1f, 0.5f, 7.0f, 8.0f);
     }
 
     private void ensureOutput(RtContext ctx, int width, int height) {
@@ -1957,6 +1974,11 @@ public final class RtComposite {
             // section/entity/material tables are read from world.rahit/world.rchit, which never load
             // WorldPush at all, and the RIS light buffers are read from world.rgen's hot inner loop, so
             // none of them should cost an extra BDA dereference to find.
+            // Captured once per frame: the light generation THIS frame's trace validates history
+            // against. The hierarchy rebuilds asynchronously, so re-reading terrain.lightGeneration()
+            // at frame end could already observe the NEXT generation — and would then let stale
+            // reservoir indices validate as fresh history (a real flicker source).
+            int frameLightGeneration = terrain.lightGeneration();
             ByteBuffer pushConstants = stack.malloc(WorldPushConstantsData.BYTE_SIZE);
             new WorldPushConstantsData(pushBuf.deviceAddress, terrain.tableAddress(), fe.geomTableAddr(),
                     RtDistantHorizonsTerrain.INSTANCE.tableAddress(), readyMaskAddress,
@@ -1969,7 +1991,7 @@ public final class RtComposite {
                     // them would make the raygen paint a guide overlay over the very image we are
                     // trying to inspect. The tracer sees 0 (normal shading) for those.
                     (int) frameCounter, svgfDebugView ? 0 : debugView,
-                    terrain.lightGeneration(), restirMode()).write(pushConstants);
+                    frameLightGeneration, restirMode()).write(pushConstants);
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world primary trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.tracePrimary")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 0);
@@ -2289,9 +2311,9 @@ public final class RtComposite {
         }
         if (rtxdiResourcesEnabled) {
             rtxdiWriteIndex ^= 1;
-            // The light generation published this frame becomes the history generation the next
-            // frame validates RAB_TranslateLightIndex against.
-            rtxdiPrevLightGeneration = terrain.lightGeneration();
+            // Publish the generation THIS frame's trace used: that is exactly the generation the
+            // reservoirs just stored refer to, and what the next frame must validate against.
+            rtxdiPrevLightGeneration = frameLightGeneration;
         }
         // Do not attach a merely reserved token: failed recording may never signal it. Once execute succeeds,
         // every owner in this frame's manifest is protected through the final overlay consumer.
