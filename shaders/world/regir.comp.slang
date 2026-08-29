@@ -21,14 +21,14 @@
 import world_common;
 
 struct RegirPush {
-    public uint64_t worldPushAddr;
-    public uint64_t lightBufAddr;
-    public uint64_t lightAliasAddr;
-    public uint64_t regirCellsAddr;
-    public uint32_t lightCount;
-    public uint32_t candidates;
-    public uint32_t pad0;
-    public uint32_t pad1;
+    uint64_t worldPushAddr;
+    uint64_t lightBufAddr;
+    uint64_t lightAliasAddr;
+    uint64_t regirCellsAddr;
+    uint32_t lightCount;
+    uint32_t candidates;
+    uint32_t pad0;
+    uint32_t pad1;
 };
 
 [[vk::push_constant]]
