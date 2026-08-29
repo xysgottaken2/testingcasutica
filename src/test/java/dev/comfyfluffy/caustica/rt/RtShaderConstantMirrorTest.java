@@ -119,10 +119,14 @@ final class RtShaderConstantMirrorTest {
                 "rtxdiEnabled must require mode 2 and the RTXDI history/offset bindings");
         assertTrue(java.contains("terrain.lightGeneration(), restirMode()).write(pushConstants)"),
                 "RtComposite must write restirMode into the world pipeline push constants every frame");
-        assertTrue(raygen.contains("bool shadeWithRestir = restirReceiverPending && restirOwner;")
+        // The first-stable-receiver slot is engine-agnostic (shadeWithReservoir): the built-in
+        // ReSTIR shades through restirSpatiotemporal/shadeReservoir, RTXDI through
+        // rtxdiDirectLighting, and either way the estimate lands in the final radiance.
+        assertTrue(raygen.contains("bool shadeWithReservoir = restirReceiverPending && restirOwner;")
                         && raygen.contains("r = restirSpatiotemporal(r")
-                        && raygen.contains("shadeReservoir(r"),
-                "the selected ReSTIR reservoir must flow into the radiance added to final color");
+                        && raygen.contains("shadeReservoir(r")
+                        && raygen.contains("rtxdiDirectLighting(pix"),
+                "the selected reservoir engine must flow into the radiance added to final color");
         assertTrue(raygen.contains("skipSiblingRis") && raygen.contains("restirSampleScale"),
                 "SPP averaging must not dilute ReSTIR with legacy RIS at the same receiver");
     }
