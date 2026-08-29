@@ -117,8 +117,9 @@ final class RtShaderConstantMirrorTest {
                         && core.contains("worldPush.rtxdiReservoirAddr != 0")
                         && core.contains("worldPush.rtxdiNeighborOffsetsAddr != 0"),
                 "rtxdiEnabled must require mode 2 and the RTXDI history/offset bindings");
-        assertTrue(java.contains("terrain.lightGeneration(), restirMode()).write(pushConstants)"),
-                "RtComposite must write restirMode into the world pipeline push constants every frame");
+        assertTrue(java.contains("rtxdiFrameGeneration, restirMode()).write(pushConstants)"),
+                "RtComposite must write the push-time captured light generation and restirMode into"
+                        + " the world pipeline push constants every frame");
         // The first-stable-receiver slot is engine-agnostic (shadeWithReservoir): the built-in
         // ReSTIR shades through restirSpatiotemporal/shadeReservoir, RTXDI through
         // rtxdiDirectLighting, and either way the estimate lands in the final radiance.
