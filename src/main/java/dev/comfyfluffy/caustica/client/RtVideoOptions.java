@@ -265,6 +265,8 @@ public final class RtVideoOptions {
             minFillRatio(),
             risCandidates(),
             restirSampling(),
+            regirSampling(),
+            analyticClustered(),
             restirHistory(),
             restirSpatialNeighbours(),
             restirMaxAge(),
@@ -655,6 +657,24 @@ public final class RtVideoOptions {
 
     private static OptionInstance<Boolean> restirSampling() {
         return bool("caustica.options.rt.restirSampling", CausticaConfig.Rt.Lights.RESTIR_SAMPLING);
+    }
+
+    /**
+     * ReGIR world-grid reservoir pre-sampling (RTXDI-style): a compute pass resamples the light
+     * list per grid cell each frame and each shading point merges its cell as one high-quality
+     * candidate, cutting the per-vertex light-list walks that dominate secondary-vertex cost.
+     */
+    private static OptionInstance<Boolean> regirSampling() {
+        return bool("caustica.options.rt.regirSampling", CausticaConfig.Rt.Lights.REGIR_SAMPLING);
+    }
+
+    /**
+     * Deterministic Forward+ style point lights for small emitters (torches, lanterns, ...):
+     * the most important nearby lights shade analytically with a bounded shadow-ray budget, so
+     * their direct light has no sampling noise.
+     */
+    private static OptionInstance<Boolean> analyticClustered() {
+        return bool("caustica.options.rt.analyticClustered", CausticaConfig.Rt.Lights.ANALYTIC_CLUSTERED);
     }
 
     private static final List<String> TONEMAP_OPERATORS =
