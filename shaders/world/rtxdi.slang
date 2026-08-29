@@ -6,7 +6,8 @@
 // macros, so this file is where Caustica's emitter model (the packed 32-byte rect Light records),
 // its receiver surfaces and its camera reprojection meet NVIDIA's ReSTIR DI implementation:
 //
-//   initial sampling  RTXDI_SampleLightsForSurface     uniform light selection + uniform rect UV
+//   initial sampling  rtxdiSampleInitialCandidates     the shared light-grid power mixture,
+//                                                     streamed through the SDK's reservoir RIS
 //   reuse             RTXDI_DISpatioTemporalResampling fused pairwise-MIS spatio-temporal pass
 //   storage           RTXDI_PackedDIReservoir          the SDK's own 24-byte block-linear layout
 //   shading           one shadow ray + W               same estimator as lighting.shadeReservoir
@@ -37,10 +38,16 @@ import trace;
 import lighting;
 
 // ---- SDK build configuration for this integration --------------------------------------
-// Presampling (RIS tiles) and ReGIR are compiled out: initial candidates come from uniform
-// selection over the whole light buffer, which is the SDK's no-presampling mode. Checkerboard
-// rendering stays off (every pixel is shaded), and bias correction is pairwise MIS — the mode the
-// fused spatio-temporal pass is built around, and the one that needs no resampling-time rays.
+// Presampling (RIS tiles) and ReGIR are compiled out. The SDK's no-presampling fallback draws
+// initial candidates UNIFORMLY from the whole compact light buffer — with thousands of emitters
+// that is a lottery whose losing frames are exactly the flicker the built-in engines never show,
+// because they propose from the per-pixel light-grid mixture instead. So this bridge keeps the
+// SDK's reservoir machinery but replaces the proposal distribution: rtxdiSampleInitialCandidates
+// draws from the same power-weighted grid mixture as lighting.risInitial (same selectors, same
+// exact mixture-PDF reconstruction), keeping the estimator unbiased with variance on par with the
+// built-in engines. Checkerboard rendering stays off (every pixel is shaded), and bias correction
+// is pairwise MIS — the mode the fused spatio-temporal pass is built around, and the one that
+// needs no resampling-time rays.
 #define RTXDI_ENABLE_PRESAMPLING 0
 #define RTXDI_LIGHT_RESERVOIR_BUFFER DevicePtr<RTXDI_PackedDIReservoir>(worldPush.rtxdiReservoirAddr)
 #define RTXDI_NEIGHBOR_OFFSETS_BUFFER ConstPtr<float2>(worldPush.rtxdiNeighborOffsetsAddr)
@@ -443,21 +450,79 @@ public bool RAB_GetTemporalConservativeVisibility(RAB_Surface currentSurface,
 
 // ---- Integration ------------------------------------------------------------------------
 
-RTXDI_LightBufferParameters rtxdiLightBufferParams() {
-    RTXDI_LightBufferParameters p;
-    p.localLightBufferRegion.firstLightIndex = 0u;
-    p.localLightBufferRegion.numLights = worldPush.lightCount;
-    p.localLightBufferRegion.pad1 = 0u;
-    p.localLightBufferRegion.pad2 = 0u;
-    p.infiniteLightBufferRegion.firstLightIndex = 0u;
-    p.infiniteLightBufferRegion.numLights = 0u;
-    p.infiniteLightBufferRegion.pad1 = 0u;
-    p.infiniteLightBufferRegion.pad2 = 0u;
-    p.environmentLightParams.lightPresent = 0u;
-    p.environmentLightParams.lightIndex = 0u;
-    p.environmentLightParams.pad1 = 0u;
-    p.environmentLightParams.pad2 = 0u;
-    return p;
+RTXDI_DIReservoir rtxdiSampleInitialCandidates(inout RTXDI_RandomSamplerState rng,
+        RAB_Surface surface, uint candidateCount, out RAB_LightSample o_selectedSample) {
+    RTXDI_DIReservoir state = RTXDI_EmptyDIReservoir();
+    o_selectedSample = RAB_EmptyLightSample();
+    if (candidateCount == 0u || worldPush.lightCount == 0u || pc.lightBufAddr == 0) {
+        return state;
+    }
+
+    // The shared grid selectors advance their own proposal seed; seed it from the SDK sampler so
+    // it is independent per pixel and per frame.
+    uint proposalSeed = uint(RTXDI_GetNextRandom(rng) * 16777216.0);
+
+    LightGridCell gridCell;
+    int3 gridCellCoord;
+    float3 gridLookup = surface.worldPos;
+    if (pc.lightGridCellAddr != 0) {
+        // Stochastically blend across hard cell boundaries — the identical jitter risInitial
+        // applies, so both engines propose from the same distribution, boundary included.
+        gridLookup += (float3(RTXDI_GetNextRandom(rng), RTXDI_GetNextRandom(rng),
+                RTXDI_GetNextRandom(rng)) - 0.5) * worldPush.lightGridOrigin.w;
+    }
+    bool hasGridCell = findLightGridCell(gridLookup, gridCell, gridCellCoord);
+
+    // Deterministically stratified mixture, the built-in's exact split: at the default eight
+    // candidates that is six local grid proposals and two global ones; without a grid every
+    // proposal is global, which retains full support over all emitters.
+    uint globalCandidateCount = hasGridCell ? max(1u, (candidateCount + 2u) / 4u) : candidateCount;
+    float localProbability = float(candidateCount - globalCandidateCount) / float(candidateCount);
+
+    for (uint c = 0u; c < candidateCount; ++c) {
+        uint globalsBefore = (c * globalCandidateCount) / candidateCount;
+        uint globalsAfter = ((c + 1u) * globalCandidateCount) / candidateCount;
+        bool useLocal = hasGridCell && globalsAfter == globalsBefore;
+
+        uint lightIndex;
+        selectLightGridLight(gridCell, useLocal, proposalSeed, lightIndex);
+        if (lightIndex >= worldPush.lightCount) {
+            continue;
+        }
+        RAB_LightInfo info = RAB_LoadLightInfo(lightIndex, false);
+        if (!info.valid) {
+            continue;
+        }
+
+        float2 uv = float2(RTXDI_GetNextRandom(rng), RTXDI_GetNextRandom(rng));
+        RAB_LightSample candidate = RAB_SamplePolymorphicLight(info, surface, uv);
+        if (!candidate.valid) {
+            continue;
+        }
+        float targetPdf = RAB_GetLightSampleTargetPdfForSurface(candidate, surface);
+        if (targetPdf <= 0.0) {
+            continue;
+        }
+        // proposalPdf reconstructs the exact mixture density q of this draw (local section span +
+        // section-local power alias, or the global power alias) from the single Light record —
+        // the same reconstruction risInitial relies on, so the RIS weight p-hat / q is exact.
+        float sourcePdf = proposalPdf(info.light, lightRadiance(info.light), gridCell,
+                gridCellCoord, localProbability);
+        float invSourcePdf = 1.0 / max(sourcePdf, 1.0e-20);
+
+        float risRnd = RTXDI_GetNextRandom(rng);
+        if (RTXDI_StreamSample(state, lightIndex, uv, risRnd, targetPdf, invSourcePdf)) {
+            o_selectedSample = candidate;
+        }
+    }
+
+    // Canonical initial-reservoir form, identical to what RTXDI_SampleLocalLightsInternal
+    // produces for a local-lights-only configuration (numMisSamples = numLocalLightSamples):
+    // the weight normalized by the candidate count, then M = 1 — exactly what the fused
+    // pairwise pass's MIS math assumes of its incoming reservoir.
+    RTXDI_FinalizeResampling(state, 1.0, float(candidateCount));
+    state.M = 1;
+    return state;
 }
 
 RTXDI_ReservoirBufferParameters rtxdiReservoirParams(uint2 dimensions) {
@@ -585,28 +650,10 @@ public void rtxdiDirectLighting(uint2 pixel, uint2 dimensions,
 
     RTXDI_RandomSamplerState rng = RTXDI_InitRandomSampler(pixel, worldPush.frameIndex,
             RTXDI_DI_GENERATE_INITIAL_SAMPLES_RANDOM_SEED);
-    RTXDI_RandomSamplerState coherentRng = RTXDI_InitRandomSampler(
-            pixel / RTXDI_TILE_SIZE_IN_PIXELS, worldPush.frameIndex,
-            RTXDI_DI_GENERATE_INITIAL_SAMPLES_RANDOM_SEED);
-
-    RTXDI_LightBufferParameters lightBufferParams = rtxdiLightBufferParams();
-    RTXDI_DIInitialSamplingParameters initialSamplingParams;
-    initialSamplingParams.numLocalLightSamples = max(1u, uint(worldPush.rtxdiSampling.x));
-    initialSamplingParams.numInfiniteLightSamples = 0u;
-    initialSamplingParams.numEnvironmentSamples = 0u;
-    initialSamplingParams.numBrdfSamples = 0u;
-    initialSamplingParams.brdfCutoff = 0.0;
-    initialSamplingParams.brdfRayMinT = 0.0;
-    initialSamplingParams.localLightSamplingMode = ReSTIRDI_LocalLightSamplingMode_UNIFORM;
-    initialSamplingParams.enableInitialVisibility = 0u;
-    initialSamplingParams.environmentMapImportanceSampling = 0u;
-    initialSamplingParams.pad1 = 0u;
-    initialSamplingParams.pad2 = 0u;
-    initialSamplingParams.pad3 = 0u;
 
     RAB_LightSample lightSample;
-    RTXDI_DIReservoir reservoir = RTXDI_SampleLightsForSurface(rng, coherentRng, surface,
-            initialSamplingParams, lightBufferParams, lightSample);
+    RTXDI_DIReservoir reservoir = rtxdiSampleInitialCandidates(rng, surface,
+            max(1u, uint(worldPush.rtxdiSampling.x)), lightSample);
 
     RTXDI_RuntimeParameters runtimeParams;
     runtimeParams.neighborOffsetMask = worldPush.rtxdiParams.x;
@@ -618,8 +665,9 @@ public void rtxdiDirectLighting(uint2 pixel, uint2 dimensions,
 
     RTXDI_DISpatioTemporalResamplingParameters reuseParams;
     reuseParams.depthThreshold = max(worldPush.rtxdiReuse.x, 1.0e-4);
-    // Blocky world normals are axis aligned, so a looser threshold would happily merge
-    // perpendicular faces; 0.9 keeps reuse on coplanar-ish surfaces like the built-in path.
+    // SDK default 0.5 (dot >= threshold): keeps temporal reuse alive between surfaces up to ~60
+    // degrees apart. Tightening it to 0.9 for blocky faces rejected history too eagerly and
+    // visibly amplified flicker on stairs and slabs.
     reuseParams.normalThreshold = saturate(worldPush.rtxdiReuse.y);
     reuseParams.biasCorrectionMode = RTXDI_BIAS_CORRECTION_PAIRWISE;
     reuseParams.maxHistoryLength = max(1u, uint(worldPush.rtxdiSampling.w));

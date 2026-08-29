@@ -91,8 +91,17 @@ final class RtRtxdiShaderRegressionTest {
         // including their file itself.
         assertTrue(bridge.contains("#include \"../rtxdi/Rtxdi/Utils/RandomSamplerState.hlsli\""),
                 "the bridge must include the SDK random sampler state before the DI core");
-        // The two SDK entry points the raygen integration calls.
-        assertTrue(bridge.contains("RTXDI_SampleLightsForSurface"));
+        // The SDK entry point the raygen integration calls for reuse, plus the bridge's own
+        // initial-candidate sampler: it must propose from the SAME light-grid power mixture the
+        // built-in engines use (not the SDK's uniform-over-the-whole-buffer lottery, whose
+        // variance was the RTXDI flicker) and must leave the reservoir in the canonical form the
+        // fused pairwise pass assumes (weight normalized by the candidate count, then M = 1).
+        assertTrue(bridge.contains("rtxdiSampleInitialCandidates"));
+        assertTrue(bridge.contains("selectLightGridLight(gridCell, useLocal, proposalSeed, lightIndex);"));
+        assertTrue(bridge.contains("RTXDI_StreamSample(state, lightIndex, uv, risRnd, targetPdf, invSourcePdf)"));
+        assertTrue(bridge.contains("RTXDI_FinalizeResampling(state, 1.0, float(candidateCount));"));
+        assertFalse(bridge.contains("RTXDI_SampleLightsForSurface(rng"),
+                "initial candidates must not come from the SDK's whole-buffer uniform draw");
         assertTrue(bridge.contains("RTXDI_DISpatioTemporalResamplingWithPairwiseMIS"));
     }
 

@@ -1467,8 +1467,8 @@ public final class RtComposite {
      * WorldPush.rtxdiReuse: the SDK's default similarity gates and flags. The normal threshold
      * stays at the SDK's 0.5 — tightening it to 0.9 for Minecraft's axis-aligned faces rejected
      * too much temporal history on stairs/slabs and visibly amplified flicker; 0.5 keeps reuse
-     * alive between surfaces up to ~60° apart. Flag bits in z: bit0 material similarity test,
-     * bit1 permutation sampling, bit2 discount naive samples — all ON, as the SDK defaults them.
+     * alive between surfaces up to ~60° apart. Flag bits in z: bit0 permutation sampling, bit1
+     * material similarity test, bit2 discount naive samples — all ON, as the SDK defaults them.
      */
     private Float4 rtxdiReuse() {
         return new Float4(0.1f, 0.5f, 7.0f, 8.0f);
