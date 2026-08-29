@@ -234,23 +234,23 @@ public RAB_Surface RAB_GetGBufferSurface(int2 pixelPosition, bool previousFrame)
 // emitter population is sparse rect lights, where NEE candidate sampling dominates. The bridge
 // functions still exist because the SDK's initial-sampling code references them.
 
-public bool RAB_SurfaceImportanceSampleBrdf(RAB_Surface surface, inout RTXDI_RandomSamplerState rng,
+bool RAB_SurfaceImportanceSampleBrdf(RAB_Surface surface, inout RTXDI_RandomSamplerState rng,
                                             out float3 sampleDir) {
     sampleDir = float3(0.0, 0.0, 0.0);
     return false;
 }
 
-public float RAB_SurfaceEvaluateBrdfPdf(RAB_Surface surface, float3 outDir) {
+float RAB_SurfaceEvaluateBrdfPdf(RAB_Surface surface, float3 outDir) {
     return 0.0;
 }
 
-public bool RAB_GetSurfaceBrdfSample(RAB_Surface surface, inout RTXDI_RandomSamplerState rng,
+bool RAB_GetSurfaceBrdfSample(RAB_Surface surface, inout RTXDI_RandomSamplerState rng,
                                      out float3 dir) {
     dir = float3(0.0, 0.0, 0.0);
     return false;
 }
 
-public float RAB_GetSurfaceBrdfPdf(RAB_Surface surface, float3 dir) {
+float RAB_GetSurfaceBrdfPdf(RAB_Surface surface, float3 dir) {
     return 0.0;
 }
 
@@ -443,7 +443,7 @@ public bool RAB_GetTemporalConservativeVisibility(RAB_Surface currentSurface,
 
 // ---- Integration ------------------------------------------------------------------------
 
-public RTXDI_LightBufferParameters rtxdiLightBufferParams() {
+RTXDI_LightBufferParameters rtxdiLightBufferParams() {
     RTXDI_LightBufferParameters p;
     p.localLightBufferRegion.firstLightIndex = 0u;
     p.localLightBufferRegion.numLights = worldPush.lightCount;
@@ -460,7 +460,7 @@ public RTXDI_LightBufferParameters rtxdiLightBufferParams() {
     return p;
 }
 
-public RTXDI_ReservoirBufferParameters rtxdiReservoirParams(uint2 dimensions) {
+RTXDI_ReservoirBufferParameters rtxdiReservoirParams(uint2 dimensions) {
     // RTXDI stores reservoirs in 16x16-pixel tiles (RTXDI_RESERVOIR_BLOCK_SIZE), tiled x-major
     // across the row, rows stacked to the layer. RtRtxdiLayout mirrors these pitches on the Java
     // side when sizing the buffer, so the two must stay in lockstep.
@@ -490,7 +490,7 @@ public float3 rtxdiScreenMotion(uint2 pixel, uint2 dimensions, float3 hitPos, fl
     return float3(previousPixel - float2(pixel), previousDepth - currentDepth);
 }
 
-public void rtxdiStoreSurfaceHistory(RAB_Surface surface, uint pixelIndex) {
+void rtxdiStoreSurfaceHistory(RAB_Surface surface, uint pixelIndex) {
     if (worldPush.rtxdiSurfaceCurAddr == 0) {
         return;
     }
@@ -510,7 +510,7 @@ public void rtxdiStoreSurfaceHistory(RAB_Surface surface, uint pixelIndex) {
 // the BRDF, which for this bridge is exactly evalSampleContribSplit * W — the same winning-sample
 // estimate, shadow ray, firefly clamp and NRD lobe split as lighting.shadeReservoirSplit, so the
 // RTXDI engine feeds the denoiser an identical signal.
-public void rtxdiShade(RTXDI_DIReservoir reservoir, RAB_LightSample lightSample, RAB_Surface surface,
+void rtxdiShade(RTXDI_DIReservoir reservoir, RAB_LightSample lightSample, RAB_Surface surface,
                        out float3 outDiffuse, out float3 outSpecular) {
     outDiffuse = float3(0.0, 0.0, 0.0);
     outSpecular = float3(0.0, 0.0, 0.0);

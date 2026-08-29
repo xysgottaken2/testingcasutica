@@ -664,7 +664,7 @@ localSample);
     else
         o_lightSample = localSample;
 
-	if(sampleParams.enableInitialVisibility && RTXDI_IsValidDIReservoir(state))
+	if(sampleParams.enableInitialVisibility != 0u && RTXDI_IsValidDIReservoir(state)) // CAUSTICA: explicit uint-to-bool
 	{
 		if (!RAB_GetConservativeVisibility(surface, o_lightSample))
         {

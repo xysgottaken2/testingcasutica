@@ -56,7 +56,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResamplingWithPairwiseMIS(
 
     // Backproject this pixel to last frame
     float3 motion = screenSpaceMotion;
-    if (!stparams.enablePermutationSampling)
+    if (stparams.enablePermutationSampling == 0u) // CAUSTICA: explicit uint-to-bool
     {
         motion.xy += float2(RTXDI_GetNextRandom(rng), RTXDI_GetNextRandom(rng)) - 0.5;
     }
@@ -80,7 +80,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResamplingWithPairwiseMIS(
         offset.y = (i > 0) ? int((RTXDI_GetNextRandom(rng) - 0.5) * temporalSearchRadius) : 0;
 
         centralIdx = prevPos + offset;
-        if (stparams.enablePermutationSampling && i == 0)
+        if (stparams.enablePermutationSampling != 0u && i == 0) // CAUSTICA: explicit uint-to-bool
         {
             RTXDI_ApplyPermutationSampling(centralIdx, stparams.uniformRandomNumber);
         }
@@ -171,7 +171,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResamplingWithPairwiseMIS(
             stparams.normalThreshold, stparams.depthThreshold))
             continue;
 
-        if (stparams.enableMaterialSimilarityTest && !RAB_AreMaterialsSimilar(RAB_GetMaterial(surface), RAB_GetMaterial(neighborSurface)))
+        if (stparams.enableMaterialSimilarityTest != 0u && !RAB_AreMaterialsSimilar(RAB_GetMaterial(surface), RAB_GetMaterial(neighborSurface))) // CAUSTICA: explicit uint-to-bool
             continue;
 
         // The surfaces are similar enough so we *can* reuse a neighbor from this pixel, so load it.
@@ -180,7 +180,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResamplingWithPairwiseMIS(
 
         if (RTXDI_IsValidDIReservoir(prevSample))
         {
-            if (stparams.discountNaiveSamples && neighborSample.M <= RTXDI_NAIVE_SAMPLING_M_THRESHOLD)
+            if (stparams.discountNaiveSamples != 0u && neighborSample.M <= RTXDI_NAIVE_SAMPLING_M_THRESHOLD) // CAUSTICA: explicit uint-to-bool
                 continue;
         }
 
@@ -268,7 +268,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResampling(
     // Backproject this pixel to last frame
     float3 motion = screenSpaceMotion;
 
-    if (!stparams.enablePermutationSampling)
+    if (stparams.enablePermutationSampling == 0u) // CAUSTICA: explicit uint-to-bool
     {
         motion.xy += float2(RTXDI_GetNextRandom(rng), RTXDI_GetNextRandom(rng)) - 0.5;
     }
@@ -297,7 +297,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResampling(
 
         int2 idx = prevPos + offset;
 
-        if (stparams.enablePermutationSampling && i == 0)
+        if (stparams.enablePermutationSampling != 0u && i == 0) // CAUSTICA: explicit uint-to-bool
         {
             RTXDI_ApplyPermutationSampling(idx, stparams.uniformRandomNumber);
         }
@@ -367,7 +367,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResampling(
                 stparams.normalThreshold, stparams.depthThreshold))
                 continue;
 
-            if (stparams.enableMaterialSimilarityTest && !RAB_AreMaterialsSimilar(RAB_GetMaterial(surface), RAB_GetMaterial(temporalSurface)))
+            if (stparams.enableMaterialSimilarityTest != 0u && !RAB_AreMaterialsSimilar(RAB_GetMaterial(surface), RAB_GetMaterial(temporalSurface))) // CAUSTICA: explicit uint-to-bool
                 continue;
         }
         
@@ -380,7 +380,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResampling(
 
         if (RTXDI_IsValidDIReservoir(prevSample))
         {
-            if (stparams.discountNaiveSamples && prevSample.M <= RTXDI_NAIVE_SAMPLING_M_THRESHOLD)
+            if (stparams.discountNaiveSamples != 0u && prevSample.M <= RTXDI_NAIVE_SAMPLING_M_THRESHOLD) // CAUSTICA: explicit uint-to-bool
                 continue;
         }
 
@@ -481,7 +481,7 @@ RTXDI_DIReservoir RTXDI_DISpatioTemporalResampling(
 
 #if RTXDI_ALLOWED_BIAS_CORRECTION >= RTXDI_BIAS_CORRECTION_RAY_TRACED
                                                                                                               // TODO:  WHY?
-                    if (stparams.biasCorrectionMode == RTXDI_BIAS_CORRECTION_RAY_TRACED && ps > 0 && (selected != i || i != 0 || !stparams.enableVisibilityShortcut))
+                    if (stparams.biasCorrectionMode == RTXDI_BIAS_CORRECTION_RAY_TRACED && ps > 0 && (selected != i || i != 0 || stparams.enableVisibilityShortcut == 0u)) // CAUSTICA: explicit uint-to-bool
                     {
                         RAB_Surface fallbackSurface;
                         if (i == 0 && foundTemporalSurface)

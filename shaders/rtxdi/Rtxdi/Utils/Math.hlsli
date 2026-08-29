@@ -44,7 +44,8 @@ void SetBit(inout uint target, uint bit, bool value)
 
 bool GetBit(uint target, uint bit)
 {
-    return (target >> bit) & 1;
+    // CAUSTICA: explicit comparison — Slang rejects the implicit uint-to-bool conversion.
+    return ((target >> bit) & 1u) != 0u;
 }
 
 // "Explodes" an integer, i.e. inserts a 0 between each bit.  Takes inputs up to 16 bit wide.
