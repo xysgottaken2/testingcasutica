@@ -34,11 +34,11 @@ struct RegirPush {
 [[vk::push_constant]]
 RegirPush pc;
 
-public static const uint REGIR_BUILD_DIMS = 24u; // must match lighting.slang REGIR_GRID_DIMS
-public static const float REGIR_BUILD_CELL = 8.0f; // must match lighting.slang REGIR_CELL_SIZE
-public static const uint REGIR_BUILD_CANDIDATES = 8u;
-public static const float REGIR_TARGET_FLOOR = 1.0e-4;
-public static const float REGIR_MAX_SAMPLE_LUMINANCE = 16.0;
+static const uint REGIR_BUILD_DIMS = 24u; // must match lighting.slang REGIR_GRID_DIMS
+// Cell size (8.0 blocks) is read from WorldPush.regirGrid.w, matching REGIR_CELL_SIZE in
+// lighting.slang and the 8.0f the host dispatches with.
+static const float REGIR_TARGET_FLOOR = 1.0e-4;
+static const float REGIR_MAX_SAMPLE_LUMINANCE = 16.0;
 
 uint pcgLocal(inout uint s) {
     uint state = s * 747796405u + 2891336453u;

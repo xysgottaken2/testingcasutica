@@ -958,9 +958,8 @@ public float3 analyticPointLighting(float3 hitPos, float3 n, bool twoSided) {
         return float3(0.0, 0.0, 0.0);
     }
     float cullDist = worldPush.analyticParams.x > 0.0 ? worldPush.analyticParams.x : ANALYTIC_DISTANCE_CULL;
-    uint shadowBudget = worldPush.analyticParams.y > 0.0
-            ? uint(worldPush.analyticParams.y) : ANALYTIC_MAX_SHADOW_RAYS;
-    shadowBudget = min(shadowBudget, ANALYTIC_MAX_SHADOW_RAYS);
+    // The winner list and shadow-ray count are fixed at ANALYTIC_MAX_SHADOW_RAYS (fully unrolled);
+    // analyticParams.y documents the same budget on the CPU side and is honoured by the top-K cap.
     uint scanCap = worldPush.analyticParams.z > 0.0
             ? uint(worldPush.analyticParams.z) : ANALYTIC_MAX_SCANNED;
     scanCap = min(scanCap, ANALYTIC_MAX_SCANNED);
