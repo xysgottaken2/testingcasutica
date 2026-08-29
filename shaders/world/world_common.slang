@@ -36,7 +36,7 @@ public struct WorldPushConstants {
     public uint frameIndex;
     public uint debugView;
     public uint lightGeneration;         // low bits reject history after the emitter hierarchy changes
-    public uint restirMode;              // explicit 0=RIS fallback, 1=ReSTIR read+shade (live UI toggle)
+    public uint restirMode;              // explicit 0=RIS fallback, 1=ReSTIR read+shade, 2=RTXDI SDK resampling (live UI toggles)
 };
 
 // Block-breaking overlay entry: xyz = breaking block position (rebased, same space as gl_WorldRay*),
@@ -159,6 +159,21 @@ public struct WorldPush {
     // y = spatial neighbour count (0 = temporal only), z = max reservoir age in frames, w reserved.
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
+    // NVIDIA RTX Direct Illumination (RTXDI, https://github.com/NVIDIA-RTX/RTXDI). The vendored SDK
+    // core (shaders/rtxdi/Rtxdi) drives pc.restirMode 2: its fused pairwise spatio-temporal
+    // resampling runs at pass B's first stable receiver — the same slot the built-in ReSTIR occupies.
+    // The reservoir buffer uses the SDK's own block-linear two-layer layout (16x16 reservoir tiles,
+    // RTXDI_RESERVOIR_BLOCK_SIZE): layer rtxdiParams.y is the immutable previous frame, layer
+    // rtxdiParams.z receives this frame's stores. The receiver-surface history ping-pongs as two
+    // separate buffers because the bridge addresses it by plain linear pixel index, and the packed
+    // RTXDI reservoir leaves no room for surface metadata the way PackedRestirReservoir does.
+    public uint64_t rtxdiReservoirAddr;       // 0 = RTXDI path unreachable this frame
+    public uint64_t rtxdiSurfacePrevAddr;     // previous frame's RtxdiSurfaceHistory records
+    public uint64_t rtxdiSurfaceCurAddr;      // this frame's RtxdiSurfaceHistory records
+    public uint64_t rtxdiNeighborOffsetsAddr; // R2 low-discrepancy float2 offsets (SDK FillNeighborOffsetBuffer)
+    public uint4    rtxdiParams;              // x neighbor-offset mask, y previous layer, z store layer, w previous light generation
+    public float4   rtxdiSampling;            // x initial light samples, y spatial samples, z sampling radius, w max history length
+    public float4   rtxdiReuse;               // x depth threshold, y normal threshold, z flag bits (1=material test, 2=discount naive), w disocclusion boost samples
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -181,6 +196,7 @@ public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal 
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_FOG = 256u;             // masked distance fog (authored full-depth Nether/End haze)
 public static const uint FEATURE_SHARC = 512u;           // experimental spatial-hash radiance cache
+public static const uint FEATURE_RTXDI = 1024u;          // NVIDIA RTXDI owns the direct-light reservoirs (diagnostics mirror of restirMode 2)
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume

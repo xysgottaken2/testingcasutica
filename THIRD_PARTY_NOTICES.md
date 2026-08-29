@@ -83,3 +83,28 @@ terms. Bundled NRD binaries may include files matching:
 
 Caustica's `nrdshim` glue code is project-owned and follows Caustica's project
 license except for the statically linked NRD/NRI portions noted above.
+
+## NVIDIA RTXDI SDK (RTX Direct Illumination)
+
+Caustica vendors the shader-side core of the NVIDIA RTXDI SDK under
+`shaders/rtxdi/Rtxdi` to drive its optional RTXDI direct-illumination engine
+(the `rtxdi` setting / Video Settings toggle). The vendored files — the DI
+reservoir, initial sampling, pairwise-MIS spatio-temporal resampling and light
+selection modules — are NVIDIA proprietary third-party source code and are not
+licensed under the LGPL. They are adapted only in the ways marked with
+`CAUSTICA:` comments (include-path rewrites for the Slang build and two
+preprocessor guards), and each file carries the required attribution notice.
+
+The vendored RTXDI sources remain subject to the NVIDIA RTX SDKs license:
+
+<https://github.com/NVIDIA-RTX/RTXDI/blob/main/LICENSE.txt>
+
+Redistribution and use of those components must comply with NVIDIA's license
+terms.
+
+This software contains source code provided by NVIDIA Corporation.
+
+Caustica's application bridge (`shaders/world/rtxdi.slang`), host integration
+and generated code are project-owned and follow Caustica's project license
+unless otherwise noted.
+

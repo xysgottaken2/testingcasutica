@@ -162,6 +162,8 @@
 	"caustica.options.rt.heldItemLight.tooltip": "Cast a dynamic light from luminous items held in hand, such as torches, lanterns and lava buckets. Each item lights the world in its own colour. Turn off to stop held items lighting the world.",
 	"caustica.options.rt.restirSampling": "ReSTIR-Sampling",
 	"caustica.options.rt.restirSampling.tooltip": "Verwendet validierte Licht-Samples aus früheren Frames und Nachbarpixeln wieder, um das Rauschen direkter und indirekter Beleuchtung zu senken. Ausgeschaltet läuft die ursprüngliche unabhängige Ray-Sampling-Methode und die ReSTIR-Verlaufs-Puffer werden freigegeben.",
+	"caustica.options.rt.rtxdi": "RTX Direct Illumination (RTXDI)",
+	"caustica.options.rt.rtxdi.tooltip": "Verwendet NVIDIA RTXDI (das RTX-Direct-Illumination-SDK) als Engine für direktes Licht: Dessen ReSTIR-Reservoire wiederverwenden validierte Lichtsamples aus früheren Frames und Nachbarpixeln über verschmolzenes paarweises MIS-Raum-Zeit-Resampling und halten damit Szenen voller emissiver Blöcke stand. Hat Vorrang vor ReSTIR-Sampling; sind beide aus, nutzt jeder Vertex das ursprüngliche unabhängige Ray-Sampling. Umschalten belegt die Verlaufspuffer neu.",
 	"caustica.options.rt.tonemapOperator": "Tonemap Operator",
 	"caustica.options.rt.tonemapOperator.tooltip": "Selects the HDR-to-SDR tonemapping curve used after exposure.",
 	"caustica.options.rt.tonemapOperator.agx": "AgX",

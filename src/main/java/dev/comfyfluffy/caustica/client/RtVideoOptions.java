@@ -253,9 +253,10 @@ public final class RtVideoOptions {
     /**
      * Light-emission and sampling options. {@code heldItemLight} toggles the analytic light a luminous
      * held item casts; {@code dynamicIntensity} scales that light and other dynamic emitters. Both take
-     * effect the frame after they change. The ReSTIR rows include the live anti-flicker tuning pushed
-     * in {@code WorldPush.restirTuning} (more history / neighbours = steadier light at the cost of
-     * ghosting and overhead, max-age = how long history may live).
+     * effect the frame after they change. The reservoir rows pick the direct-light engine — the
+     * built-in ReSTIR (with its live anti-flicker tuning pushed in {@code WorldPush.restirTuning}) or
+     * NVIDIA RTXDI, which takes precedence when enabled (more history / neighbours = steadier light at
+     * the cost of ghosting and overhead, max-age = how long history may live).
      */
     public static OptionInstance<?>[] lightOptions() {
         return new OptionInstance<?>[] {
@@ -265,6 +266,7 @@ public final class RtVideoOptions {
             minFillRatio(),
             risCandidates(),
             restirSampling(),
+            rtxdi(),
             restirHistory(),
             restirSpatialNeighbours(),
             restirMaxAge(),
@@ -655,6 +657,17 @@ public final class RtVideoOptions {
 
     private static OptionInstance<Boolean> restirSampling() {
         return bool("caustica.options.rt.restirSampling", CausticaConfig.Rt.Lights.RESTIR_SAMPLING);
+    }
+
+    /**
+     * The RTXDI engine toggle: when on, NVIDIA RTXDI (the vendored SDK core from
+     * https://github.com/NVIDIA-RTX/RTXDI) replaces the built-in ReSTIR as the direct-light
+     * reservoir engine — SDK initial sampling, fused pairwise-MIS spatio-temporal resampling and
+     * the SDK's own packed reservoir storage, on the same receivers and shadow-ray budget. Takes
+     * precedence over the built-in ReSTIR toggle, exactly like the renderer resolves the two.
+     */
+    private static OptionInstance<Boolean> rtxdi() {
+        return bool("caustica.options.rt.rtxdi", CausticaConfig.Rt.Lights.RTXDI);
     }
 
     private static final List<String> TONEMAP_OPERATORS =

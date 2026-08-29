@@ -69,7 +69,7 @@ public final class CausticaConfig {
             Rt.Sharc.TEMPORAL_BLEND, Rt.Sharc.START_BOUNCE, Rt.Sharc.STRENGTH, Rt.Sharc.MAX_DISTANCE,
             Rt.Sharc.FRAME_LIFETIME, Rt.Sharc.NORMAL_THRESHOLD, Rt.Sharc.STABLE_FRAMES, Rt.Sharc.DEBUG,
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
-            Rt.Lights.RESTIR_SAMPLING, Rt.Lights.RESTIR_TEMPORAL_HISTORY, Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS,
+            Rt.Lights.RESTIR_SAMPLING, Rt.Lights.RTXDI, Rt.Lights.RESTIR_TEMPORAL_HISTORY, Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS,
             Rt.Lights.RESTIR_MAX_AGE, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
@@ -166,9 +166,13 @@ public final class CausticaConfig {
                         + " dynamic-intensity scales that held-item light and other dynamic emitters;\n"
                         + " block-emissive-intensity scales emissive blocks placed in the world, both their\n"
                         + " direct-hit emission and sampled area-light contribution. The toggle, both intensity\n"
-                        + " sliders and ReSTIR sampling are exposed in the Video Settings screen. restir-sampling reuses\n"
-                        + " validated light reservoirs across frames and nearby pixels; off keeps the original\n"
-                        + " independent RIS estimator. ris-candidates = 0 disables emitter NEE entirely\n"
+                        + " sliders, ReSTIR sampling and RTXDI are exposed in the Video Settings screen. restir-sampling\n"
+                        + " reuses validated light reservoirs across frames and nearby pixels; off keeps the original\n"
+                        + " independent RIS estimator. rtxdi swaps that engine for NVIDIA RTXDI (the vendored SDK core\n"
+                        + " from https://github.com/NVIDIA-RTX/RTXDI: SDK initial sampling, fused pairwise-MIS\n"
+                        + " spatio-temporal resampling, packed SDK reservoirs) and takes precedence over\n"
+                        + " restir-sampling; both off keeps the plain RIS estimator. ris-candidates = 0 disables\n"
+                        + " emitter NEE entirely\n"
                         + " (emitters just gather on direct hit). min-fill-ratio drops sparse emissive\n"
                         + " footprints from the light buffer. stats/dump/dump-radius are debug logging.\n"
                         + " restir-temporal-history / restir-spatial-neighbours / restir-max-age are the live\n"
@@ -934,6 +938,18 @@ public final class CausticaConfig {
              */
             public static final BooleanSetting RESTIR_SAMPLING =
                     bool("caustica.rt.restir", "lights.restir-sampling", true);
+            /**
+             * NVIDIA RTX Direct Illumination (https://github.com/NVIDIA-RTX/RTXDI). When enabled, the
+             * vendored RTXDI SDK core (shaders/rtxdi) replaces the built-in ReSTIR as the direct-light
+             * reservoir engine at the primary stable receiver: SDK initial sampling, fused pairwise-MIS
+             * spatio-temporal resampling, and the SDK's own packed reservoir storage. Takes precedence
+             * over {@link #RESTIR_SAMPLING} (which keeps Caustica's hand-rolled reservoirs); when both
+             * are off, every vertex uses the independent RIS estimator. Like RESTIR_SAMPLING the
+             * renderer notices live changes, idles before retiring/recreating the history buffers, and
+             * starts newly enabled history from zero.
+             */
+            public static final BooleanSetting RTXDI =
+                    bool("caustica.rt.rtxdi", "lights.rtxdi", false);
             /**
              * ReSTIR anti-flicker knobs, pushed per frame in {@code WorldPush.restirTuning} and read by
              * {@code lighting.slang} against the compiled RESTIR_* hard caps — the sliders the player

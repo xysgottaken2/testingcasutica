@@ -84,8 +84,18 @@ public bool viewZEnabled() { return worldFeature(worldPush, FEATURE_VIEWZ); }
 public bool restirEnabled() {
     // Use the explicit hot push uniform as the authoritative live toggle. The featureFlags copy remains
     // useful to diagnostics, but must not be able to leave the shading branch stuck on the RIS fallback.
-    return pc.restirMode != 0u
+    // Mode 1 is the built-in ReSTIR; mode 2 is the RTXDI engine (see rtxdiEnabled below).
+    return pc.restirMode == 1u
             && pc.restirPreviousAddr != 0 && pc.restirCurrentAddr != 0;
+}
+public bool rtxdiEnabled() {
+    // pc.restirMode == 2 selects NVIDIA RTXDI (the vendored SDK core behind shaders/rtxdi). The
+    // history buffers are published through WorldPush rather than the push-constant block, which is
+    // full — both the reservoir buffer and the neighbor-offset table must be bound for the path to
+    // run, exactly like restirEnabled's own address guards.
+    return pc.restirMode == 2u
+            && worldPush.rtxdiReservoirAddr != 0
+            && worldPush.rtxdiNeighborOffsetsAddr != 0;
 }
 public bool waterWavesEnabled() { return worldFlag(worldPush, WORLD_FLAG_WAVES); }
 public bool fogEnabled() { return worldFeature(worldPush, FEATURE_FOG); }

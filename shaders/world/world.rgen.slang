@@ -31,6 +31,7 @@ import trace_ser;
 import lighting;
 import clouds;
 import sharc;
+import rtxdi;
 
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
 // radiance L, accumulates per-lobe radiance (outLdiff/outLspec) and the first-bounce hit distance
@@ -98,12 +99,14 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     // RIS emitter NEE: direct lighting from block emitters is active when lights are published and the
     // candidate count is non-zero. Off => emitters are gathered only on path hits (legacy behaviour).
     bool risOn = worldPush.risCandidates > 0u && worldPush.lightCount > 0u && pc.lightBufAddr != 0;
-    // The explicit pc.restirMode uniform chooses the final-color estimator. On the first stable receiver
-    // of leaf 0, sample 0 shades the ReSTIR reservoir and is scaled by SPP; sibling SPP paths skip ONLY
-    // that receiver. Consequently frame averaging contains one full ReSTIR estimate rather than one
-    // ReSTIR estimate diluted by (SPP-1) legacy RIS estimates. Deeper/random paths remain ordinary RIS.
-    bool restirPathOn = restirEligiblePath && restirEnabled() && risOn;
-    bool restirReceiverPending = restirPathOn;
+    // The explicit pc.restirMode uniform chooses the final-color estimator: 0 = legacy RIS,
+    // 1 = the built-in ReSTIR, 2 = NVIDIA RTXDI (the vendored SDK core behind rtxdi.slang). On the
+    // first stable receiver of leaf 0, sample 0 shades the selected reservoir engine's estimate and
+    // is scaled by SPP; sibling SPP paths skip ONLY that receiver. Consequently frame averaging
+    // contains one full reservoir estimate rather than one diluted by (SPP-1) legacy RIS estimates.
+    // Deeper/random paths remain ordinary RIS.
+    bool reservoirPathOn = restirEligiblePath && (restirEnabled() || rtxdiEnabled()) && risOn;
+    bool restirReceiverPending = reservoirPathOn;
     // SHaRC back-propagation state: the last vertices that wrote cache entries, with the path
     // throughput at registration (see sharc.slang). Every new shaded vertex, a sky miss and a
     // cache-hit termination push their outgoing radiance back into these entries, which is what
@@ -418,24 +421,35 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // sampler as terrain/entities, but two-sided: a billboard has no back face, so light
             // striking either side of the quad should still land (matches the sun/moon NEE above).
             if (risOn) {
-                bool shadeWithRestir = restirReceiverPending && restirOwner;
+                bool shadeWithReservoir = restirReceiverPending && restirOwner;
                 bool skipSiblingRis = restirReceiverPending && !restirOwner;
                 restirReceiverPending = false;
                 if (!skipSiblingRis) {
-                    uint freshCandidates = shadeWithRestir
-                            ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
-                            : worldPush.risCandidates;
-                    Reservoir r = risInitial(hitPos, n, v, rd, albedo,
-                            float3(0.0, 0.0, 0.0), 1.0, true, 0.0, freshCandidates,
-                            seed, proposalSeed);
-                    if (shadeWithRestir) {
-                        r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
-                                n, v, rd, albedo, float3(0.0, 0.0, 0.0),
-                                1.0, true, 0.0, seed);
+                    float estimatorScale = shadeWithReservoir ? restirSampleScale : 1.0;
+                    float3 particleRis;
+                    if (shadeWithReservoir && rtxdiEnabled()) {
+                        // RTXDI engine: identical receiver contract, two-sided billboard surface.
+                        float3 rtxdiDiff;
+                        float3 rtxdiSpec;
+                        rtxdiDirectLighting(pix, dimensions, hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0, payload.motionPrev,
+                                rtxdiDiff, rtxdiSpec);
+                        particleRis = throughput * (rtxdiDiff + rtxdiSpec) * estimatorScale;
+                    } else {
+                        uint freshCandidates = shadeWithReservoir
+                                ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                                : worldPush.risCandidates;
+                        Reservoir r = risInitial(hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0, freshCandidates,
+                                seed, proposalSeed);
+                        if (shadeWithReservoir && restirEnabled()) {
+                            r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
+                                    n, v, rd, albedo, float3(0.0, 0.0, 0.0),
+                                    1.0, true, 0.0, seed);
+                        }
+                        particleRis = throughput * shadeReservoir(r, hitPos, n, v, rd, albedo,
+                                float3(0.0, 0.0, 0.0), 1.0, true, 0.0) * estimatorScale;
                     }
-                    float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                    float3 particleRis = throughput * shadeReservoir(r, hitPos, n, v, rd, albedo,
-                            float3(0.0, 0.0, 0.0), 1.0, true, 0.0) * estimatorScale;
                     L += particleRis;
                     // twoSided shading has no specular term — the whole estimate is diffuse.
                     if (channel == 2) {
@@ -645,42 +659,66 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // where a single-sided NDL would be negative, causing black interior. Reuse early flag.
         bool twoSidedEmitter = isDynamicEntityEarly; // fix boat interior + minecart
 
-        // Emitter direct lighting. In ReSTIR mode the owner sample shades the reused reservoir here and
-        // sibling SPP samples omit this one receiver, so frame averaging contains the ReSTIR result rather
-        // than silently blending it back toward RIS. OFF and deeper vertices execute the original RIS path.
+        // Emitter direct lighting. In a reservoir mode (built-in ReSTIR or RTXDI) the owner sample
+        // shades the reused reservoir here and sibling SPP samples omit this one receiver, so frame
+        // averaging contains the reservoir engine's result rather than silently blending it back
+        // toward RIS. OFF and deeper vertices execute the original RIS path.
         // Front lobe + SSS backlighting still share one shadow ray.
         if (risOn) {
-            bool shadeWithRestir = restirReceiverPending && restirOwner;
+            bool shadeWithReservoir = restirReceiverPending && restirOwner;
             bool skipSiblingRis = restirReceiverPending && !restirOwner;
             restirReceiverPending = false;
             if (!skipSiblingRis) {
-                uint freshCandidates = shadeWithRestir
-                        ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
-                        : worldPush.risCandidates;
-                Reservoir r = risInitial(hitPos, n, v, rd, diffAlb, F0, rough, twoSidedEmitter,
-                        activeSss, freshCandidates, seed, proposalSeed);
-                if (shadeWithRestir) {
-                    r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
-                            n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed);
-                }
-                float estimatorScale = shadeWithRestir ? restirSampleScale : 1.0;
-                float3 ris = throughput * shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
-                        twoSidedEmitter, activeSss) * estimatorScale;
-                L += ris;
-                if (nrdEnabled()) {
-                    if (channel == 0) {
-                        // Unclassified primary hit: split the reservoir estimate by BRDF lobe. Costs a
-                        // second shadow ray, so it only runs on the NRD path.
-                        float3 risDiff;
-                        float3 risSpec;
-                        shadeReservoirSplit(r, hitPos, n, v, rd, diffAlb, F0, rough,
-                                twoSidedEmitter, activeSss, risDiff, risSpec);
-                        Ldiff += throughput * risDiff * estimatorScale;
-                        Lspec += throughput * risSpec * estimatorScale;
-                    } else if (channel == 1) {
-                        Ldiff += ris;
-                    } else {
-                        Lspec += ris;
+                float estimatorScale = shadeWithReservoir ? restirSampleScale : 1.0;
+                if (shadeWithReservoir && rtxdiEnabled()) {
+                    // NVIDIA RTXDI engine (pc.restirMode 2): the vendored SDK core runs its own
+                    // initial sampling plus the fused pairwise spatio-temporal resampling pass,
+                    // stores the packed reservoir and receiver-surface history for the next frame,
+                    // and shades the survivor through the shared split estimator below.
+                    float3 rtxdiDiff;
+                    float3 rtxdiSpec;
+                    rtxdiDirectLighting(pix, dimensions, hitPos, n, v, rd, diffAlb, F0, rough,
+                            twoSidedEmitter, activeSss, payload.motionPrev, rtxdiDiff, rtxdiSpec);
+                    float3 ris = throughput * (rtxdiDiff + rtxdiSpec) * estimatorScale;
+                    L += ris;
+                    if (nrdEnabled()) {
+                        if (channel == 0) {
+                            Ldiff += throughput * rtxdiDiff * estimatorScale;
+                            Lspec += throughput * rtxdiSpec * estimatorScale;
+                        } else if (channel == 1) {
+                            Ldiff += ris;
+                        } else {
+                            Lspec += ris;
+                        }
+                    }
+                } else {
+                    uint freshCandidates = shadeWithReservoir
+                            ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
+                            : worldPush.risCandidates;
+                    Reservoir r = risInitial(hitPos, n, v, rd, diffAlb, F0, rough, twoSidedEmitter,
+                            activeSss, freshCandidates, seed, proposalSeed);
+                    if (shadeWithReservoir && restirEnabled()) {
+                        r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
+                                n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed);
+                    }
+                    float3 ris = throughput * shadeReservoir(r, hitPos, n, v, rd, diffAlb, F0, rough,
+                            twoSidedEmitter, activeSss) * estimatorScale;
+                    L += ris;
+                    if (nrdEnabled()) {
+                        if (channel == 0) {
+                            // Unclassified primary hit: split the reservoir estimate by BRDF lobe. Costs a
+                            // second shadow ray, so it only runs on the NRD path.
+                            float3 risDiff;
+                            float3 risSpec;
+                            shadeReservoirSplit(r, hitPos, n, v, rd, diffAlb, F0, rough,
+                                    twoSidedEmitter, activeSss, risDiff, risSpec);
+                            Ldiff += throughput * risDiff * estimatorScale;
+                            Lspec += throughput * risSpec * estimatorScale;
+                        } else if (channel == 1) {
+                            Ldiff += ris;
+                        } else {
+                            Lspec += ris;
+                        }
                     }
                 }
             }

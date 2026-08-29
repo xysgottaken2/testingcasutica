@@ -40,6 +40,10 @@ changes while the renderer is being built.
   light to earlier bounces, while diffuse vertices past the start bounce reuse the cached outgoing
   radiance instead of tracing on; toggleable with tuning options from the RT settings sub-menu and
   inspectable via debug view 13
+- NVIDIA RTXDI (RTX Direct Illumination) engine: a Video Settings toggle swaps the built-in ReSTIR
+  direct-light reservoirs for the vendored RTXDI SDK core (https://github.com/NVIDIA-RTX/RTXDI) —
+  SDK initial sampling, fused pairwise-MIS spatio-temporal resampling and the SDK's own packed
+  reservoir storage, driving scenes full of emissive blocks
 
 ## Requirements
 

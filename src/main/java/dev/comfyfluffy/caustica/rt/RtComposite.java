@@ -46,6 +46,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.KHRSynchronization2;
 import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkDependencyInfo;
 import org.lwjgl.vulkan.VkImageBlit;
@@ -189,6 +190,9 @@ public final class RtComposite {
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_FOG = 256;
     private static final int FEATURE_SHARC = 512;
+    // NVIDIA RTXDI owns the direct-light reservoirs (pc.restirMode 2). Diagnostics-only mirror of
+    // the authoritative push-constant mode, same contract as FEATURE_RESTIR.
+    private static final int FEATURE_RTXDI = 1024;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -213,8 +217,13 @@ public final class RtComposite {
         if (CausticaConfig.Rt.Composite.FOG.value()) {
             flags |= FEATURE_FOG;
         }
-        if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
+        if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()
+                && !CausticaConfig.Rt.Lights.RTXDI.value()) {
             flags |= FEATURE_RESTIR;
+        }
+        if (CausticaConfig.Rt.Lights.RTXDI.value()
+                && CausticaConfig.Rt.Lights.RIS_CANDIDATES.value() > 0) {
+            flags |= FEATURE_RTXDI;
         }
         if (CausticaConfig.Rt.Sharc.ENABLED.value() && RtSharc.INSTANCE.entryCount() > 0) {
             flags |= FEATURE_SHARC;
@@ -528,6 +537,19 @@ public final class RtComposite {
     private final RtBuffer[] restirReservoirs = new RtBuffer[2];
     private int restirWriteIndex;
     private boolean restirResourcesEnabled;
+    // NVIDIA RTXDI (https://github.com/NVIDIA-RTX/RTXDI) history for pc.restirMode 2. The SDK's
+    // reservoir buffer is ONE allocation holding two ping-pong array layers in its 16x16-block tiled
+    // layout (the layer indices ride in WorldPush.rtxdiParams); the receiver-surface history is a
+    // separate two-buffer ping-pong the bridge addresses linearly. The neighbor-offset table is
+    // render-size-independent, so it is uploaded once and survives resizes.
+    private RtBuffer rtxdiReservoirs;
+    private final RtBuffer[] rtxdiSurfaces = new RtBuffer[2];
+    private RtBuffer rtxdiNeighborOffsets;
+    private int rtxdiWriteIndex;
+    private boolean rtxdiResourcesEnabled;
+    // Light generation of the frame that wrote the history currently readable as "previous"; -1
+    // forces one rejected frame after (re)allocation so fresh buffers can never validate as history.
+    private int rtxdiPrevLightGeneration;
     private RtImage displayImage;
     // Parallel PQ-encoded ([0,1], ST.2084) HDR display image. Written alongside displayImage when HDR is
     // enabled. When the PQ swapchain is active, the combined UI overlay is composited over this image, then
@@ -1219,7 +1241,10 @@ public final class RtComposite {
      * OFF releases the VRAM (rather than merely hiding it), and ON can never observe stale reservoirs.
      */
     private void syncRestirResources(RtContext ctx) {
+        // RTXDI takes precedence over the built-in ReSTIR: while it owns direct-light reservoirs the
+        // hand-rolled history is not allocated at all, so switching engines swaps the whole pool.
         boolean desired = CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()
+                && !CausticaConfig.Rt.Lights.RTXDI.value()
                 && CausticaConfig.Rt.Lights.RIS_CANDIDATES.value() > 0
                 && renderW > 0 && renderH > 0;
         boolean completePair = restirReservoirs[0] != null && restirReservoirs[1] != null;
@@ -1277,7 +1302,157 @@ public final class RtComposite {
 
     /** Explicit shader mode uniform; unlike the descriptive feature bit this is tied to real bindings. */
     private int restirMode() {
+        if (rtxdiResourcesEnabled && CausticaConfig.Rt.Lights.RTXDI.value()) {
+            return 2; // NVIDIA RTXDI engine (the vendored SDK core behind rtxdi.slang)
+        }
         return restirResourcesEnabled && CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value() ? 1 : 0;
+    }
+
+    /**
+     * Match the persistent RTXDI allocation to the live RTXDI toggle, mirroring {@link
+     * #syncRestirResources(RtContext)}: transitions are synchronous and rare, OFF releases the VRAM,
+     * ON starts from zeroed history (a cleared packed reservoir is RTXDI's own invalid record, and a
+     * zeroed surface record fails the bridge's validity bit). The neighbor-offset table outlives
+     * size changes and is only (re)uploaded when absent.
+     */
+    private void syncRtxdiResources(RtContext ctx) {
+        boolean desired = CausticaConfig.Rt.Lights.RTXDI.value()
+                && CausticaConfig.Rt.Lights.RIS_CANDIDATES.value() > 0
+                && renderW > 0 && renderH > 0;
+        boolean complete = rtxdiReservoirs != null && rtxdiSurfaces[0] != null && rtxdiSurfaces[1] != null;
+        if (desired == rtxdiResourcesEnabled && desired == complete
+                && (rtxdiNeighborOffsets != null || !desired)) {
+            return;
+        }
+
+        ctx.waitIdle();
+        destroyRtxdiResources();
+        if (!desired) {
+            return;
+        }
+
+        long reservoirBytes = RtRtxdiLayout.reservoirBufferBytes(renderW, renderH);
+        long surfaceBytes = RtRtxdiLayout.surfaceHistoryBufferBytes(renderW, renderH);
+        int usage = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        try {
+            rtxdiReservoirs = ctx.createBuffer(reservoirBytes, usage, false,
+                    "RTXDI reservoirs " + renderW + "x" + renderH + "x2");
+            rtxdiSurfaces[0] = ctx.createBuffer(surfaceBytes, usage, false,
+                    "RTXDI surface history A " + renderW + "x" + renderH);
+            rtxdiSurfaces[1] = ctx.createBuffer(surfaceBytes, usage, false,
+                    "RTXDI surface history B " + renderW + "x" + renderH);
+            uploadRtxdiNeighborOffsets(ctx);
+            rtxdiWriteIndex = 0;
+            rtxdiPrevLightGeneration = -1; // no history exists yet: reject the first translate
+            ctx.submitSync(cmd -> {
+                VK10.vkCmdFillBuffer(cmd, rtxdiReservoirs.handle, 0L, reservoirBytes, 0);
+                VK10.vkCmdFillBuffer(cmd, rtxdiSurfaces[0].handle, 0L, surfaceBytes, 0);
+                VK10.vkCmdFillBuffer(cmd, rtxdiSurfaces[1].handle, 0L, surfaceBytes, 0);
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    VulkanCommandEncoder.memoryBarrier(cmd, stack);
+                }
+            });
+            rtxdiResourcesEnabled = true;
+        } catch (Throwable failure) {
+            destroyRtxdiResources();
+            throw failure;
+        }
+    }
+
+    /** Upload the RTXDI neighbor-offset table (R2 disk, {@link RtRtxdiLayout#neighborOffsets()}) once. */
+    private void uploadRtxdiNeighborOffsets(RtContext ctx) {
+        if (rtxdiNeighborOffsets != null) {
+            return;
+        }
+        float[] offsets = RtRtxdiLayout.neighborOffsets();
+        long bytes = (long) offsets.length * Float.BYTES;
+        RtBuffer upload = null;
+        try {
+            rtxdiNeighborOffsets = ctx.createBuffer(bytes,
+                    VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    false, "RTXDI neighbor offsets");
+            upload = ctx.createUploadBuffer(bytes, "RTXDI neighbor offsets upload");
+            MemoryUtil.memFloatBuffer(upload.mapped, offsets.length).put(offsets);
+            RtBuffer device = rtxdiNeighborOffsets;
+            RtBuffer staging = upload;
+            ctx.submitSync(cmd -> {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    VkBufferCopy.Buffer region = VkBufferCopy.calloc(1, stack);
+                    region.get(0).srcOffset(0L).dstOffset(0L).size(bytes);
+                    VK10.vkCmdCopyBuffer(cmd, staging.handle, device.handle, region);
+                    VulkanCommandEncoder.memoryBarrier(cmd, stack);
+                }
+            });
+        } finally {
+            if (upload != null) {
+                upload.destroy();
+            }
+        }
+    }
+
+    private void destroyRtxdiResources() {
+        if (rtxdiReservoirs != null) {
+            rtxdiReservoirs.destroy();
+            rtxdiReservoirs = null;
+        }
+        for (int i = 0; i < rtxdiSurfaces.length; i++) {
+            if (rtxdiSurfaces[i] != null) {
+                rtxdiSurfaces[i].destroy();
+                rtxdiSurfaces[i] = null;
+            }
+        }
+        if (rtxdiNeighborOffsets != null) {
+            rtxdiNeighborOffsets.destroy();
+            rtxdiNeighborOffsets = null;
+        }
+        rtxdiWriteIndex = 0;
+        rtxdiPrevLightGeneration = -1;
+        rtxdiResourcesEnabled = false;
+    }
+
+    /** The RTXDI reservoir buffer covers both ping-pong layers; 0 means the path is unreachable. */
+    private long rtxdiReservoirAddress() {
+        return rtxdiResourcesEnabled ? rtxdiReservoirs.deviceAddress : 0L;
+    }
+
+    private long rtxdiSurfacePreviousAddress() {
+        return rtxdiResourcesEnabled ? rtxdiSurfaces[rtxdiWriteIndex ^ 1].deviceAddress : 0L;
+    }
+
+    private long rtxdiSurfaceCurrentAddress() {
+        return rtxdiResourcesEnabled ? rtxdiSurfaces[rtxdiWriteIndex].deviceAddress : 0L;
+    }
+
+    private long rtxdiNeighborOffsetsAddress() {
+        return rtxdiResourcesEnabled ? rtxdiNeighborOffsets.deviceAddress : 0L;
+    }
+
+    /**
+     * WorldPush.rtxdiParams lanes: x neighbor-offset mask, y the previous frame's reservoir layer,
+     * z this frame's store layer, w the light generation that wrote the readable history.
+     */
+    private Int4 rtxdiParams() {
+        return new Int4(RtRtxdiLayout.NEIGHBOR_OFFSET_MASK, rtxdiWriteIndex ^ 1, rtxdiWriteIndex,
+                rtxdiPrevLightGeneration);
+    }
+
+    /**
+     * WorldPush.rtxdiSampling: SDK-tuned initial/spatial sample counts and radius
+     * (GetDefaultReSTIRDISpatioTemporalResamplingParams), with the history length bounded so
+     * packed M can never exceed RTXDI_PackedDIReservoir_MaxM.
+     */
+    private Float4 rtxdiSampling() {
+        return new Float4(2.0f, 1.0f, 32.0f, 20.0f);
+    }
+
+    /**
+     * WorldPush.rtxdiReuse: depth/normal similarity thresholds (the normal gate tightened from the
+     * SDK's 0.5 to 0.9 for Minecraft's axis-aligned block faces), plus the flag bits and the
+     * disocclusion-boost sample count from the same SDK defaults.
+     */
+    private Float4 rtxdiReuse() {
+        // bit0 enableMaterialSimilarityTest, bit1 discountNaiveSamples (bit2 reserved).
+        return new Float4(0.1f, 0.9f, 3.0f, 8.0f);
     }
 
     private void ensureOutput(RtContext ctx, int width, int height) {
@@ -1311,6 +1486,7 @@ public final class RtComposite {
                 && renderSizeSvgfEnabled == svgfEnabled
                 && renderSizeNrdEnabled == nrdEnabled) {
             syncRestirResources(ctx);
+            syncRtxdiResources(ctx);
             return;
         }
         ctx.waitIdle(); // resize is rare; no in-flight frame may use the old image/descriptor
@@ -1336,6 +1512,7 @@ public final class RtComposite {
             continuationQueue = null;
         }
         destroyRestirResources();
+        destroyRtxdiResources();
         destroyGuideImages();
 
         displayW = width;
@@ -1379,6 +1556,7 @@ public final class RtComposite {
                 VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false,
                 "path continuation queue " + renderW + "x" + renderH + "x2");
         syncRestirResources(ctx);
+        syncRtxdiResources(ctx);
         displayImage = ctx.createStorageImage(width, height, VK10.VK_FORMAT_R8G8B8A8_UNORM, "RT display image " + width + "x" + height);
         // PQ-encoded ([0,1], ST.2084) HDR display image, written in parallel by display.comp when HDR mode is active.
         hdrDisplayImage = ctx.createStorageImage(width, height, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "RT HDR display image " + width + "x" + height);
@@ -1735,7 +1913,17 @@ public final class RtComposite {
                     // lighting.slang resolves against its compiled RESTIR_* caps.
                     new Int4(CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY.value(),
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
-                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0)
+                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
+                    // NVIDIA RTXDI lanes (WorldPush.rtxdi*): the two-layer reservoir buffer, the
+                    // surface-history ping-pong and the neighbor-offset table, plus the per-frame
+                    // sampling/reuse parameters the vendored SDK core reads (see rtxdi.slang).
+                    rtxdiReservoirAddress(),
+                    rtxdiSurfacePreviousAddress(),
+                    rtxdiSurfaceCurrentAddress(),
+                    rtxdiNeighborOffsetsAddress(),
+                    rtxdiParams(),
+                    rtxdiSampling(),
+                    rtxdiReuse()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -2098,6 +2286,12 @@ public final class RtComposite {
         // this frame just wrote and writes the other half. Advance only after execute accepted the command.
         if (restirResourcesEnabled) {
             restirWriteIndex ^= 1;
+        }
+        if (rtxdiResourcesEnabled) {
+            rtxdiWriteIndex ^= 1;
+            // The light generation published this frame becomes the history generation the next
+            // frame validates RAB_TranslateLightIndex against.
+            rtxdiPrevLightGeneration = terrain.lightGeneration();
         }
         // Do not attach a merely reserved token: failed recording may never signal it. Once execute succeeds,
         // every owner in this frame's manifest is protected through the final overlay consumer.
@@ -2857,6 +3051,7 @@ public final class RtComposite {
             continuationQueue = null;
         }
         destroyRestirResources();
+        destroyRtxdiResources();
         destroyGuideImages();
         exposure.destroy();
         if (displayPipeline != null) {
