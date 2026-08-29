@@ -32,10 +32,11 @@ final class RtRtxdiLayoutTest {
         // host and device layouts disagree.
         Set<Long>[] seen = new Set[]{new HashSet<>(), new HashSet<>()};
         for (int layer = 0; layer < 2; layer++) {
+            long layerBase = layer * arrayPitch; // each layer occupies its own pitch-sized span
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     long pointer = RtRtxdiLayout.reservoirPointer(layer, x, y, width, arrayPitch);
-                    assertTrue(pointer >= 0 && pointer < arrayPitch,
+                    assertTrue(pointer >= layerBase && pointer < layerBase + arrayPitch,
                             "pointer must stay inside its own layer");
                     assertTrue(seen[layer].add(pointer),
                             "pixel (" + x + "," + y + ") layer " + layer + " collides in the tile map");

@@ -107,10 +107,16 @@ final class RtShaderConstantMirrorTest {
 
         assertTrue(common.contains("public uint restirMode;"),
                 "the live ReSTIR/RIS selector must be an explicit push uniform");
-        assertTrue(core.contains("pc.restirMode != 0u")
+        // Mode 1 is the built-in ReSTIR and mode 2 is the RTXDI engine: each must additionally
+        // require its own bound history buffers, so the two engines can never both engage.
+        assertTrue(core.contains("pc.restirMode == 1u")
                         && core.contains("pc.restirPreviousAddr != 0")
                         && core.contains("pc.restirCurrentAddr != 0"),
-                "restirEnabled must require both the live mode and bound ping-pong buffers");
+                "restirEnabled must require the built-in mode (1) and bound ping-pong buffers");
+        assertTrue(core.contains("pc.restirMode == 2u")
+                        && core.contains("worldPush.rtxdiReservoirAddr != 0")
+                        && core.contains("worldPush.rtxdiNeighborOffsetsAddr != 0"),
+                "rtxdiEnabled must require mode 2 and the RTXDI history/offset bindings");
         assertTrue(java.contains("terrain.lightGeneration(), restirMode()).write(pushConstants)"),
                 "RtComposite must write restirMode into the world pipeline push constants every frame");
         assertTrue(raygen.contains("bool shadeWithRestir = restirReceiverPending && restirOwner;")
