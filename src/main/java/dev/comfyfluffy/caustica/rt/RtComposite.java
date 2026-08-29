@@ -1684,15 +1684,27 @@ public final class RtComposite {
             long regirCells = 0L;
             float regirGridX = 0f, regirGridY = 0f, regirGridZ = 0f;
             if (regirWanted) {
-                if (regirPipeline == null) {
-                    regirPipeline = RtRegirPipeline.create(ctx);
+                try {
+                    if (regirPipeline == null) {
+                        regirPipeline = RtRegirPipeline.create(ctx);
+                    }
+                    float halfSpan = RtRegirPipeline.GRID_DIMS * 8.0f * 0.5f;
+                    regirGridX = (float) (camX - terrain.blockX) - halfSpan;
+                    regirGridY = (float) (camY - terrain.blockY) - halfSpan;
+                    regirGridZ = (float) (camZ - terrain.blockZ) - halfSpan;
+                    regirCells = regirPipeline.cellBufferAddress();
+                    regirDispatchPending = true;
+                } catch (Throwable t) {
+                    // A failed ReGIR bring-up must never take the frame down: leave the address 0
+                    // so the shader's regirReady() gate degrades to ordinary RIS/ReSTIR.
+                    CausticaMod.LOGGER.error("ReGIR pipeline unavailable; falling back to RIS", t);
+                    regirDispatchPending = false;
+                    regirCells = 0L;
+                    if (regirPipeline != null) {
+                        try { regirPipeline.destroy(); } catch (Throwable ignored) { }
+                        regirPipeline = null;
+                    }
                 }
-                float halfSpan = RtRegirPipeline.GRID_DIMS * 8.0f * 0.5f;
-                regirGridX = (float) (camX - terrain.blockX) - halfSpan;
-                regirGridY = (float) (camY - terrain.blockY) - halfSpan;
-                regirGridZ = (float) (camZ - terrain.blockZ) - halfSpan;
-                regirCells = regirPipeline.cellBufferAddress();
-                regirDispatchPending = true;
             }
 
             new WorldPushData(
@@ -1819,8 +1831,10 @@ public final class RtComposite {
                     regirPipeline.dispatch(cmd, pushBuf.deviceAddress,
                             terrain.lightBufferAddress(), terrain.lightAliasBufferAddress(),
                             terrain.lightCount(), CausticaConfig.Rt.Lights.RIS_CANDIDATES.value());
+                    VulkanCommandEncoder.memoryBarrier(cmd, stack); // cell writes visible to the trace
+                } catch (Throwable t) {
+                    CausticaMod.LOGGER.error("ReGIR dispatch failed; skipping this frame's grid", t);
                 }
-                VulkanCommandEncoder.memoryBarrier(cmd, stack); // cell writes visible to the trace
             }
 
             // Push the BDA ring slot's address plus the small hot subset used directly by the shaders.

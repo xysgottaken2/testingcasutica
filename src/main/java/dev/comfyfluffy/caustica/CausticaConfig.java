@@ -977,7 +977,7 @@ public final class CausticaConfig {
              * candidates stay, so the estimator keeps full light-list support (unbiased).
              */
             public static final BooleanSetting REGIR_SAMPLING =
-                    bool("caustica.rt.regir", "lights.regir-sampling", true);
+                    bool("caustica.rt.regir", "lights.regir-sampling", false);
             /**
              * Deterministic clustered analytic point lights (Forward+ style). Small emitters
              * (torches, lanterns, shroomlights, end rods, ...) are shaded analytically at the
