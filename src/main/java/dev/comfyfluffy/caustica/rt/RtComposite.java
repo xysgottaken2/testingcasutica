@@ -550,6 +550,8 @@ public final class RtComposite {
     // Light generation of the frame that wrote the history currently readable as "previous"; -1
     // forces one rejected frame after (re)allocation so fresh buffers can never validate as history.
     private int rtxdiPrevLightGeneration;
+    /** Light generation captured at THIS frame's push-constant write; published at the frame-end flip. */
+    private int rtxdiFrameGeneration;
     private RtImage displayImage;
     // Parallel PQ-encoded ([0,1], ST.2084) HDR display image. Written alongside displayImage when HDR is
     // enabled. When the PQ swapchain is active, the combined UI overlay is composited over this image, then
@@ -1974,11 +1976,12 @@ public final class RtComposite {
             // section/entity/material tables are read from world.rahit/world.rchit, which never load
             // WorldPush at all, and the RIS light buffers are read from world.rgen's hot inner loop, so
             // none of them should cost an extra BDA dereference to find.
-            // Captured once per frame: the light generation THIS frame's trace validates history
-            // against. The hierarchy rebuilds asynchronously, so re-reading terrain.lightGeneration()
-            // at frame end could already observe the NEXT generation — and would then let stale
-            // reservoir indices validate as fresh history (a real flicker source).
-            int frameLightGeneration = terrain.lightGeneration();
+            // Captured once per frame, at the moment the push constants take their snapshot: the
+            // light generation THIS frame's trace validates history against. The hierarchy rebuilds
+            // asynchronously, so re-reading terrain.lightGeneration() at frame end could already
+            // observe the NEXT generation — and would then let stale reservoir indices validate as
+            // fresh history (a real flicker source).
+            rtxdiFrameGeneration = terrain.lightGeneration();
             ByteBuffer pushConstants = stack.malloc(WorldPushConstantsData.BYTE_SIZE);
             new WorldPushConstantsData(pushBuf.deviceAddress, terrain.tableAddress(), fe.geomTableAddr(),
                     RtDistantHorizonsTerrain.INSTANCE.tableAddress(), readyMaskAddress,
@@ -1991,7 +1994,7 @@ public final class RtComposite {
                     // them would make the raygen paint a guide overlay over the very image we are
                     // trying to inspect. The tracer sees 0 (normal shading) for those.
                     (int) frameCounter, svgfDebugView ? 0 : debugView,
-                    frameLightGeneration, restirMode()).write(pushConstants);
+                    rtxdiFrameGeneration, restirMode()).write(pushConstants);
             try (RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "world primary trace");
                  RtFrameStats.Scope ignoredStats = RtFrameStats.FRAME.stage("frame.tracePrimary")) {
                 active.trace(cmd, renderW, renderH, pushConstants, 0);
@@ -2313,7 +2316,7 @@ public final class RtComposite {
             rtxdiWriteIndex ^= 1;
             // Publish the generation THIS frame's trace used: that is exactly the generation the
             // reservoirs just stored refer to, and what the next frame must validate against.
-            rtxdiPrevLightGeneration = frameLightGeneration;
+            rtxdiPrevLightGeneration = rtxdiFrameGeneration;
         }
         // Do not attach a merely reserved token: failed recording may never signal it. Once execute succeeds,
         // every owner in this frame's manifest is protected through the final overlay consumer.
