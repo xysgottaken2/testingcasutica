@@ -1774,7 +1774,7 @@ public final class RtComposite {
                     // ReGIR pre-resampled world-grid reservoirs: the cell buffer the regir.comp
                     // dispatch rebuilds every frame (0 when the pass did not run) plus the grid
                     // frame (xyz origin of cell 0 in rebased space, w cubic cell size).
-                    regirCellAddress(),
+                    regirCells,
                     new Float4(regirGridX, regirGridY, regirGridZ, 8.0f),
                     // Analytic clustered point lighting: per-cell {firstPoint,count} headers and
                     // the flat point-light index array, both over the lightGrid* frame above.
@@ -1818,8 +1818,7 @@ public final class RtComposite {
                 try (RtFrameStats.Scope ignored = RtFrameStats.FRAME.stage("frame.regirBuild")) {
                     regirPipeline.dispatch(cmd, pushBuf.deviceAddress,
                             terrain.lightBufferAddress(), terrain.lightAliasBufferAddress(),
-                            terrain.lightCount(), CausticaConfig.Rt.Lights.RIS_CANDIDATES.value(),
-                            regirGridX, regirGridY, regirGridZ, 8.0f);
+                            terrain.lightCount(), CausticaConfig.Rt.Lights.RIS_CANDIDATES.value());
                 }
                 VulkanCommandEncoder.memoryBarrier(cmd, stack); // cell writes visible to the trace
             }

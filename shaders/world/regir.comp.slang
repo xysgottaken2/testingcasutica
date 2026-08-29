@@ -32,7 +32,7 @@ struct RegirPush {
 };
 
 [[vk::push_constant]]
-ConstantBuffer<RegirPush> pc;
+RegirPush pc;
 
 public static const uint REGIR_BUILD_DIMS = 24u; // must match lighting.slang REGIR_GRID_DIMS
 public static const float REGIR_BUILD_CELL = 8.0f; // must match lighting.slang REGIR_CELL_SIZE
@@ -139,7 +139,6 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     WorldPush push = ConstPtr<WorldPush>(pc.worldPushAddr)[0];
     uint linear = (id.z * REGIR_BUILD_DIMS + id.y) * REGIR_BUILD_DIMS + id.x;
-    DevicePtr<RegirCell> outCell = DevicePtr<RegirCell>(pc.regirCellsAddr) + linear;
 
     uint M = 0u;
     float wSum = 0.0;
@@ -202,5 +201,5 @@ void main(uint3 id : SV_DispatchThreadID) {
         result.M = 0u;
         result.W = 0.0;
     }
-    outCell[0] = result;
+    DevicePtr<RegirCell>(pc.regirCellsAddr)[linear] = result;
 }

@@ -1,7 +1,6 @@
 package dev.comfyfluffy.caustica.rt.pipeline;
 
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkComputePipelineCreateInfo;
@@ -98,27 +97,22 @@ public final class RtRegirPipeline {
      * whole fixed grid (512 threads of 27 cells each — sub-millisecond).
      */
     public void dispatch(VkCommandBuffer cmd, long worldPushAddress, long lightBufferAddress,
-                         long lightAliasAddress, int lightCount, int candidates,
-                         float gridOriginX, float gridOriginY, float gridOriginZ, float cellSize) {
+                         long lightAliasAddress, int lightCount, int candidates) {
         try (MemoryStack stack = MemoryStack.stackPush();
              RtDebugLabels.Scope ignored = RtDebugLabels.scope(ctx, cmd, "regir reservoir build")) {
             VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-            ByteBuffer push = MemoryUtil.memCalloc(PUSH_BYTES);
-            try {
-                int o = 0;
-                putLong(push, o, worldPushAddress); o += 8;
-                putLong(push, o, lightBufferAddress); o += 8;
-                putLong(push, o, lightAliasAddress); o += 8;
-                putLong(push, o, cellBuffer.deviceAddress); o += 8;
-                push.putInt(o, lightCount); o += 4;
-                push.putInt(o, Math.max(1, candidates)); o += 4;
-                push.putInt(o, 0); o += 4;
-                push.putInt(o, 0);
-                VK10.vkCmdPushConstants(cmd, pipelineLayout, VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
-                VK10.vkCmdDispatch(cmd, (GRID_DIMS + 7) / 8, (GRID_DIMS + 7) / 8, (GRID_DIMS + 7) / 8);
-            } finally {
-                MemoryUtil.memFree(push);
-            }
+            ByteBuffer push = stack.calloc(PUSH_BYTES);
+            int o = 0;
+            putLong(push, o, worldPushAddress); o += 8;
+            putLong(push, o, lightBufferAddress); o += 8;
+            putLong(push, o, lightAliasAddress); o += 8;
+            putLong(push, o, cellBuffer.deviceAddress); o += 8;
+            push.putInt(o, lightCount); o += 4;
+            push.putInt(o, Math.max(1, candidates)); o += 4;
+            push.putInt(o, 0); o += 4;
+            push.putInt(o, 0);
+            VK10.vkCmdPushConstants(cmd, pipelineLayout, VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0, push);
+            VK10.vkCmdDispatch(cmd, (GRID_DIMS + 7) / 8, (GRID_DIMS + 7) / 8, (GRID_DIMS + 7) / 8);
         }
     }
 
