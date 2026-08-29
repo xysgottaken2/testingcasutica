@@ -199,6 +199,20 @@ final class RtLightGridManager {
                     cursor += 16;
                 }
             }
+            RtLightHierarchy.PointGridData pointGrid = data.pointGrid();
+            if (pointGrid != null) {
+                cursor = upload.mapped + layout.pointCellOffset;
+                for (int i = 0; i < pointGrid.cellFirst().length; i++) {
+                    MemoryUtil.memPutInt(cursor, pointGrid.cellFirst()[i]);
+                    MemoryUtil.memPutInt(cursor + 4, pointGrid.cellCount()[i]);
+                    cursor += 8;
+                }
+                cursor = upload.mapped + layout.pointIndexOffset;
+                for (int i = 0; i < pointGrid.indices().length; i++) {
+                    MemoryUtil.memPutInt(cursor, pointGrid.indices()[i]);
+                    cursor += 4;
+                }
+            }
             upload.flush();
 
             RtBuffer submittedUpload = upload;
@@ -382,6 +396,8 @@ final class RtLightGridManager {
         long localAliasAddress() { return layout.hasGrid ? address(layout.localAliasOffset) : 0L; }
         long cellAddress() { return layout.hasGrid ? address(layout.cellOffset) : 0L; }
         long spanAddress() { return layout.hasGrid ? address(layout.spanOffset) : 0L; }
+        long pointCellAddress() { return layout.hasPointGrid ? address(layout.pointCellOffset) : 0L; }
+        long pointIndexAddress() { return layout.hasPointGrid ? address(layout.pointIndexOffset) : 0L; }
 
         private long address(long offset) {
             return arena != null ? arena.deviceAddress + offset : 0L;
@@ -399,8 +415,9 @@ final class RtLightGridManager {
     }
 
     record Layout(long lightOffset, long globalAliasOffset, long localAliasOffset,
-                  long cellOffset, long spanOffset, long totalBytes, boolean hasGrid) {
-        private static final Layout EMPTY = new Layout(0, 0, 0, 0, 0, 0, false);
+                  long cellOffset, long spanOffset, long pointCellOffset, long pointIndexOffset,
+                  long totalBytes, boolean hasGrid, boolean hasPointGrid) {
+        private static final Layout EMPTY = new Layout(0, 0, 0, 0, 0, 0, 0, 0, false, false);
 
         static Layout of(RtLightHierarchy.Data data, boolean includeGrid) {
             long cursor = 0L;
@@ -408,7 +425,7 @@ final class RtLightGridManager {
             cursor = align16(Math.addExact(cursor, data.lightBytes()));
             long globalAliases = cursor;
             cursor = align16(Math.addExact(cursor, data.globalAliases().bytes()));
-            long localAliases = 0L, cells = 0L, spans = 0L;
+            long localAliases = 0L, cells = 0L, spans = 0L, pointCells = 0L, pointIndices = 0L;
             if (includeGrid) {
                 localAliases = cursor;
                 cursor = align16(Math.addExact(cursor, data.localAliases().bytes()));
@@ -417,7 +434,15 @@ final class RtLightGridManager {
                 spans = cursor;
                 cursor = align16(Math.addExact(cursor, data.grid().spanBytes()));
             }
-            return new Layout(lights, globalAliases, localAliases, cells, spans, cursor, includeGrid);
+            boolean hasPointGrid = data.pointGrid() != null;
+            if (hasPointGrid) {
+                pointCells = cursor;
+                cursor = align16(Math.addExact(cursor, data.pointGrid().cellBytes()));
+                pointIndices = cursor;
+                cursor = align16(Math.addExact(cursor, data.pointGrid().indexBytes()));
+            }
+            return new Layout(lights, globalAliases, localAliases, cells, spans,
+                    pointCells, pointIndices, cursor, includeGrid, hasPointGrid);
         }
 
         private static long align16(long value) {

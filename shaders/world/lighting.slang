@@ -308,8 +308,13 @@ public void selectLightGridLight(LightGridCell cell, bool useLocal, inout uint p
 
 // Initial RIS over M power-weighted candidates -> one resampled sample, no shadow ray yet. The chosen
 // sample's W = wSum / (M * p-hat); M counts every candidate, including zero-weight ones.
+// skipPointLights: the analytic clustered direct-light term owns point-classified emitters at the
+// PRIMARY receiver (it shades them deterministically), so the stochastic stream must not propose
+// them there. Deeper vertices keep sampling them: analytic shading runs only at the primary hit,
+// and those vertices still need the point lights' one-bounce indirect contribution.
 public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3 diffAlb, float3 F0,
                      float rough, bool twoSided, float sss, uint requestedCandidateCount,
+                     bool skipPointLights,
                      inout uint seed, inout uint proposalSeed) {
     Reservoir r = resEmpty();
     r.sourcePos = hitPos;
@@ -341,6 +346,9 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
         bool useLocal = hasGridCell && globalsAfter == globalsBefore;
         selectLightGridLight(gridCell, useLocal, proposalSeed, li);
         Light lg = ConstPtr<Light>(pc.lightBufAddr)[li];
+        if (skipPointLights && lightIsPoint(lg)) {
+            continue; // analytic clustered term shades point emitters at this receiver
+        }
         // Soft shadows: uniform point on the emitter rectangle ((s,t) in [-1,1]^2, pdf 1/area).
         float s = rndf(seed) * 2.0 - 1.0;
         float t = rndf(seed) * 2.0 - 1.0;
@@ -370,6 +378,11 @@ public Reservoir risInitial(float3 hitPos, float3 n, float3 v, float3 rd, float3
         }
     }
     r.W = r.phat > 0.0 ? (r.wSum / (r.M * r.phat)) : 0.0;
+    // ReGIR: merge the pre-sampled world-grid cell reservoir as one M-cell candidate. This runs
+    // AFTER the fresh stream is finalized so the cell's proposals augment (never replace) full-list
+    // support, and so its W lands in the same wSum/phat normalization. Point emitters are skipped
+    // by the build pass when analytic clustered lighting is on, so no direct term double-counts.
+    regirMergeAtReceiver(r, hitPos, n, v, rd, diffAlb, F0, rough, twoSided, sss, seed);
     return r;
 }
 
@@ -788,6 +801,251 @@ public float3 handLightIrradiance(float3 origin, float3 hitPos, float3 n, bool t
     // Per-item tint (torch warm, soul torch cyan, lava orange-red...); near-distance clamp keeps
     // the estimate finite when the receiver practically touches the flame.
     return vis * (worldPush.handLightColor.xyz * ndl * intensity / max(d2, 0.25));
+}
+
+// ---- ReGIR: world-grid pre-sampled reservoir merge ------------------------------------
+//
+// A compute pass (regir.comp) resamples the light list once per frame per world-grid cell with an
+// omni-directional RIS target at the cell centre, writing one RegirCell per cell. A shading vertex
+// merges the cell it sits in as ONE extra candidate representing M_cell proposals — the Bitterli
+// generalized RIS merge, weight = pHat_shading * W_cell * M_cell. The receiver-side target is the
+// full BRDF-aware evaluation, so energy landing on the wrong hemisphere/direction is dropped by
+// weight just like any zero-target RIS proposal; the final shadow ray proves visibility. This
+// replaces ~M dependent light-list loads per vertex with a single cell-record load, which is the
+// cost the RIS cost-profile note at the top of risInitial measured at ~5.9 ms/frame on secondary
+// vertices — the RTXDI/ReGIR win.
+public static const uint REGIR_GRID_DIMS = 24u;   // regirGrid dims per axis (matches regir.comp)
+public static const float REGIR_CELL_SIZE = 8.0;  // cubic cell edge in blocks
+
+public bool regirReady() {
+    return worldFeature(worldPush, FEATURE_REGIR)
+            && worldPush.regirCellsAddr != 0u && worldPush.lightCount > 0u;
+}
+
+public bool analyticClusteredReady() {
+    return worldFeature(worldPush, FEATURE_ANALYTIC_CLUSTERED)
+            && worldPush.pointGridCellsAddr != 0u && worldPush.pointGridIndicesAddr != 0u
+            && worldPush.lightCount > 0u;
+}
+
+// Merge one ReGIR cell reservoir into the fresh RIS reservoir `dst`. No connection-Jacobian test:
+// the generalized RIS merge is correct for ANY receiver without shifting, and the conservative
+// target/weight clamps below bound fireflies the way restirMerge does. Returns the accepted M.
+public float regirMergeCell(inout Reservoir dst, uint3 cellCoord,
+                     float3 hitPos, float3 n, float3 v, float3 rd,
+                     float3 diffAlb, float3 F0, float rough,
+                     bool twoSided, float sss, inout uint seed) {
+    if (any(cellCoord >= uint3(REGIR_GRID_DIMS))) {
+        return 0.0;
+    }
+    uint linear = (cellCoord.z * REGIR_GRID_DIMS + cellCoord.y) * REGIR_GRID_DIMS + cellCoord.x;
+    RegirCell cell = ConstPtr<RegirCell>(worldPush.regirCellsAddr)[linear];
+    if (!(cell.M > 0u) || !(cell.W > 0.0)) {
+        return 0.0;
+    }
+    Reservoir source = resEmpty();
+    source.pos = cell.samplePos;
+    source.lnrm = cell.sampleNormal;
+    source.packedLe = cell.packedLe;
+    source.le = lightRadiancePacked(cell.packedLe) * max(worldPush.lightScales.x, 0.0);
+    source.area = cell.area;
+    source.M = min(float(cell.M), RESTIR_MAX_M);
+    source.W = min(cell.W, RESTIR_MAX_W);
+    source.age = 0u;
+
+    float target;
+    evalSampleContrib(source.pos, source.lnrm, source.le, source.area,
+            hitPos, n, v, rd, diffAlb, F0, rough, twoSided, sss, target);
+    if (!(target > 0.0)) {
+        return 0.0;
+    }
+    float safeTarget = min(max(target, RESTIR_MIN_PHAT), RESTIR_MAX_SAMPLE_LUMINANCE);
+    float w = safeTarget * source.W * source.M;
+    if (!(w > 0.0)) {
+        return 0.0;
+    }
+    dst.wSum += w;
+    if (rndf(seed) * dst.wSum < w) {
+        dst.pos = source.pos;
+        dst.lnrm = source.lnrm;
+        dst.le = source.le;
+        dst.area = source.area;
+        dst.phat = safeTarget;
+        dst.packedLe = source.packedLe;
+        dst.age = 0u;
+    }
+    return source.M;
+}
+
+// Feed the ReGIR grid cell of `hitPos` into the freshly-streamed RIS reservoir `r`. A ±0.5-cell
+// jitter (independent per receiver) smooths the hard cell boundary the way risInitial jitters the
+// light-grid lookup; every proposal still has full global support because the fresh candidates in
+// r cover the whole light list.
+public void regirMergeAtReceiver(inout Reservoir r, float3 hitPos,
+                          float3 n, float3 v, float3 rd,
+                          float3 diffAlb, float3 F0, float rough,
+                          bool twoSided, float sss, inout uint seed) {
+    if (!regirReady()) {
+        return;
+    }
+    float3 jitter = float3(rndf(seed), rndf(seed), rndf(seed)) - 0.5;
+    float3 rel = hitPos - worldPush.regirGrid.xyz + jitter * REGIR_CELL_SIZE;
+    if (any(rel < float3(0.0, 0.0, 0.0))) {
+        return;
+    }
+    uint3 cellCoord = uint3(rel / REGIR_CELL_SIZE);
+    float acceptedM = regirMergeCell(r, cellCoord, hitPos, n, v, rd,
+            diffAlb, F0, rough, twoSided, sss, seed);
+    if (acceptedM > 0.0) {
+        r.M += acceptedM;
+        r.W = r.phat > 0.0 ? (r.wSum / (r.M * r.phat)) : 0.0;
+    }
+}
+
+// ---- Analytic clustered point lighting ------------------------------------------------
+//
+// Deterministic Forward+-style direct light from point-classified emitters (LIGHT_POINT_BIT):
+// iterate the point-grid cells around the receiver (the same section-sized grid the stochastic
+// proposals use), pick the K most important unshadowed contributions, and cast exactly K shadow
+// rays. No sampling noise can enter the shading estimate itself — the only stochastic content is
+// the hard visibility, and the K rays resolve that exactly. Budget guards keep it playable:
+// analyticParams.z caps records scanned per receiver and .y caps shadow rays.
+//
+// The point lights stay IN the stochastic light list (they are real emitters with real emission
+// on direct hit): this term runs only at the primary receiver, while deeper vertices keep getting
+// their light through RIS/ReGIR as one-bounce indirect, so no energy vanishes. The caller passes
+// skipPointLights=true to risInitial at the same primary receiver so the direct term is not
+// double-counted.
+public static const uint ANALYTIC_MAX_SHADOW_RAYS = 4u;
+public static const uint ANALYTIC_MAX_SCANNED = 256u;
+public static const float ANALYTIC_DISTANCE_CULL = 20.0;
+
+// One analytic candidate's importance (unshadowed) and shadow-ray parameters. Small fixed arrays
+// hold the top-K winners on the stack — no per-pixel storage.
+public struct AnalyticCandidate {
+    public float importance;
+    public uint  lightIndex;
+}
+
+// Irradiance of a single point emitter at the receiver: inverse-square falloff, Lambertian NDL,
+// block-emitter runtime scale. The emitter's Le*area product is its point intensity, matching the
+// area-light target's G*area limit for a small far rectangle. Returns irradiance (pre-BRDF).
+public float3 pointLightIrradiance(Light lg, float3 hitPos, float3 n, bool twoSided, out float ndlOut) {
+    ndlOut = 0.0;
+    float3 le = lightRadiance(lg) * max(worldPush.lightScales.x, 0.0);
+    float area = lightArea(lg);
+    float3 toL = lg.pos + worldPush.lightRebase.xyz - hitPos;
+    float d2 = dot(toL, toL);
+    if (d2 < 1.0e-4) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float dist = sqrt(d2);
+    float3 ldir = toL / dist;
+    float ndl = twoSided ? abs(dot(n, ldir)) : max(0.0, dot(n, ldir));
+    if (ndl <= 0.0) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    ndlOut = ndl;
+    // Match the held-item light's near-distance clamp so a receiver touching the flame stays finite.
+    return le * (ndl * area / max(d2, 0.25));
+}
+
+// Deterministic direct lighting from clustered point lights. Returns irradiance at the receiver
+// (the caller multiplies by BRDF and path throughput). Shadow-ray origins are biased toward the
+// light side of the surface per winner, mirroring shadeReservoir.
+public float3 analyticPointLighting(float3 hitPos, float3 n, bool twoSided) {
+    if (!analyticClusteredReady()) {
+        return float3(0.0, 0.0, 0.0);
+    }
+    float cullDist = worldPush.analyticParams.x > 0.0 ? worldPush.analyticParams.x : ANALYTIC_DISTANCE_CULL;
+    uint shadowBudget = worldPush.analyticParams.y > 0.0
+            ? uint(worldPush.analyticParams.y) : ANALYTIC_MAX_SHADOW_RAYS;
+    shadowBudget = min(shadowBudget, ANALYTIC_MAX_SHADOW_RAYS);
+    uint scanCap = worldPush.analyticParams.z > 0.0
+            ? uint(worldPush.analyticParams.z) : ANALYTIC_MAX_SCANNED;
+    scanCap = min(scanCap, ANALYTIC_MAX_SCANNED);
+
+    // Section-grid cell of the receiver (same frame the stochastic proposal grid uses).
+    int3 baseCoord = int3(floor((hitPos - worldPush.lightGridOrigin.xyz) / worldPush.lightGridOrigin.w));
+    AnalyticCandidate winners[ANALYTIC_MAX_SHADOW_RAYS];
+    [unroll]
+    for (uint i = 0u; i < ANALYTIC_MAX_SHADOW_RAYS; i++) {
+        winners[i].importance = 0.0;
+        winners[i].lightIndex = 0xFFFFFFFFu;
+    }
+    uint scanned = 0u;
+    float cullD2 = cullDist * cullDist;
+    bool anyWinner = false;
+
+    // +/-2 section ring: a light in a ring-2 section corner is ~32+ blocks away and past the cull,
+    // so the ring covers every light the falloff lets contribute; beyond-range cells early-out by
+    // the distance test per record rather than per cell.
+    [loop]
+    for (int dz = -2; dz <= 2 && scanned < scanCap; dz++) {
+        [loop]
+        for (int dy = -2; dy <= 2 && scanned < scanCap; dy++) {
+            [loop]
+            for (int dx = -2; dx <= 2 && scanned < scanCap; dx++) {
+                int3 coord = baseCoord + int3(dx, dy, dz);
+                if (any(coord < int3(0, 0, 0))
+                        || any(coord >= worldPush.lightGridDims.xyz)) continue;
+                uint cellLinear = (uint(coord.z) * uint(worldPush.lightGridDims.y)
+                        + uint(coord.y)) * uint(worldPush.lightGridDims.x) + uint(coord.x);
+                PointGridCell cell = ConstPtr<PointGridCell>(worldPush.pointGridCellsAddr)[cellLinear];
+                for (uint k = 0u; k < cell.pointCount && scanned < scanCap; k++, scanned++) {
+                    uint li = ConstPtr<uint>(worldPush.pointGridIndicesAddr)[cell.firstPoint + k];
+                    Light lg = ConstPtr<Light>(pc.lightBufAddr)[li];
+                    float3 lightWorld = lg.pos + worldPush.lightRebase.xyz;
+                    float3 toL = lightWorld - hitPos;
+                    if (dot(toL, toL) > cullD2) continue;
+                    float scanNdl;
+                    float3 irr = pointLightIrradiance(lg, hitPos, n, twoSided, scanNdl);
+                    float imp = luminance(irr);
+                    if (!(imp > 0.0)) continue;
+                    // Insert into the fixed top-K winner list (smallest importance at slot 0).
+                    if (imp > winners[0].importance) {
+                        winners[0].importance = imp;
+                        winners[0].lightIndex = li;
+                        // Bubble the new minimum back to slot 0.
+                        [unroll]
+                        for (uint a = 1u; a < ANALYTIC_MAX_SHADOW_RAYS; a++) {
+                            if (winners[a].importance < winners[a - 1u].importance) {
+                                AnalyticCandidate tmp = winners[a];
+                                winners[a] = winners[a - 1u];
+                                winners[a - 1u] = tmp;
+                            }
+                        }
+                        anyWinner = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!anyWinner) {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    // Shadow rays only for the survivors: the top-K most important lights.
+    float3 radiance = float3(0.0, 0.0, 0.0);
+    [unroll]
+    for (uint i = 0u; i < ANALYTIC_MAX_SHADOW_RAYS; i++) {
+        if (winners[i].lightIndex == 0xFFFFFFFFu) continue;
+        Light lg = ConstPtr<Light>(pc.lightBufAddr)[winners[i].lightIndex];
+        float unusedNdl;
+        float3 irr = pointLightIrradiance(lg, hitPos, n, twoSided, unusedNdl);
+        float3 lightWorld = lg.pos + worldPush.lightRebase.xyz;
+        float3 toL = lightWorld - hitPos;
+        float dist = length(toL);
+        float3 ldir = toL / dist;
+        // Bias per-winner toward the light's side of the surface (mirrors shadeReservoir), then
+        // stop short of the light centre so the ray cannot self-occlude on the emitter's own face.
+        float side = dot(n, ldir) >= 0.0 ? 1.0 : -1.0;
+        float3 rayOrigin = hitPos + side * n * SURF_BIAS;
+        VisibilityResult shadow = visibility(rayOrigin, ldir,
+                max(dist * 0.999 - SURF_BIAS, RAY_TMIN));
+        radiance += irr * shadow.transmittance;
+    }
+    return radiance;
 }
 
 // TLAS instance-mask bits (set on the Java side, ANDed against these per-ray cull masks):

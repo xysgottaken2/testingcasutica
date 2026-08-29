@@ -268,6 +268,16 @@ public final class RtTerrain {
         return lightGrid.published().spanAddress();
     }
 
+    /** Analytic clustered-lighting point-grid headers (one {firstPoint,count} per cell), or 0. */
+    public long pointGridCellBufferAddress() {
+        return lightGrid.published().pointCellAddress();
+    }
+
+    /** Flat point-light index array ranged by the point-grid headers, or 0 when none published. */
+    public long pointGridIndexBufferAddress() {
+        return lightGrid.published().pointIndexAddress();
+    }
+
     public int lightGridOriginX() {
         RtLightGridManager.PublishedState hierarchy = lightGrid.published();
         return hierarchy.originX() + hierarchy.rebaseX() - blockX;

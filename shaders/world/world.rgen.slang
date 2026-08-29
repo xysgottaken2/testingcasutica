@@ -414,9 +414,25 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
 
             float3 v = -rd;
 
+            // Analytic clustered point lights (torch/lantern/shroomlight ...): deterministic,
+            // noise-free direct light at this primary receiver. Billboards are two-sided.
+            if (analyticClusteredReady()) {
+                float3 particleAnalytic = throughput * albedo * INV_PI
+                        * analyticPointLighting(hitPos, n, true);
+                L += particleAnalytic;
+                // Billboards have no specular lobe; the whole estimate is diffuse.
+                if (channel == 2) {
+                    Lspec += particleAnalytic;
+                } else {
+                    Ldiff += particleAnalytic;
+                }
+            }
+
             // RIS direct lighting from block emitters (lava, glowstone, torches, ...) — same reservoir
             // sampler as terrain/entities, but two-sided: a billboard has no back face, so light
             // striking either side of the quad should still land (matches the sun/moon NEE above).
+            // Point emitters are skipped from the stochastic stream at this primary receiver when
+            // analytic clustered lighting owns them (analyticPointLighting above).
             if (risOn) {
                 bool shadeWithRestir = restirReceiverPending && restirOwner;
                 bool skipSiblingRis = restirReceiverPending && !restirOwner;
@@ -427,6 +443,7 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                             : worldPush.risCandidates;
                     Reservoir r = risInitial(hitPos, n, v, rd, albedo,
                             float3(0.0, 0.0, 0.0), 1.0, true, 0.0, freshCandidates,
+                            analyticClusteredReady(),
                             seed, proposalSeed);
                     if (shadeWithRestir) {
                         r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
@@ -645,6 +662,26 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // where a single-sided NDL would be negative, causing black interior. Reuse early flag.
         bool twoSidedEmitter = isDynamicEntityEarly; // fix boat interior + minecart
 
+        // Analytic clustered point lights: deterministic, noise-free direct lighting from small
+        // emitters (torch, lantern, shroomlight, ...), Forward+ style — the point grid lists the
+        // lights around this receiver and at most K shadow rays resolve their visibility. Primary
+        // receiver only: deeper vertices get these lights' one-bounce indirect contribution from
+        // the stochastic RIS/ReGIR stream below, so no energy is lost at bounce depth.
+        bool analyticThisVertex = false;
+        if (analyticClusteredReady() && hitDepth == 0) {
+            float3 analyticIrr = analyticPointLighting(hitPos, n, twoSidedEmitter);
+            float3 analytic = throughput * diffAlb * INV_PI * analyticIrr;
+            L += analytic;
+            // Point lights are diffuse-only in the analytic term (roughness-driven specular off a
+            // point is negligible at the distances involved); carry it in the diffuse lobe signal.
+            if (channel == 2) {
+                Lspec += analytic;
+            } else {
+                Ldiff += analytic;
+            }
+            analyticThisVertex = true;
+        }
+
         // Emitter direct lighting. In ReSTIR mode the owner sample shades the reused reservoir here and
         // sibling SPP samples omit this one receiver, so frame averaging contains the ReSTIR result rather
         // than silently blending it back toward RIS. OFF and deeper vertices execute the original RIS path.
@@ -657,8 +694,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 uint freshCandidates = shadeWithRestir
                         ? min(worldPush.risCandidates, RESTIR_FRESH_CANDIDATES)
                         : worldPush.risCandidates;
+                // At the analytic-clustered primary receiver, point emitters are owned by the
+                // deterministic term above, so the stochastic stream skips them to avoid double
+                // counting; deeper vertices keep full light-list support (their one-bounce GI).
                 Reservoir r = risInitial(hitPos, n, v, rd, diffAlb, F0, rough, twoSidedEmitter,
-                        activeSss, freshCandidates, seed, proposalSeed);
+                        activeSss, freshCandidates, analyticThisVertex, seed, proposalSeed);
                 if (shadeWithRestir) {
                     r = restirSpatiotemporal(r, pix, dimensions, hitPos, payload.motionPrev,
                             n, v, rd, diffAlb, F0, rough, twoSidedEmitter, activeSss, seed);

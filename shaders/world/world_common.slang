@@ -159,6 +159,19 @@ public struct WorldPush {
     // y = spatial neighbour count (0 = temporal only), z = max reservoir age in frames, w reserved.
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
+    // ReGIR (RTXDI-style) pre-resampled world-grid reservoirs. regirCellsAddr points at a flat
+    // REGIR_GRID_DIMS^3 array of RegirCell, rebuilt every frame by regir.comp; the xyz lanes give
+    // the rebased-space origin of cell (0,0,0) and w the cubic cell size (regir.comp.slang).
+    public uint64_t regirCellsAddr;
+    public float4   regirGrid;
+    // Analytic clustered point lighting (pointGrid* share the proposal grid's frame/dims above).
+    // pointGridCellsAddr -> flat LightGridDims.x*y*z PointGridCell headers; pointGridIndicesAddr
+    // -> the uint light-index array they range. Zero when no point lights were published.
+    public uint64_t pointGridCellsAddr;
+    public uint64_t pointGridIndicesAddr;
+    // Analytic tuning: x distance cull (blocks, squared on the CPU side intent), y shadow-ray budget
+    // K per receiver, z maximum point records scanned (performance guard), w reserved.
+    public float4   analyticParams;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -181,6 +194,8 @@ public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal 
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_FOG = 256u;             // masked distance fog (authored full-depth Nether/End haze)
 public static const uint FEATURE_SHARC = 512u;           // experimental spatial-hash radiance cache
+public static const uint FEATURE_REGIR = 1024u;          // ReGIR world-grid reservoir pre-sampling (RTXDI-style quality)
+public static const uint FEATURE_ANALYTIC_CLUSTERED = 2048u; // deterministic clustered analytic point lights
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume
@@ -224,8 +239,17 @@ public struct Light {
     public uint   halfUxy;  // half2(U.x, U.y)
     public uint   halfUzVx; // half2(U.z, V.x)
     public uint   halfVyz;  // half2(V.y, V.z)
-    public uint   section;  // 10:10:10 grid-relative section coord + bit 30 normal-flip
-};
+    public uint   section;  // 10:10:10 grid-relative section coord + bit 30 normal-flip + bit 31 point
+}
+
+// Light.section bit 31: small emitters (torch, lantern, shroomlight, end rod, ...) are published
+// as POINT lights rather than rectangles. Analytic clustered lighting (FEATURE_ANALYTIC_CLUSTERED)
+// shades them deterministically like the held-item light; the RIS/ReSTIR/ReGIR paths use the flag
+// to skip or include them as the feature configuration dictates.
+public static const uint LIGHT_POINT_BIT = 0x80000000u;
+public static const uint LIGHT_SECTION_COORD_MASK = 0x3FFu;
+
+public bool lightIsPoint(Light light) { return (light.section & LIGHT_POINT_BIT) != 0u; }
 
 // Eight-byte Vose alias-table column. PDFs are reconstructed from the selected Light.
 public struct LightAlias {
@@ -247,6 +271,32 @@ public struct LightGridSpan {
     public uint aliasFirstLight;
     public uint packedLightCounts; // low16 self, high16 alias
     public float accept;
+};
+
+// Analytic clustered-lighting point grid: one 8-byte header per section-sized cell, into the same
+// origin/dims as the dense proposal grid (lightGridOrigin/lightGridDims). A header ranges the flat
+// pointLightIndices array, which lists every point-classified light whose owning section is that
+// cell. Shaders iterate the +/-2 neighbour ring, so a receiver sees every point light within the
+// reach of the analytic falloff (regirParams: distance cull, top-K shadow rays, scan cap).
+public struct PointGridCell {
+    public uint firstPoint;
+    public uint pointCount;
+};
+
+// One ReGIR cell reservoir (see regir.comp / lighting.slang). A compute pass pre-samples the light
+// list once per frame per world-grid cell with an omni-directional RIS target at the cell centre;
+// shading vertices merge the cell they sit in as one extra resampled candidate (M candidates in a
+// single cheap lookup instead of M dependent light loads). Positions are rebased world space; the
+// normal is oct-encoded exactly like the persistent ReSTIR reservoirs. M == 0 is the empty sentinel.
+// std430 stride 48 B (float3/16-byte alignment; 40 B content rounded up): the Java RtRegirPipeline
+// CELL_BYTES constant must match (the ReGIR cell buffer is sized from it and indexed linearly).
+public struct RegirCell {
+    public float3 samplePos;    // chosen light sample point, rebased world space
+    public uint   packedLe;     // unscaled R11G11B10 source radiance (survives live intensity changes)
+    public float3 sampleNormal; // emitter outward normal
+    public float  area;         // emitter rectangle area (the area-light pdf factor)
+    public float  W;            // RIS resampling weight
+    public uint   M;            // effective candidate count represented by this reservoir
 };
 
 // TerrainPrim.flags bit 0: this emissive quad is in the light buffer (RtLightCollector membership).

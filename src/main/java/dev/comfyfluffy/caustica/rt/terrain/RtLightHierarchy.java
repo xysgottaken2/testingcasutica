@@ -25,6 +25,16 @@ final class RtLightHierarchy {
     static final int GPU_FLOATS_PER_LIGHT = 8;
     private static final int MAX_PACKED_GRID_DIM = 1024;
     private static final int NORMAL_FLIP_BIT = 1 << 30;
+    /**
+     * Light record section-lane bit 31 (mirrors {@code LIGHT_POINT_BIT} in world_common.slang):
+     * emitters whose emissive footprint is at or below this rectangle area are classified as point
+     * lights. A full block face is ~1.0 block²; torches/lanterns/end rods are small sprites well
+     * under 0.6 while glowstone/lava/sea lantern faces measure ~1.0, so this puts the compact
+     * fixtures in the deterministic clustered-analytic path and leaves large area lights to the
+     * soft-shadowed area-light sampling.
+     */
+    static final int POINT_LIGHT_BIT = 1 << 31;
+    static final float POINT_LIGHT_MAX_AREA = 0.6f;
 
     private RtLightHierarchy() {
     }
@@ -59,6 +69,8 @@ final class RtLightHierarchy {
 
         int lightIndex = 0;
         double globalPower = 0.0;
+        // Per-light point classification (filled alongside packing) drives the point-grid build.
+        boolean[] pointLight = new boolean[totalLights];
         for (int sectionIndex = 0; sectionIndex < orderedSections.size(); sectionIndex++) {
             if ((sectionIndex & 63) == 0) checkCancelled(cancelled);
             SectionInput section = orderedSections.get(sectionIndex);
@@ -70,6 +82,8 @@ final class RtLightHierarchy {
             float oz = section.sectionZ * 16f - rebaseZ;
             for (int source = 0; source < section.lights.length;
                  source += SOURCE_FLOATS_PER_LIGHT, lightIndex++) {
+                // Point classification by emissive rectangle area (see POINT_LIGHT_MAX_AREA).
+                pointLight[lightIndex] = section.lights[source + 3] <= POINT_LIGHT_MAX_AREA;
                 int destination = lightIndex * GPU_FLOATS_PER_LIGHT;
                 int sectionDestination = lightIndex * 3;
                 lightSectionCoords[sectionDestination] = section.sectionX;
@@ -155,14 +169,94 @@ final class RtLightHierarchy {
                 }
                 int destination = i * GPU_FLOATS_PER_LIGHT + 7;
                 int flags = Float.floatToRawIntBits(packedLights[destination]) & NORMAL_FLIP_BIT;
+                flags |= pointLight[i] ? POINT_LIGHT_BIT : 0;
                 packedLights[destination] = Float.intBitsToFloat(flags | x | (y << 10) | (z << 20));
             }
         }
+        // The point bit lives in the section lane even when no proposal grid was published (the
+        // analytic path reads it straight off the Light record), so set it in that fallback too.
+        if (grid == null) {
+            for (int i = 0; i < totalLights; i++) {
+                if (!pointLight[i]) continue;
+                int destination = i * GPU_FLOATS_PER_LIGHT + 7;
+                int flags = Float.floatToRawIntBits(packedLights[destination])
+                        & (NORMAL_FLIP_BIT | 0x3fffffff);
+                packedLights[destination] = Float.intBitsToFloat(flags | POINT_LIGHT_BIT);
+            }
+        }
+        // The point grid shares the stochastic grid's section frame; when that grid fell back
+        // to global proposals there is no published origin/dims to range, so skip it as well.
+        PointGridData pointGrid = grid != null
+                ? buildPointGrid(gridSections, pointLight, cancelled) : null;
         return new Data(packedLights, globalAliases,
                 sectionFirstLights, sectionLightCounts,
-                new AliasData(localAliasIndices, localAliasAccept), grid, totalLights,
+                new AliasData(localAliasIndices, localAliasAccept), grid, pointGrid, totalLights,
                 globalPower > 0.0 ? (float) (1.0 / globalPower) : 0.0f,
                 rebaseX, rebaseY, rebaseZ);
+    }
+
+    /**
+     * Analytic clustered-lighting point grid: one 8-byte {firstPoint, pointCount} header per
+     * section-sized cell over the SAME frame as the stochastic proposal grid (its origin/dims are
+     * published through the existing lightGrid* WorldPush lanes), plus the flat uint light-index
+     * array the headers range. Only point-classified lights (see {@link #POINT_LIGHT_MAX_AREA}) are
+     * listed, grouped by their owning section. The shader iterates a +/-2 cell ring around the
+     * receiver, so every light within the analytic distance cull is reachable.
+     */
+    private static PointGridData buildPointGrid(ArrayList<RtLightGrid.SectionLights> sections,
+                                                boolean[] pointLight,
+                                                BooleanSupplier cancelled) {
+        int pointTotal = 0;
+        for (int s = 0; s < sections.size(); s++) {
+            if ((s & 255) == 0) checkCancelled(cancelled);
+            RtLightGrid.SectionLights section = sections.get(s);
+            for (int i = section.firstLight(); i < section.firstLight() + section.lightCount(); i++) {
+                if (pointLight[i]) pointTotal++;
+            }
+        }
+        if (pointTotal == 0) {
+            return null;
+        }
+        // Cell frame matches RtLightGrid (min powered section coord - neighbour radius).
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (RtLightGrid.SectionLights section : sections) {
+            minX = Math.min(minX, section.x() - RtLightGrid.NEIGHBOR_RADIUS);
+            minY = Math.min(minY, section.y() - RtLightGrid.NEIGHBOR_RADIUS);
+            minZ = Math.min(minZ, section.z() - RtLightGrid.NEIGHBOR_RADIUS);
+            maxX = Math.max(maxX, section.x() + RtLightGrid.NEIGHBOR_RADIUS);
+            maxY = Math.max(maxY, section.y() + RtLightGrid.NEIGHBOR_RADIUS);
+            maxZ = Math.max(maxZ, section.z() + RtLightGrid.NEIGHBOR_RADIUS);
+        }
+        int dimX = maxX - minX + 1;
+        int dimY = maxY - minY + 1;
+        int dimZ = maxZ - minZ + 1;
+        long volume = (long) dimX * dimY * dimZ;
+        if (volume > RtLightGrid.MAX_DENSE_GRID_CELLS) {
+            return null; // sparse/extreme spread: disable the analytic grid rather than over-allocate
+        }
+        int[] cellFirst = new int[(int) volume];
+        int[] cellCount = new int[(int) volume];
+        int[] indices = new int[pointTotal];
+        int writeCursor = 0;
+        // Sections arrive sorted by first light; fill each owning section's cell with its points.
+        for (int s = 0; s < sections.size(); s++) {
+            if ((s & 255) == 0) checkCancelled(cancelled);
+            RtLightGrid.SectionLights section = sections.get(s);
+            int cx = section.x() - minX;
+            int cy = section.y() - minY;
+            int cz = section.z() - minZ;
+            int cellLinear = (cz * dimY + cy) * dimX + cx;
+            int first = writeCursor;
+            for (int i = section.firstLight(); i < section.firstLight() + section.lightCount(); i++) {
+                if (pointLight[i]) {
+                    indices[writeCursor++] = i;
+                }
+            }
+            cellFirst[cellLinear] = first;
+            cellCount[cellLinear] = writeCursor - first;
+        }
+        return new PointGridData(cellFirst, cellCount, indices, dimX, dimY, dimZ);
     }
 
     private static int lightCount(float[] lights) {
@@ -328,12 +422,30 @@ final class RtLightHierarchy {
 
     record Data(float[] packedLights, AliasData globalAliases,
                 int[] sectionFirstLights, int[] sectionLightCounts,
-                AliasData localAliases, RtLightGrid.Data grid, int lightCount,
+                AliasData localAliases, RtLightGrid.Data grid, PointGridData pointGrid,
+                int lightCount,
                 float invGlobalPowerSum,
                 int rebaseX, int rebaseY, int rebaseZ) {
         long lightBytes() {
             return Math.multiplyExact((long) packedLights.length, Float.BYTES);
         }
 
+    }
+
+    /**
+     * Analytic clustered-lighting point grid over the same section-sized cell frame as
+     * {@link RtLightGrid.Data}. {@code cellFirst/cellCount} are flat per-cell headers indexing
+     * {@code indices} (global light indices of point-classified emitters, grouped per owning
+     * section cell). Null when no point emitters were collected.
+     */
+    record PointGridData(int[] cellFirst, int[] cellCount, int[] indices,
+                         int dimX, int dimY, int dimZ) {
+        long cellBytes() {
+            return Math.multiplyExact((long) cellFirst.length * 2L, Integer.BYTES);
+        }
+
+        long indexBytes() {
+            return Math.multiplyExact((long) indices.length, Integer.BYTES);
+        }
     }
 }

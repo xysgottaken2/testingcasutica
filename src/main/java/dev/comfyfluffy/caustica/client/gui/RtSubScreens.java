@@ -227,6 +227,8 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Lights.MIN_FILL_RATIO,
                 CausticaConfig.Rt.Lights.RIS_CANDIDATES,
                 CausticaConfig.Rt.Lights.RESTIR_SAMPLING,
+                CausticaConfig.Rt.Lights.REGIR_SAMPLING,
+                CausticaConfig.Rt.Lights.ANALYTIC_CLUSTERED,
                 CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY,
                 CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS,
                 CausticaConfig.Rt.Lights.RESTIR_MAX_AGE);

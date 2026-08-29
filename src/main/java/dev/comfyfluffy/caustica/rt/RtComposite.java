@@ -81,6 +81,7 @@ import dev.comfyfluffy.caustica.rt.pipeline.RtHdrCompositePipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtSdrPresentPipeline;
 import dev.comfyfluffy.caustica.rt.pipeline.RtExposure;
 import dev.comfyfluffy.caustica.rt.pipeline.RtPipeline;
+import dev.comfyfluffy.caustica.rt.pipeline.RtRegirPipeline;
 import dev.comfyfluffy.caustica.rt.terrain.RtTerrain;
 
 import java.nio.ByteBuffer;
@@ -189,6 +190,8 @@ public final class RtComposite {
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_FOG = 256;
     private static final int FEATURE_SHARC = 512;
+    private static final int FEATURE_REGIR = 1024;
+    private static final int FEATURE_ANALYTIC_CLUSTERED = 2048;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -215,6 +218,14 @@ public final class RtComposite {
         }
         if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
             flags |= FEATURE_RESTIR;
+        }
+        // ReGIR also needs its world-grid buffer published (regirReady checks the address in the
+        // build dispatch below), but the flag is what the shading merge reads.
+        if (CausticaConfig.Rt.Lights.REGIR_SAMPLING.value()) {
+            flags |= FEATURE_REGIR;
+        }
+        if (CausticaConfig.Rt.Lights.ANALYTIC_CLUSTERED.value()) {
+            flags |= FEATURE_ANALYTIC_CLUSTERED;
         }
         if (CausticaConfig.Rt.Sharc.ENABLED.value() && RtSharc.INSTANCE.entryCount() > 0) {
             flags |= FEATURE_SHARC;
@@ -645,6 +656,8 @@ public final class RtComposite {
     private RtSvgfDenoiser svgfDenoiser;
     /** Sky-mask pass over FSR FG's generated frames (see RtFgSkyMaskPipeline); created lazily. */
     private RtFgSkyMaskPipeline fgSkyMaskPipeline;
+    /** ReGIR world-grid reservoir build pass (see RtRegirPipeline); created lazily on first use. */
+    private RtRegirPipeline regirPipeline;
     private boolean renderSizeSvgfEnabled;
     // NRD/REBLUR: the denoiser's own input/output pair + the combined (decoded + summed) radiance
     // the upscale stage consumes, plus the validation overlay target and the combine pipeline.
@@ -1660,6 +1673,28 @@ public final class RtComposite {
             // Analytic held-item light: position + intensity lane and the item's RGB tint; w == 0
             // disables the shader term (toggle off, no luminous item, or no player).
             HandLightState hand = handLightState(terrain);
+
+            // ReGIR grid frame (cell origin + buffer address) is resolved BEFORE the WorldPush is
+            // serialized (it carries those lanes); the actual compute dispatch is recorded later,
+            // after the TLAS barrier — see regirDispatchPending below. The origin is the rebased
+            // camera minus half the grid span, so the player always sits in the centre cell.
+            boolean regirWanted = (featureFlags() & FEATURE_REGIR) != 0
+                    && terrain.lightCount() > 0 && terrain.lightBufferAddress() != 0L;
+            boolean regirDispatchPending = false;
+            long regirCells = 0L;
+            float regirGridX = 0f, regirGridY = 0f, regirGridZ = 0f;
+            if (regirWanted) {
+                if (regirPipeline == null) {
+                    regirPipeline = RtRegirPipeline.create(ctx);
+                }
+                float halfSpan = RtRegirPipeline.GRID_DIMS * 8.0f * 0.5f;
+                regirGridX = (float) (camX - terrain.blockX) - halfSpan;
+                regirGridY = (float) (camY - terrain.blockY) - halfSpan;
+                regirGridZ = (float) (camZ - terrain.blockZ) - halfSpan;
+                regirCells = regirPipeline.cellBufferAddress();
+                regirDispatchPending = true;
+            }
+
             new WorldPushData(
                     frameInvViewProj,
                     new Float3((float) (camX - terrain.blockX), (float) (camY - terrain.blockY),
@@ -1735,7 +1770,18 @@ public final class RtComposite {
                     // lighting.slang resolves against its compiled RESTIR_* caps.
                     new Int4(CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY.value(),
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
-                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0)
+                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
+                    // ReGIR pre-resampled world-grid reservoirs: the cell buffer the regir.comp
+                    // dispatch rebuilds every frame (0 when the pass did not run) plus the grid
+                    // frame (xyz origin of cell 0 in rebased space, w cubic cell size).
+                    regirCellAddress(),
+                    new Float4(regirGridX, regirGridY, regirGridZ, 8.0f),
+                    // Analytic clustered point lighting: per-cell {firstPoint,count} headers and
+                    // the flat point-light index array, both over the lightGrid* frame above.
+                    terrain.pointGridCellBufferAddress(),
+                    terrain.pointGridIndexBufferAddress(),
+                    // x distance cull (blocks), y shadow-ray budget K, z scan cap, w reserved.
+                    new Float4(20.0f, 4.0f, 256.0f, 0.0f)
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -1763,6 +1809,20 @@ public final class RtComposite {
                 RtAccel.recordTlasBuild(ctx, cmd, frameTlas);
             }
             VulkanCommandEncoder.memoryBarrier(cmd, stack); // TLAS build visible to the trace
+
+            // ReGIR: the cell-buffer writes complete here, before either trace reads them (the
+            // WorldPush above already published the buffer address and grid frame). The pass only
+            // touches its own storage buffer plus the light/push inputs, so running it after the
+            // TLAS barrier keeps trace visibility simple — one barrier below closes the loop.
+            if (regirDispatchPending) {
+                try (RtFrameStats.Scope ignored = RtFrameStats.FRAME.stage("frame.regirBuild")) {
+                    regirPipeline.dispatch(cmd, pushBuf.deviceAddress,
+                            terrain.lightBufferAddress(), terrain.lightAliasBufferAddress(),
+                            terrain.lightCount(), CausticaConfig.Rt.Lights.RIS_CANDIDATES.value(),
+                            regirGridX, regirGridY, regirGridZ, 8.0f);
+                }
+                VulkanCommandEncoder.memoryBarrier(cmd, stack); // cell writes visible to the trace
+            }
 
             // Push the BDA ring slot's address plus the small hot subset used directly by the shaders.
             // Every 64-bit device address the trace needs lives here, not behind worldPushAddr: the
@@ -2825,6 +2885,10 @@ public final class RtComposite {
         if (fgSkyMaskPipeline != null) {
             fgSkyMaskPipeline.destroy();
             fgSkyMaskPipeline = null;
+        }
+        if (regirPipeline != null) {
+            regirPipeline.destroy();
+            regirPipeline = null;
         }
         if (fgUiCompositePipeline != null) {
             fgUiCompositePipeline.destroy();

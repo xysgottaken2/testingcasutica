@@ -174,7 +174,14 @@ public final class CausticaConfig {
                         + " restir-temporal-history / restir-spatial-neighbours / restir-max-age are the live\n"
                         + " anti-flicker tuning pushed in WorldPush.restirTuning: more history and more\n"
                         + " neighbours damp sampling flicker at the price of ghosting/overhead; max-age bounds\n"
-                        + " how long a reservoir may survive (4..240, the packed age field is 8-bit).");
+                        + " how long a reservoir may survive (4..240, the packed age field is 8-bit).\n"
+                        + " regir-sampling adds the RTXDI-style world-grid reservoir pre-sampling pass: a\n"
+                        + " small compute dispatch resamples the light list per grid cell each frame and\n"
+                        + " every shading point merges its cell as one high-quality candidate — cheaper and\n"
+                        + " far less noisy in many-small-lights scenes. analytic-clustered shades the\n"
+                        + " smallest emitters (torches, lanterns, shroomlights, ...) deterministically like\n"
+                        + " a Forward+ clustered point light: zero sampling noise at a bounded shadow-ray\n"
+                        + " budget per primary pixel; large emitters (glowstone, lava) stay area lights.");
         FILE.setComment("tonemap",
                 " Scene tonemapping after exposure and before writing the vanilla SDR target. operator selects\n"
                         + " the curve; exposure-ev is an extra post-exposure bias; gamma/saturation/contrast\n"
@@ -961,6 +968,28 @@ public final class CausticaConfig {
                     clampedInt("caustica.rt.restirMaxAge", "lights.restir-max-age", 30, 4, 240);
             public static final IntSetting RIS_CANDIDATES =
                     intAtLeast("caustica.rt.risCandidates", "lights.ris-candidates", 8, 0);
+            /**
+             * ReGIR world-grid reservoir pre-sampling (RTXDI-style direct lighting quality). A
+             * compute pass resamples the light list once per frame per world-grid cell; each
+             * shading vertex merges its cell as a single high-quality candidate instead of walking
+             * the light list for every RIS candidate — the same technique production path tracers
+             * use to make many-small-lights scenes cheap and low-noise. The fresh per-vertex RIS
+             * candidates stay, so the estimator keeps full light-list support (unbiased).
+             */
+            public static final BooleanSetting REGIR_SAMPLING =
+                    bool("caustica.rt.regir", "lights.regir-sampling", true);
+            /**
+             * Deterministic clustered analytic point lights (Forward+ style). Small emitters
+             * (torches, lanterns, shroomlights, end rods, ...) are shaded analytically at the
+             * primary receiver: the nearby-light grid lists them, the most important few cast a
+             * hard shadow ray each, and their contribution is noise-free — no sampling, no
+             * denoiser, photograph-clean torches. Larger emitters (glowstone, lava, sea lanterns)
+             * stay area lights with soft shadows. Costs a small bounded number of extra shadow
+             * rays per pixel and only runs at the primary hit; one-bounce indirect from these
+             * lights still comes through RIS/ReSTIR.
+             */
+            public static final BooleanSetting ANALYTIC_CLUSTERED =
+                    bool("caustica.rt.analyticClustered", "lights.analytic-clustered", false);
             public static final FloatSetting MIN_FILL_RATIO =
                     finiteFloat("caustica.rt.lightMinFillRatio", "lights.min-fill-ratio", 0.25f);
             public static final BooleanSetting STATS = bool("caustica.rt.lightStats", "lights.stats", false);

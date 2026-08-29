@@ -11,8 +11,8 @@ import java.util.function.BooleanSupplier;
  * arbitrary light cap.
  */
 final class RtLightGrid {
-    private static final int NEIGHBOR_RADIUS = 2;
-    private static final int MAX_DENSE_GRID_CELLS = 4_000_000;
+    static final int NEIGHBOR_RADIUS = 2;
+    static final int MAX_DENSE_GRID_CELLS = 4_000_000;
 
     private RtLightGrid() {
     }
