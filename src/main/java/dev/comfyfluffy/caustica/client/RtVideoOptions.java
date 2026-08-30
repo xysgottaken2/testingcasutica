@@ -181,6 +181,9 @@ public final class RtVideoOptions {
         return new OptionInstance<?>[] {
             subsurfaceScattering(),
             fog(),
+            fogVolumetric(),
+            fogVolumetricStrength(),
+            fogSunGlow(),
             weatherLighting(),
             metallicShininess(),
         };
@@ -749,6 +752,28 @@ public final class RtVideoOptions {
     /** Selective outdoor distance fog; cave and indoor pixels are excluded by a depth/sky mask. */
     private static OptionInstance<Boolean> fog() {
         return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /**
+     * Path-integrated volumetric fog. Replaces the Overworld's screen-space distance composite with a
+     * participating medium marched along each path segment, so the haze is correct in reflections,
+     * refractions and indirect bounces. The Nether and End keep their authored screen-space haze.
+     */
+    private static OptionInstance<Boolean> fogVolumetric() {
+        return bool("caustica.options.rt.fogVolumetric",
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC);
+    }
+
+    /** Volumetric fog strength (also the opacity ceiling), 0..100%. */
+    private static OptionInstance<Integer> fogVolumetricStrength() {
+        return percent("caustica.options.rt.fogVolumetricStrength",
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_STRENGTH);
+    }
+
+    /** Forward-scatter sun glow in the volumetric fog, 0..100%. */
+    private static OptionInstance<Integer> fogSunGlow() {
+        return percent("caustica.options.rt.fogSunGlow",
+                CausticaConfig.Rt.Composite.FOG_SUN_GLOW);
     }
 
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */

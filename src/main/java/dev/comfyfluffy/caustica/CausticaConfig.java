@@ -744,6 +744,34 @@ public final class CausticaConfig {
             public static final BooleanSetting FOG =
                     bool("caustica.rt.fog", "composite.fog", true);
             /**
+             * Path-integrated volumetric fog ({@code fog.slang}). Replaces the Overworld's screen-space
+             * distance composite with a real participating medium marched along each path segment, so the
+             * haze is correct in reflections, refractions and indirect bounces rather than a single
+             * post-aggregation blend. The Nether and End keep their authored screen-space haze.
+             *
+             * <p>Reuses {@code overworldFog}'s calibrated density and day/night/rain colour, so enabling
+             * this keeps the look of the existing haze while making it physical. Off (the default) leaves
+             * the current screen-space path untouched; on, it adds a per-segment march (capped at the
+             * render distance so a grazing ray cannot blow the whole horizon white).
+             */
+            public static final BooleanSetting FOG_VOLUMETRIC =
+                    bool("caustica.rt.fogVolumetric", "composite.fog-volumetric", false);
+            /**
+             * Strength of the volumetric fog, 0..1. Acts as both the in-scatter scale and the opacity
+             * ceiling of the finished march (like the cloud opacity slider), so it is a clean blend
+             * between "no fog" and "this fog" at any distance and view angle.
+             */
+            public static final FloatSetting FOG_VOLUMETRIC_STRENGTH =
+                    clampedFloat("caustica.rt.fogVolumetricStrength", "composite.fog-volumetric-strength",
+                            1.0f, 0.0f, 1.0f);
+            /**
+             * Forward-scatter sun glow in the volumetric fog, 0..1. Brightens the air toward the sun via
+             * the Henyey-Greenstein phase, giving a soft "volumetric light" halo. 0 = pure emissive haze
+             * (the calibrated colour, no directional component).
+             */
+            public static final FloatSetting FOG_SUN_GLOW =
+                    clampedFloat("caustica.rt.fogSunGlow", "composite.fog-sun-glow", 0.2f, 0.0f, 1.0f);
+            /**
              * Weather-driven lighting. Rain and thunderstorms attenuate the sun/moon NEE radiance,
              * darken and desaturate the sky toward an overcast grey, hide the celestial discs and the
              * stars behind the cloud deck, and add a light haze to the air.

@@ -47,6 +47,12 @@ public float maskedFogDepth(float3 hitPos, float hitDepth) {
     if (!fogEnabled() || cameraSubmerged()) {
         return 0.0;
     }
+    // Path-integrated volumetric fog replaces the screen-space composite for the Overworld (and the
+    // per-pixel depth mask that feeds it), so skip the sky-visibility ray here — it would only be wasted.
+    if (worldFeature(worldPush, FEATURE_FOG_VOLUMETRIC)
+            && worldPush.dimension == DIMENSION_OVERWORLD) {
+        return 0.0;
+    }
     float depth = max(hitDepth, 0.0);
     if (worldPush.dimension != DIMENSION_OVERWORLD) {
         return depth;

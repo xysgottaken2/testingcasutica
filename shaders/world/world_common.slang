@@ -99,6 +99,12 @@ public struct WorldPush {
     // Atmospheric medium composited from a per-pixel effective primary depth. Sky visibility clears
     // covered Overworld caves; Nether/End retain their authored full-depth haze; misses stay untouched.
     public float4   ambientFog;       // xyz in-scatter radiance, w density per block (0 = no fog)
+    // Path-integrated volumetric fog (fog.slang). Only meaningful for the Overworld, and only while
+    // FEATURE_FOG_VOLUMETRIC is set. x = march/fade distance (blocks), y = strength 0..1 (also the
+    // opacity ceiling, like the cloud opacity slider), z = sun-glow strength 0..1, w reserved. Density
+    // (sigma per block) and the haze in-scatter colour come from ambientFog, so switching the renderer
+    // over to this path-integrated form keeps the calibrated per-state look while making it physical.
+    public float4   fogParams;
     // Flat vanilla-style cloud deck (clouds.slang). Coverage already folds in the weather on the Java
     // side (RtComposite.cloudState), so the shader reads one resolved state rather than re-deriving the
     // storm ramp the sky darkening also depends on. The two slider lanes (shadow strength, opacity) are
@@ -180,6 +186,7 @@ public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial 
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_FOG = 256u;             // masked distance fog (authored full-depth Nether/End haze)
+public static const uint FEATURE_FOG_VOLUMETRIC = 1024u; // path-integrated volumetric fog (Overworld aerial perspective)
 public static const uint FEATURE_SHARC = 512u;           // experimental spatial-hash radiance cache
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).

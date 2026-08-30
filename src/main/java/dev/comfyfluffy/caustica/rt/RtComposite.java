@@ -188,6 +188,7 @@ public final class RtComposite {
     // sky cutoff, NRD's IN_VIEWZ), so it is set for both denoisers.
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_FOG = 256;
+    private static final int FEATURE_FOG_VOLUMETRIC = 1024;
     private static final int FEATURE_SHARC = 512;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
@@ -212,6 +213,9 @@ public final class RtComposite {
         }
         if (CausticaConfig.Rt.Composite.FOG.value()) {
             flags |= FEATURE_FOG;
+        }
+        if (CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()) {
+            flags |= FEATURE_FOG_VOLUMETRIC;
         }
         if (CausticaConfig.Rt.Lights.RESTIR_SAMPLING.value()) {
             flags |= FEATURE_RESTIR;
@@ -1701,6 +1705,9 @@ public final class RtComposite {
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the
                     // haze follows the same dusk curve as the light rather than switching at an angle.
                     ambientFog(dimension, weather, sky.sunDir().w()),
+                    // Path-integrated volumetric fog lane (see fogState): the screen-space fog above is
+                    // bypassed for the Overworld when this is non-zero, so the two never double-count.
+                    fogState(weather, sky.sunDir().w()),
                     clouds.clouds(),
                     clouds.anchor(),
                     clouds.color(),
@@ -2415,11 +2422,13 @@ public final class RtComposite {
             case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);
             case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);
             // Investigative disable of the Overworld day/night distance haze (see overworldFog).
-            // The reported block/shadow/water artifacts are suspected to come from this fog, so it is
-            // zeroed out to confirm the cause while the authored Nether/End haze and the cloud fog
-            // (clouds.slang) are deliberately kept intact. To restore the normal look, return
-            // -> overworldFog(weather, dayFactor);
-            default -> new Float4(0.0f, 0.0f, 0.0f, 0.0f);
+            // The reported block/shadow/water artifacts are suspected to come from that screen-space fog,
+            // so it is zeroed out unless the path-integrated volumetric facility is switched on — in which
+            // case its density/colour drive the per-segment medium (fog.slang) instead. The authored
+            // Nether/End haze and the cloud fog (clouds.slang) are deliberately kept intact.
+            default -> CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()
+                    ? overworldFog(weather, dayFactor)
+                    : new Float4(0.0f, 0.0f, 0.0f, 0.0f);
         };
     }
 
@@ -2473,6 +2482,26 @@ public final class RtComposite {
             }
         }
         return new Float4(clear[0], clear[1], clear[2], density);
+    }
+
+    /**
+     * Path-integrated volumetric fog parameters ({@code WorldPush.fogParams}): x = march/fade distance
+     * (blocks), y = strength 0..1 (also the path-integral's opacity ceiling), z = sun-glow strength 0..1.
+     * Density and in-scatter colour come from {@link #ambientFog}'s Overworld haze (see overworldFog), so
+     * the look stays calibrated while the medium is now marched along each path segment instead of being
+     * composited once in screen space. Off pushes a zeroed lane, which short-circuits {@code fog.slang}.
+     */
+    private static Float4 fogState(WeatherState weather, float dayFactor) {
+        if (!CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()) {
+            return new Float4(0f, 0f, 0f, 0f);
+        }
+        // Same render-distance-derived plane the screen-space haze was calibrated against, so the fog
+        // lands in the same place per view distance rather than being a fixed constant.
+        return new Float4(
+                fogDistanceBlocks(),
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_STRENGTH.value(),
+                CausticaConfig.Rt.Composite.FOG_SUN_GLOW.value(),
+                0f);
     }
 
     /**

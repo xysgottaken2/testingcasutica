@@ -30,6 +30,7 @@ import trace_ser;
 #endif
 import lighting;
 import clouds;
+import fog;
 import sharc;
 
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
@@ -72,14 +73,31 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     // two branches carry throughputs F and (1 - F), so their prefix contributions sum to exactly one
     // crossing (F*S + (1-F)*S = S), and each branch's own throughput picks up the same transmittance
     // the real prefix would have applied.
-    if (seg.bounce > 0) {
-        float3 toStart = ro - worldPush.camOffset;
-        float prefixDist = length(toStart);
-        if (prefixDist > 1.0e-4) {
-            // Ambient fog is not integrated here. Pass A wrote one first-interface depth/sky mask and
-            // Pass B composites that deterministic screen-space medium after all Fresnel branches and
-            // SPP samples have been aggregated. Keeping emissive fog out of split branches removes the
-            // bright/noisy fringe that used to form around thin falling-water columns.
+        if (seg.bounce > 0) {
+            float3 toStart = ro - worldPush.camOffset;
+            float prefixDist = length(toStart);
+            if (prefixDist > 1.0e-4) {
+                // Volumetric fog over the camera->interface prefix. The two split branches carry throughputs
+                // F and (1-F), so applying it to both is exact rather than a double count: the two branches'
+                // prefix contributions sum to exactly one crossing (F*S + (1-F)*S = S), and each branch's own
+                // throughput picks up the same transmittance the real prefix would have applied.
+                //
+                // Guarded on the medium the consumed camera->interface hop travelled through — air only,
+                // matching the per-hit fog below. If the camera begins inside water/glass (a split off the
+                // submerged interface), the prefix column is the dielectric itself and the atmospheric fog
+                // must not be layered on top of its own participating medium.
+                if (!any(seg.medium.current.extinction > 0.0)) {
+                    FogVolume preFog = fogSegment(worldPush, toStart / prefixDist,
+                                                  prefixDist, seg.showCelestial);
+                    L += throughput * preFog.scatter;
+                    Lspec += throughput * preFog.scatter;
+                    throughput *= preFog.transmittance;
+                }
+            // The authored screen-space medium is still NOT integrated here. Pass A wrote one
+            // first-interface depth/sky mask and Pass B composites that deterministic screen-space medium
+            // after all Fresnel branches and SPP samples have been aggregated. Keeping that emissive fog
+            // out of split branches removes the bright/noisy fringe that used to form around thin
+            // falling-water columns.
             CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
                                            prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
             L += throughput * pre.scatter;
@@ -202,9 +220,35 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             throughput *= exp(-medium.current.extinction * payload.hitT);
         }
 
-        // Dimension fog is intentionally absent from individual path segments. It is a selective
-        // camera-depth effect now, composited once from gFogDepthMask after path aggregation below.
-        // Dielectric extinction above remains physical and continues through reflections/refractions.
+        // The authored screen-space dimension fog is intentionally absent from individual path segments.
+        // It is a selective camera-depth effect, composited once from gFogDepthMask after path aggregation
+        // below — the Nether/End retain it. The OPTIONAL path-integrated volumetric facility (fog.slang)
+        // is NOT that screen-space pass, so it is integrated here per segment. Dielectric extinction above
+        // remains physical and continues through reflections/refractions.
+
+        // Volumetric fog crossed on the way to this hit. The fog fills the air between the camera and the
+        // surface, so every geometry hit reads it as a participating medium along the segment. It is
+        // composed BEFORE the clouds because the fog nearest the camera must occlude the cloud deck behind
+        // it: the cloud's scatter picks up the fog transmittance, while the fog's own scatter is added
+        // unattenuated. Bounded by payload.hitT, so fog in front of the surface is drawn and fog behind it
+        // is rejected.
+        //
+        // Guarded on the medium the segment travelled through — air only. Water/glass are themselves
+        // participating media (the MediumStack owns their extinction and in-scatter), so the atmospheric
+        // fog must not be layered on top of them; the submerged handle below pops the medium before this
+        // point, so a swimmer's underwater view stays fog-free.
+        if (!any(medium.current.extinction > 0.0)) {
+            // showCelestial marks the rays whose fog is seen directly (camera + specular bounces), so it
+            // selects the full march; diffuse continuations take the cheap one — see fogSegment.
+            FogVolume segFog = fogSegment(worldPush, rd, payload.hitT, showCelestial);
+            L += throughput * segFog.scatter;
+            if (channel == 2) {
+                Lspec += throughput * segFog.scatter;
+            } else {
+                Ldiff += throughput * segFog.scatter;
+            }
+            throughput *= segFog.transmittance;
+        }
 
         // Cloud crossed on the way to this hit. The deck is a real volume in the world, so a ray that
         // ends on GEOMETRY can still pass through cloud before it gets there — looking down at the
@@ -886,7 +930,12 @@ void main() {
     // converged into one pixel. Besides excluding covered caves/interiors, this prevents each Fresnel
     // branch around a thin waterfall from independently sampling emissive in-scatter (the old bright,
     // noisy outline). Miss pixels store zero, so dimension skyboxes remain untouched.
-    float fogDepth = fogEnabled() ? max(gFogDepthMask[pix], 0.0) : 0.0;
+    //
+    // When path-integrated volumetric fog is active (Overworld), the fog was already accumulated along
+    // each path segment, so this screen-space composite is disabled to avoid double-counting it. The
+    // Nether and End keep their authored screen-space haze, which is never marched.
+    bool screenFogActive = fogEnabled() && !fogVolumetricEnabled(worldPush);
+    float fogDepth = screenFogActive ? max(gFogDepthMask[pix], 0.0) : 0.0;
     AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);
     radiance = radiance * screenFog.transmittance + screenFog.inScatter;
 
