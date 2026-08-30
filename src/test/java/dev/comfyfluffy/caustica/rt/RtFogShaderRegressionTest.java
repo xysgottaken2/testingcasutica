@@ -66,6 +66,59 @@ final class RtFogShaderRegressionTest {
     }
 
     /**
+     * The fog is LIT, not a veil: block emitters (torches, lava, glowstone) must in-scatter through
+     * the same light grid the ReSTIR emitter sampling uses, with each kept emitter's runtime-scaled
+     * radiance, a real visibility ray (a torch behind a wall does not halo the fog past it), and the
+     * 1/r² point-light falloff that makes a torch nothing like the sun. The held-item light rides
+     * the same intensity/tint lanes the surface hand-light NEE reads.
+     */
+    @Test
+    void fogIsLitBySceneEmitters() throws IOException {
+        String fog = Files.readString(FOG);
+        String gather = slice(fog, "FogLightSet fogGatherLights", "public FogVolume fogSegment");
+        String march = slice(fog, "public FogVolume fogSegment", "public float3 fogLayer");
+
+        assertTrue(gather.contains("findLightGridCell("),
+                "emitter gathering must reuse the RIS light grid, not invent its own source");
+        assertInOrder(gather,
+                "float3 flux = lightRadiance(light) * (emitterScale * lightArea(light));",
+                "float score = fluxLum / max(r2, 1.0);",
+                "set.lights[k].vis = visibility(midAbs, ldir,");
+        assertTrue(gather.contains("max(worldPush.lightScales.x, 0.0)"),
+                "emitter in-scatter must follow the runtime block-light intensity slider");
+
+        assertInOrder(march,
+                "float3 localTerm = float3(0.0, 0.0, 0.0);",
+                "localTerm += local.lights[li].flux * local.lights[li].vis",
+                "localTerm += handColor * (handIntensity * FOG_INV_4PI / max(r2, 0.25));");
+        assertTrue(march.contains("push.handLight.w"),
+                "the held-item light must contribute its own halo to the medium");
+    }
+
+    /**
+     * Unlit air must stay dark: the sky-ambient in-scatter (the only source that has no emitter
+     * record) must be gated by a per-segment sky-visibility probe — one real shadow ray along a
+     * jittered upward direction — and carry its own dim, cool tint rather than the near-white that
+     * read as a flat Silent-Hill veil. A dark cave therefore holds no fog at all.
+     */
+    @Test
+    void unlitFogStaysDark() throws IOException {
+        String fog = Files.readString(FOG);
+        String march = slice(fog, "public FogVolume fogSegment", "public float3 fogLayer");
+
+        assertInOrder(march,
+                "float3 skyDir = cosineDir(float3(0.0, 1.0, 0.0), seed);",
+                "float skyVis = clamp(luminance(visibility(midAbs, skyDir, 1.0e4).transmittance), 0.0, 1.0);");
+        assertInOrder(march,
+                "float3 ambientTerm = FOG_AMBIENT_TINT * ambient * (FOG_AMBIENT_WEIGHT * 0.5 * skyVis);",
+                "float3 inScatter = FOG_TINT * sunTerm + localTerm + ambientTerm;");
+        assertTrue(fog.contains("public static const float3 FOG_AMBIENT_TINT"),
+                "the ambient floor must carry its own tint lane, separate from the sun's");
+        assertTrue(fog.contains("public static const float FOG_AMBIENT_WEIGHT = 0.12;"),
+                "the ambient floor must stay a floor — a bright constant here was the white veil");
+    }
+
+    /**
      * Fog is an air phenomenon: every fog call in the bounce loop must be gated on the current
      * medium being air (zero extinction), so underwater and inside-glass segments — which already
      * attenuate through their own Beer–Lambert extinction — are never double-dimmed. The

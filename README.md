@@ -34,10 +34,12 @@ changes while the renderer is being built.
 - Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
   with adjustable thickness, opacity and cloud shadows, visible in reflections
 - World-space volumetric fog with ray-traced god rays: a real height-banded participating medium
-  integrated along every camera, reflection and refraction ray. The march stops at the first block
-  hit and each in-scatter sample shoots a shadow ray to the sun/moon, so haze cannot glow through
-  mountains or fill caves — and the light that does get through the gaps becomes visible shafts.
-  Rain thickens the fog; water and glass keep their own absorption, so surfaces stay stable
+  integrated along every camera, reflection and refraction ray, lit by the scene's own sources —
+  sun/moon shafts, a soft local halo around torches, lava and glowstone (each with its own colour
+  and a 1/r² falloff, so a torch is nothing like the sun), the held-item flame, and a faint
+  sky-visibility-gated haze floor. Unlit fog is invisible, so dark caves hold no fog; the march
+  stops at the first block hit and every light is gated by a shadow ray, so haze never glows
+  through mountains or walls. Rain thickens the fog; water and glass keep their own absorption
 - Dedicated Nether and End skyboxes
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
 - Experimental NVIDIA SHaRC-style world-space radiance cache (Spatially Hashed Radiance Cache) to

@@ -828,24 +828,23 @@ public final class CausticaConfig {
             /**
              * World-space volumetric fog with ray-traced god rays.
              *
-             * <p>Unlike a screen-space depth fade, the fog is a real participating medium occupying a
-             * height band in the world: every radiance ray (camera, reflections, refractions, indirect
-             * bounces) marches through it, the march stops at the first block the ray hits, and each
-             * in-scatter sample fires a shadow ray toward the sun/moon. That is what makes haze behind
-             * a mountain ridge or inside a cave stay dark, the gaps the light does reach become visible
-             * god rays, and translucent occluders (stained glass) tint the shafts they let through.
-             * Only air segments fog: water and glass keep their own physical absorption, so the water
-             * surface and the world under it stay stable.
+             * <p>The fog is only the medium — what the eye sees is LIGHT scattering inside it, and
+             * every source lights it with its own colour and strength: sun/moon shafts (god rays),
+             * a soft local halo around torches, lava and glowstone, the held-item flame, and a
+             * faint sky-lit haze floor. Dark caves hold no fog because unlit fog is invisible. The
+             * march stops at the first block hit and every lighting term is gated by a real shadow
+             * ray, so haze never glows through mountains or walls. Rain thickens the band; water
+             * and glass keep their own absorption, so surfaces stay stable.
              */
             public static final BooleanSetting FOG =
                     bool("caustica.rt.fog", "composite.fog", true);
             /**
              * Base thickness of the fog band, as a fraction of the maximum extinction
-             * ({@code RtComposite.FOG_SIGMA_MAX}, per block). Rain and thunderstorms thicken the band
-             * on top of this. 0% disables the march entirely (together with the toggle above).
+             * ({@code RtComposite.FOG_SIGMA_MAX}, per block). Rain and thunderstorms thicken the
+             * band on top of this. 0% disables the march entirely (together with the toggle above).
              */
             public static final FloatSetting FOG_DENSITY =
-                    clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.3f, 0.0f, 1.0f);
+                    clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.1f, 0.0f, 1.0f);
             /**
              * How quickly the fog thins with altitude, in blocks: the density falls off as
              * {@code exp(-(y - base) / height)} above the base height. Small values hug valleys and
