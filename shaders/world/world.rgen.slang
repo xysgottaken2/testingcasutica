@@ -31,6 +31,7 @@ import trace_ser;
 import lighting;
 import clouds;
 import sharc;
+import fog;
 
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
 // radiance L, accumulates per-lobe radiance (outLdiff/outLspec) and the first-bounce hit distance
@@ -58,7 +59,12 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     float3 rd = seg.rd;
     float3 throughput = seg.throughput;
 
-    // ---- Cloud over the prefix Pass A already consumed.
+    // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
+    // produces independent lighting/BSDF paths from the shared terminal continuation. Declared above
+    // the prefix-recovery block so the fog march there can draw from the same stream.
+    uint seed = seg.seed ^ sampleIndex * 2246822519u;
+    seed = pcg(seed);
+    // ---- Cloud and fog over the prefix Pass A already consumed.
     //
     // Pass A hands back a segment that starts AT THE CAMERA for an opaque hit, but for a dielectric
     // (water, glass, ice) it consumes the camera->surface hop itself and queues continuations that
@@ -83,12 +89,24 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             L += throughput * pre.scatter;
             Lspec += throughput * pre.scatter;
             throughput *= pre.transmittance;
+            // World-space fog over the same camera->surface prefix (fog.slang). Same exactness
+            // argument as the cloud term above: the two branches carry F and (1 - F), so their fog
+            // prefixes sum to exactly one crossing — the water surface itself keeps the same
+            // aerial-perspective veil an opaque block at that distance gets, which is the half of
+            // the water-stability contract that lives here (the other half is skipping the fog
+            // march on underwater segments in the loop below). Gated on the camera NOT being
+            // submerged because the prefix lies entirely in the camera's own medium, and fog is an
+            // air phenomenon: underwater prefixes attenuate through the water medium's own
+            // extinction instead.
+            if (fogEnabled(worldPush) && !cameraSubmerged()) {
+                FogVolume preFog = fogSegment(worldPush, worldPush.camOffset,
+                        toStart / prefixDist, prefixDist, seed, true);
+                L += throughput * preFog.scatter;
+                Lspec += throughput * preFog.scatter;
+                throughput *= preFog.transmittance;
+            }
         }
     }
-    // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
-    // produces independent lighting/BSDF paths from the shared terminal continuation.
-    uint seed = seg.seed ^ sampleIndex * 2246822519u;
-    seed = pcg(seed);
     float rayConeWidth = seg.rayConeWidth;
     float rayConeSpread = max(seg.rayConeSpread, RAY_CONE_MIN_SPREAD);
     int maxBounces = int(worldPush.maxBounces);
@@ -167,6 +185,23 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // world.rmiss writes sky radiance (gradient + sun/moon disc + stars) into payload.albedo. The
             // packed show-celestial flag decides whether this path segment may see the bright disc.
             float3 sky = payload.albedo;
+            // World-space fog over the escape distance, composited BEFORE the sky so the veil
+            // attenuates everything behind it — horizon, sun/moon disc included — while its
+            // in-scatter adds the glow the sky contributes to the fog. This deliberately lives here
+            // in the raygen rather than in world.rmiss: the fog march needs real occlusion shadow
+            // rays (the god-ray contract in fog.slang), and a miss shader cannot trace. Rays
+            // passing close past a ridge still pick up the ridge's shadow on the haze beyond it.
+            // Same air-medium gate as the per-segment fog below.
+            if (fogEnabled(worldPush) && !any(medium.current.extinction > 0.0)) {
+                FogVolume missFog = fogSegment(worldPush, ro, rd, 1.0e9, seed, showCelestial);
+                L += throughput * missFog.scatter;
+                if (channel == 2) {
+                    Lspec += throughput * missFog.scatter;
+                } else {
+                    Ldiff += throughput * missFog.scatter;
+                }
+                throughput *= missFog.transmittance;
+            }
             L += throughput * sky;
             if (channel == 2) {
                 Lspec += throughput * sky;
@@ -217,6 +252,32 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 Ldiff += throughput * segCloud.scatter;
             }
             throughput *= segCloud.transmittance;
+        }
+
+        // ---- World-space volumetric fog crossed on the way to this hit (fog.slang).
+        //
+        // Same participating-medium contract as the cloud block above — premultiplied in-scatter plus
+        // the transmittance the surface behind keeps — but with the block-occlusion behaviour the
+        // sky-deck cannot have: the march stops at payload.hitT, so fog exists only in the open air
+        // along the segment, and every in-scatter sample's shadow ray makes haze that terrain shields
+        // from the sun stay dark. That is what keeps the fog off cave interiors and behind mountain
+        // ridges while the gaps the light does reach become god rays.
+        //
+        // The medium gate is the water/glass stability contract: this runs ONLY while the path
+        // travels through air (air's extinction is exactly zero). Segments inside water or a glass
+        // volume already attenuate through that medium's own Beer–Lambert extinction, and stacking
+        // air fog on top would double-dim the underwater world. The camera->surface hop in front of
+        // a water face is handled by the prefix recovery above instead, so the surface itself keeps
+        // its aerial perspective.
+        if (fogEnabled(worldPush) && !any(medium.current.extinction > 0.0)) {
+            FogVolume segFog = fogSegment(worldPush, ro, rd, payload.hitT, seed, showCelestial);
+            L += throughput * segFog.scatter;
+            if (channel == 2) {
+                Lspec += throughput * segFog.scatter;
+            } else {
+                Ldiff += throughput * segFog.scatter;
+            }
+            throughput *= segFog.transmittance;
         }
 
         float3 n = payload.normal; // oriented toward the incoming ray by the closest-hit

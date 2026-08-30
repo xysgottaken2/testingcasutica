@@ -187,6 +187,9 @@ public final class RtComposite {
     // sky cutoff, NRD's IN_VIEWZ), so it is set for both denoisers.
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_SHARC = 256;
+    // World-space volumetric fog + god rays (fog.slang). A feature bit rather than only a density
+    // lane so the shader can skip the whole march (and its per-sample shadow rays) when off.
+    private static final int FEATURE_FOG = 512;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -221,6 +224,12 @@ public final class RtComposite {
             if (CausticaConfig.Rt.Composite.cloudStyleIndex() == CLOUD_STYLE_VOLUMETRIC) {
                 flags |= FEATURE_CLOUDS_VOLUMETRIC;
             }
+        }
+        // World-space volumetric fog: the bit only arms the effect, fogState() below still has to
+        // push a non-zero density lane for the shader's own two-part gate — and the Nether and the
+        // End never get one (both draw closed skyboxes with no celestial light to scatter).
+        if (CausticaConfig.Rt.Composite.FOG.value()) {
+            flags |= FEATURE_FOG;
         }
         // Reports what the pipeline is ACTUALLY doing, not just what the option asks for:
         // RtDlssRr.enabled() already folds in the backend switch, and a debug view suppresses RR
@@ -428,6 +437,15 @@ public final class RtComposite {
     // blocks overhead is already ~1750 blocks out. Keeping at least this many multiples of the deck's
     // height in view means the fade always stays down near the horizon where it belongs.
     private static final float CLOUD_VIEW_LIMIT_HEIGHT_MULTIPLE = 6.0f;
+    // Fog extinction per block at the density slider's 100% and the band's base height (fog.slang's
+    // FOG_SIGMA_MAX mirror). At 0.05 a horizontal in-band ray carries e^-0.05 ~= 95% of its radiance
+    // per block — a heavy valley haze that still lets the near field read through.
+    private static final float FOG_SIGMA_MAX = 0.05f;
+    // Rain/thunder thickening applied on top of the density slider (see fogState). Rain alone tops
+    // out at 2.4x, a thunderstorm at 3.0x — the fog is the readable cue that the air itself has
+    // changed, on the same weather curve the sky darkening and light attenuation already follow.
+    private static final float FOG_RAIN_DENSITY_BOOST = 1.4f;
+    private static final float FOG_THUNDER_DENSITY_BOOST = 0.6f;
 
     private static final Identifier SUN_ID = Identifier.withDefaultNamespace("sun");
     private static final Identifier[] MOON_IDS = createMoonIds();
@@ -1623,6 +1641,8 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
+            // Fog lane: same weather + camera readings the sky and cloud state already resolved.
+            Float4 fog = fogState(dimension, weather, camY);
             // Analytic held-item light: position + intensity lane and the item's RGB tint; w == 0
             // disables the shader term (toggle off, no luminous item, or no player).
             HandLightState hand = handLightState(terrain);
@@ -1698,7 +1718,10 @@ public final class RtComposite {
                     // lighting.slang resolves against its compiled RESTIR_* caps.
                     new Int4(CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY.value(),
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
-                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0)
+                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
+                    // World-space volumetric fog lane (WorldPush.fog, fog.slang): resolved above from
+                    // the sliders + weather; a zeroed x disarms every fog path in the shader.
+                    fog
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -2459,6 +2482,43 @@ public final class RtComposite {
             // Probe unavailable (early boot / unsupported context): white is the correct default.
         }
         return new Float4(r, g, b, Math.clamp(weatherFill, 0f, 1f));
+    }
+
+    /**
+     * Resolve this frame's world-space volumetric fog into the single {@code WorldPushData} lane
+     * {@code fog.slang} reads: {@code fog} (x base extinction per block, y height falloff scale,
+     * z camera-relative band base, w god-ray strength).
+     *
+     * <p><b>Weather.</b> Rain and thunder thicken the band on top of the density slider, using the
+     * same {@link WeatherState} the sky darkening and the light attenuation are resolved from — the
+     * storm's dark sky, its dimmer sunlight and its heavier haze are three readings of one state.
+     * The in-scatter itself needs no extra weather term: it is driven by {@code lightRadiance},
+     * which Java already scales with the light attenuation, so rain fog is automatically gloomier
+     * light, not just more of it.
+     *
+     * <p><b>Dimensions.</b> The Nether and the End get a zeroed lane: both render closed skyboxes
+     * with no celestial light to scatter, and the shader's own gate ({@code fog.x > 0}) then skips
+     * every fog path in those dimensions for free.
+     *
+     * <p><b>Height anchoring.</b> The band is anchored to world Y (sea level by default), pushed
+     * camera-relative exactly like the cloud deck height — the terrain rebase means absolute
+     * coordinates are not meaningful in the shader, and {@code camY} is the same camera reading
+     * {@link #cloudState} already receives.
+     */
+    private Float4 fogState(int dimension, WeatherState weather, double cameraY) {
+        float density = CausticaConfig.Rt.Composite.FOG_DENSITY.value();
+        if (dimension != DIMENSION_OVERWORLD || density <= 0f) {
+            return new Float4(0f, 0f, 0f, 0f);
+        }
+        float weatherBoost = 1f + FOG_RAIN_DENSITY_BOOST * Math.clamp(weather.rain(), 0f, 1f)
+                + FOG_THUNDER_DENSITY_BOOST * Math.clamp(weather.thunder(), 0f, 1f);
+        float sigma = Math.clamp(density * FOG_SIGMA_MAX * weatherBoost, 0f,
+                FOG_SIGMA_MAX * (1f + FOG_RAIN_DENSITY_BOOST + FOG_THUNDER_DENSITY_BOOST));
+        return new Float4(
+                sigma,
+                Math.max(CausticaConfig.Rt.Composite.FOG_HEIGHT.value(), 1f),
+                (float) (CausticaConfig.Rt.Composite.FOG_BASE_Y.value() - cameraY),
+                Math.clamp(CausticaConfig.Rt.Composite.FOG_GOD_RAYS.value(), 0f, 1f));
     }
 
     /**

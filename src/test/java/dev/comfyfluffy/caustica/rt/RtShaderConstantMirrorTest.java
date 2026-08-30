@@ -124,10 +124,10 @@ final class RtShaderConstantMirrorTest {
     @Test
     void worldPushCarriesTheFieldsTheNewFeaturesPush() throws IOException {
         String slang = Files.readString(SLANG);
-        // These three lanes are what SSS, weather lighting, the dimension skyboxes and the denoiser
-        // toggle travel in. Removing one would still compile (the generated record just loses a
-        // component) but would silently drop a feature, so pin them here.
-        for (String field : new String[] {"weather", "dimension", "featureFlags"}) {
+        // These lanes are what SSS, weather lighting, the dimension skyboxes, the denoiser toggle
+        // and the world-space fog travel in. Removing one would still compile (the generated record
+        // just loses a component) but would silently drop a feature, so pin them here.
+        for (String field : new String[] {"weather", "dimension", "featureFlags", "fog"}) {
             assertTrue(Pattern.compile("^\\s*public\\s+\\S+\\s+" + field + "\\s*;", Pattern.MULTILINE)
                             .matcher(slang).find(),
                     "WorldPush is missing the '" + field + "' field");

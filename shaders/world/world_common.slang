@@ -156,6 +156,13 @@ public struct WorldPush {
     // y = spatial neighbour count (0 = temporal only), z = max reservoir age in frames, w reserved.
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
+    // World-space volumetric fog (fog.slang), resolved on the CPU from the sliders plus the weather
+    // (RtComposite.fogState): x = base extinction per block at the band's base height (0 disarms
+    // every fog path), y = height falloff scale in blocks (density falls as exp(-(y-base)/y) above
+    // the base), z = camera-relative base height of the band, w = god-ray strength 0..1 driving the
+    // Henyey-Greenstein forward lobe the sun in-scatter uses. One lane, like clouds, so a mid-frame
+    // slider change lands on the next frame.
+    public float4   fog;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -177,6 +184,7 @@ public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial 
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_SHARC = 256u;           // experimental spatial-hash radiance cache
+public static const uint FEATURE_FOG = 512u;             // world-space volumetric fog + god rays (fog.slang)
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume

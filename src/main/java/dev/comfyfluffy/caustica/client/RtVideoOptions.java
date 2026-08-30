@@ -224,6 +224,21 @@ public final class RtVideoOptions {
         };
     }
 
+    /**
+     * The fog sub-screen rows: the master toggle, then band shape (base height, falloff), thickness,
+     * and the god-ray strength. Every row is a live per-frame read like the cloud rows — dragging any
+     * of them lands on the next frame with no rebuild.
+     */
+    public static OptionInstance<?>[] fogOptions() {
+        return new OptionInstance<?>[] {
+            fogEnabled(),
+            fogDensity(),
+            fogBaseY(),
+            fogHeight(),
+            fogGodRays(),
+        };
+    }
+
     /** Debug tooling rows: the buffer visualizer plus the logging/capture switches. */
     public static OptionInstance<?>[] debugOptions() {
         return new OptionInstance<?>[] {
@@ -756,6 +771,71 @@ public final class RtVideoOptions {
      */
     private static OptionInstance<Boolean> clouds() {
         return bool("caustica.options.rt.clouds", CausticaConfig.Rt.Composite.CLOUDS);
+    }
+
+    // Fog slider bounds. Stepped in 4-block increments for the same reason the cloud height slider
+    // steps in 8: the spans are hundreds of blocks and sub-block precision is below what the eye
+    // resolves in a haze band. Each must stay inside CausticaConfig's own clamp, which is what
+    // actually guards the stored value.
+    private static final int FOG_BASE_Y_MIN = -32;
+    private static final int FOG_BASE_Y_MAX = 320;
+    private static final int FOG_BASE_Y_STEP = 4;
+    private static final int FOG_HEIGHT_MIN = 4;
+    private static final int FOG_HEIGHT_MAX = 256;
+    private static final int FOG_HEIGHT_STEP = 4;
+
+    /** Master toggle for the world-space fog march and its god rays. */
+    private static OptionInstance<Boolean> fogEnabled() {
+        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /** Base thickness of the band, as a percentage of the maximum extinction. */
+    private static OptionInstance<Integer> fogDensity() {
+        return percent("caustica.options.rt.fogDensity", CausticaConfig.Rt.Composite.FOG_DENSITY);
+    }
+
+    /**
+     * World Y the fog band is anchored at, in blocks. Stepped: the slider spans 350+ blocks and the
+     * band's own falloff is tens of blocks wide, so coarser steps make a target height far easier
+     * to land on.
+     */
+    private static OptionInstance<Integer> fogBaseY() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_BASE_Y;
+        int steps = (FOG_BASE_Y_MAX - FOG_BASE_Y_MIN) / FOG_BASE_Y_STEP;
+        int initial = Math.clamp(
+                Math.round((setting.value() - FOG_BASE_Y_MIN) / FOG_BASE_Y_STEP), 0, steps);
+        return new OptionInstance<>(
+            "caustica.options.rt.fogBaseY",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.fogBaseY.tooltip")),
+            (caption, step) -> Options.genericValueLabel(caption,
+                    Component.literal("Y " + (FOG_BASE_Y_MIN + step * FOG_BASE_Y_STEP))),
+            new OptionInstance.IntRange(0, steps),
+            initial,
+            step -> setting.set((float) (FOG_BASE_Y_MIN + step * FOG_BASE_Y_STEP)));
+    }
+
+    /**
+     * How quickly the fog thins with altitude, in blocks. Stepped like the base-height slider: the
+     * value spans most of the atmosphere and the band reads the same within a couple of blocks.
+     */
+    private static OptionInstance<Integer> fogHeight() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_HEIGHT;
+        int steps = (FOG_HEIGHT_MAX - FOG_HEIGHT_MIN) / FOG_HEIGHT_STEP;
+        int initial = Math.clamp(
+                Math.round((setting.value() - FOG_HEIGHT_MIN) / FOG_HEIGHT_STEP), 0, steps);
+        return new OptionInstance<>(
+            "caustica.options.rt.fogHeight",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.fogHeight.tooltip")),
+            (caption, step) -> Options.genericValueLabel(caption,
+                    Component.literal((FOG_HEIGHT_MIN + step * FOG_HEIGHT_STEP) + " blocks")),
+            new OptionInstance.IntRange(0, steps),
+            initial,
+            step -> setting.set((float) (FOG_HEIGHT_MIN + step * FOG_HEIGHT_STEP)));
+    }
+
+    /** God-ray strength: forward-scatter tightness of the sun/moon in-scatter, as a percentage. */
+    private static OptionInstance<Integer> fogGodRays() {
+        return percent("caustica.options.rt.fogGodRays", CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
     }
 
     private static final List<String> CLOUD_STYLES = List.of("classic", "volumetric");

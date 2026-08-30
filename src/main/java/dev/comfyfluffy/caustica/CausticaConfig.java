@@ -825,6 +825,49 @@ public final class CausticaConfig {
              */
             public static final FloatSetting CLOUD_COVERAGE =
                     clampedFloat("caustica.rt.cloudCoverage", "composite.cloud-coverage", 0.55f, 0.0f, 1.0f);
+            /**
+             * World-space volumetric fog with ray-traced god rays.
+             *
+             * <p>Unlike a screen-space depth fade, the fog is a real participating medium occupying a
+             * height band in the world: every radiance ray (camera, reflections, refractions, indirect
+             * bounces) marches through it, the march stops at the first block the ray hits, and each
+             * in-scatter sample fires a shadow ray toward the sun/moon. That is what makes haze behind
+             * a mountain ridge or inside a cave stay dark, the gaps the light does reach become visible
+             * god rays, and translucent occluders (stained glass) tint the shafts they let through.
+             * Only air segments fog: water and glass keep their own physical absorption, so the water
+             * surface and the world under it stay stable.
+             */
+            public static final BooleanSetting FOG =
+                    bool("caustica.rt.fog", "composite.fog", true);
+            /**
+             * Base thickness of the fog band, as a fraction of the maximum extinction
+             * ({@code RtComposite.FOG_SIGMA_MAX}, per block). Rain and thunderstorms thicken the band
+             * on top of this. 0% disables the march entirely (together with the toggle above).
+             */
+            public static final FloatSetting FOG_DENSITY =
+                    clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.3f, 0.0f, 1.0f);
+            /**
+             * How quickly the fog thins with altitude, in blocks: the density falls off as
+             * {@code exp(-(y - base) / height)} above the base height. Small values hug valleys and
+             * lake surfaces; large values turn the whole lower atmosphere hazy.
+             */
+            public static final FloatSetting FOG_HEIGHT =
+                    clampedFloat("caustica.rt.fogHeight", "composite.fog-height", 32.0f, 4.0f, 256.0f);
+            /**
+             * World Y the fog band is anchored at. At and below this height the fog is at its full
+             * density; above it, it falls off per {@link #FOG_HEIGHT}. The default sits at sea level
+             * so valleys, rivers and lake surfaces fill first.
+             */
+            public static final FloatSetting FOG_BASE_Y =
+                    clampedFloat("caustica.rt.fogBaseY", "composite.fog-base-y", 62.0f, -32.0f, 320.0f);
+            /**
+             * God-ray strength, 0..1. Blends the sun/moon in-scatter from an isotropic phase (pure
+             * distance haze, no shafts) toward a tight forward-scattering lobe — light shafts flare
+             * where they reach the fog through gaps in terrain, leaves and buildings. Higher values
+             * also make the haze glow brighter toward the light source.
+             */
+            public static final FloatSetting FOG_GOD_RAYS =
+                    clampedFloat("caustica.rt.fogGodRays", "composite.fog-god-rays", 0.6f, 0.0f, 1.0f);
             public static final FloatSetting SUN_ANGULAR_RADIUS =
                     radians("caustica.rt.sunAngularRadius", "composite.sun-angular-radius-deg", 0.6f);
             public static final FloatSetting MOON_ANGULAR_RADIUS =

@@ -85,6 +85,10 @@ public bool restirEnabled() {
 public bool waterWavesEnabled() { return worldFlag(worldPush, WORLD_FLAG_WAVES); }
 public bool sharcEnabled() { return worldFeature(worldPush, FEATURE_SHARC); }
 public bool cameraSubmerged() { return worldFlag(worldPush, WORLD_FLAG_SUBMERGED); }
+// World-space volumetric fog is armed: the toggle is on AND the host pushed a non-zero base
+// density for this frame (fog.slang's fogEnabled performs the same two-part test when handed the
+// push explicitly — this helper serves the module-global worldPush consumers).
+public bool fogEnabled() { return worldFeature(worldPush, FEATURE_FOG) && worldPush.fog.x > 0.0; }
 
 /** SSS strength after the player toggle: the material value, or a hard zero when SSS is disabled. */
 public float payloadActiveSss() { return sssEnabled() ? payloadSss() : 0.0; }

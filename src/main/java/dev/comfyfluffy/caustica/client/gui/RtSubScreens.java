@@ -138,6 +138,18 @@ public final class RtSubScreens {
                         RtVideoOptions.cloudCoverageDisabledHint())));
     }
 
+    /**
+     * World-space volumetric fog and its god rays: master toggle, density, the band's base height and
+     * falloff, and the forward-scatter strength that makes sun/moon shafts flare through gaps in the
+     * terrain. Rain thickens the band on top of the density slider (see {@code RtComposite.fogState}).
+     */
+    public static RtSettingsSubScreen fog(Screen parent) {
+        return new RtSettingsSubScreen(parent, options(),
+                Component.translatable("caustica.options.rt.fogHeader"),
+                fogSettings(), RtSubScreens::fog,
+                reopen -> List.of(RtSettingsSubScreen.Section.of(null, RtVideoOptions.fogOptions())));
+    }
+
     /** Manual/auto exposure and the whole auto-exposure internal state. */
     public static RtSettingsSubScreen exposure(Screen parent) {
         return new RtSettingsSubScreen(parent, options(),
@@ -287,6 +299,15 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Composite.CLOUD_OPACITY);
     }
 
+    private static List<CausticaConfig.RuntimeSetting<?>> fogSettings() {
+        return List.of(
+                CausticaConfig.Rt.Composite.FOG,
+                CausticaConfig.Rt.Composite.FOG_DENSITY,
+                CausticaConfig.Rt.Composite.FOG_BASE_Y,
+                CausticaConfig.Rt.Composite.FOG_HEIGHT,
+                CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
+    }
+
     private static List<CausticaConfig.RuntimeSetting<?>> exposureSettings() {
         return List.of(
                 CausticaConfig.Rt.Exposure.MODE,
@@ -349,6 +370,7 @@ public final class RtSubScreens {
                 waterSettings(),
                 pomSettings(),
                 cloudsSettings(),
+                fogSettings(),
                 exposureSettings(),
                 tonemapSettings(),
                 hdrSettings(),
