@@ -156,6 +156,17 @@ public struct WorldPush {
     // y = spatial neighbour count (0 = temporal only), z = max reservoir age in frames, w reserved.
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
+    // World-space volumetric fog (fog.slang). x = density 0..1, y = god-ray strength 0..1,
+    // z = max integrated distance (blocks), w = reserved. The feature toggles live in featureFlags;
+    // x is read directly so a density-0 setting short-circuits the whole march.
+    public float4   fogParams;
+    // Fog shaping: x = reference surface height (world Y, the cave cut-off), y = altitude falloff,
+    // z = sky-fill/ambient scale, w = Henyey-Greenstein forward-scattering g.
+    public float4   fogParams2;
+    // Terrain rebase origin, X/Z reduced to the fog noise period (fog.slang's 512*32 = 16384-block
+    // lattice) so a rebase cannot slide the world-space fog pattern. Y is the true terrain origin and
+    // stays unwrapped because the density uses it for the cave/altitude cut-off.
+    public float4   fogAnchor;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -177,6 +188,8 @@ public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial 
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_SHARC = 256u;           // experimental spatial-hash radiance cache
+public static const uint FEATURE_FOG = 512u;             // world-space volumetric fog
+public static const uint FEATURE_GOD_RAYS = 1024u;       // world-space sun shafts through the fog
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume

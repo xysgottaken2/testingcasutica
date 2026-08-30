@@ -187,6 +187,12 @@ public final class RtComposite {
     // sky cutoff, NRD's IN_VIEWZ), so it is set for both denoisers.
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_SHARC = 256;
+    // World-space volumetric fog and its god-ray (single-scattering sun shaft) term fog.slang.
+    private static final int FEATURE_FOG = 512;
+    private static final int FEATURE_GOD_RAYS = 1024;
+    // Fog XZ noise period (fog.slang's FOG_CELL_MASK + FOG_CELL_BLOCKS = 512 * 32 = 16384 blocks)
+    // reduced to a mask. Y stays unwrapped because the vertical density profile is not periodic.
+    private static final int FOG_ANCHOR_MASK = 0x3FFF;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -220,6 +226,12 @@ public final class RtComposite {
             // player-facing effect toggles, and an integer bit survives every float quirk.
             if (CausticaConfig.Rt.Composite.cloudStyleIndex() == CLOUD_STYLE_VOLUMETRIC) {
                 flags |= FEATURE_CLOUDS_VOLUMETRIC;
+            }
+        }
+        if (CausticaConfig.Rt.Composite.FOG.value()) {
+            flags |= FEATURE_FOG;
+            if (CausticaConfig.Rt.Composite.FOG_GOD_RAYS.value()) {
+                flags |= FEATURE_GOD_RAYS;
             }
         }
         // Reports what the pipeline is ACTUALLY doing, not just what the option asks for:
@@ -1694,11 +1706,26 @@ public final class RtComposite {
                     sharcParams2(),
                     sharcParams3(),
                     sharcGridOrigin(terrain),
-                    // Trailing field (WorldPush.restirTuning): the live ReSTIR anti-flicker knobs
-                    // lighting.slang resolves against its compiled RESTIR_* caps.
+                    // ReSTIR anti-flicker knobs: the live tuning that lighting.slang resolves against
+                    // its compiled RESTIR_* caps.
                     new Int4(CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY.value(),
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
-                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0)
+                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
+                    // World-space volumetric fog and god rays (fog.slang): x density, y god-ray
+                    // strength, z maximum integrated distance, w weather thickening (rain). Feature
+                    // toggles ride featureFlags above.
+                    new Float4(CausticaConfig.Rt.Composite.FOG_DENSITY.value(),
+                            CausticaConfig.Rt.Composite.FOG_GOD_RAYS_STRENGTH.value(),
+                            CausticaConfig.Rt.Composite.FOG_DISTANCE.value(),
+                            weather.rain()),
+                    // Fog shaping: reference surface height, altitude falloff, sky-fill scale and the
+                    // HG forward-scattering constant.
+                    new Float4(64.0f, 96.0f, 0.35f, 0.35f),
+                    // Terrain rebase origin for the fog noise: X/Z reduced to shader period so a
+                    // rebase cannot slide the pattern; Y stays true for the cave/height cutoff.
+                    new Float4(terrain.blockX & FOG_ANCHOR_MASK,
+                            terrain.blockY,
+                            terrain.blockZ & FOG_ANCHOR_MASK, 0.0f)
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {

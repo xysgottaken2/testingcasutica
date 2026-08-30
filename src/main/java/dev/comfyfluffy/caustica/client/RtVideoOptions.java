@@ -182,6 +182,11 @@ public final class RtVideoOptions {
             subsurfaceScattering(),
             weatherLighting(),
             metallicShininess(),
+            fog(),
+            fogDensity(),
+            fogGodRays(),
+            fogGodRayStrength(),
+            fogDistance(),
         };
     }
 
@@ -1242,6 +1247,47 @@ public final class RtVideoOptions {
      */
     private static OptionInstance<Integer> metallicShininess() {
         return percent("caustica.options.rt.metallicShininess", CausticaConfig.Rt.Composite.METALLIC_SHININESS);
+    }
+
+    /** World-space volumetric fog (world-integrated, occludable by terrain and cave walls). */
+    private static OptionInstance<Boolean> fog() {
+        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /** Fog optical density, 0..100%. */
+    private static OptionInstance<Integer> fogDensity() {
+        return percent("caustica.options.rt.fogDensity", CausticaConfig.Rt.Composite.FOG_DENSITY);
+    }
+
+    /** God-rays (single-scattering sun shafts) through the fog. */
+    private static OptionInstance<Boolean> fogGodRays() {
+        return bool("caustica.options.rt.fogGodRays", CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
+    }
+
+    /** God-ray strength, 0..200%. */
+    private static OptionInstance<Integer> fogGodRayStrength() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_GOD_RAYS_STRENGTH;
+        return new OptionInstance<>(
+            "caustica.options.rt.fogGodRaysStrength",
+            OptionInstance.cachedConstantTooltip(
+                    Component.translatable("caustica.options.rt.fogGodRaysStrength.tooltip")),
+            (caption, percent) -> Options.genericValueLabel(caption, Component.literal(percent + "%")),
+            new OptionInstance.IntRange(0, 200),
+            Math.clamp(Math.round(setting.value() * 100.0f), 0, 200),
+            percent -> setting.set(percent / 100.0f));
+    }
+
+    /** Maximum integrated fog distance, in blocks. */
+    private static OptionInstance<Integer> fogDistance() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_DISTANCE;
+        return new OptionInstance<>(
+            "caustica.options.rt.fogDistance",
+            OptionInstance.cachedConstantTooltip(
+                    Component.translatable("caustica.options.rt.fogDistance.tooltip")),
+            (caption, blocks) -> Options.genericValueLabel(caption, Component.literal(blocks + " blocks")),
+            new OptionInstance.IntRange(64, 512),
+            Math.clamp(Math.round(setting.value()), 64, 512),
+            blocks -> setting.set(blocks.floatValue()));
     }
 
     private static OptionInstance<Integer> percent(String captionKey, FloatSetting setting) {

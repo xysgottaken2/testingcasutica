@@ -825,6 +825,32 @@ public final class CausticaConfig {
              */
             public static final FloatSetting CLOUD_COVERAGE =
                     clampedFloat("caustica.rt.cloudCoverage", "composite.cloud-coverage", 0.55f, 0.0f, 1.0f);
+            /**
+             * Volumetric fog integrated in world space along the actual path, not a screen-space layer.
+             * The march is bounded by the nearest world hit, so a mountain or a cave wall occludes the
+             * fog behind it; below the reference surface height the density is cut off so enclosed
+             * caves stay clear. Water and glass keep their own extinction and are never fogged from
+             * the inside.
+             */
+            public static final BooleanSetting FOG =
+                    bool("caustica.rt.fog", "composite.fog", true);
+            /**
+             * Sun shafts through the fog (single-scattering god rays). Disabled independently of the
+             * fog density; it uses the same world-space march and scene visibility, so shafts are cut
+             * off by buildings and terrain instead of gluing to the sky.
+             */
+            public static final BooleanSetting FOG_GOD_RAYS =
+                    bool("caustica.rt.fogGodRays", "composite.fog-god-rays", true);
+            /** Fog optical density, 0..1. 0 disables the whole fog path; higher values thicken haze. */
+            public static final FloatSetting FOG_DENSITY =
+                    clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.35f, 0.0f, 1.0f);
+            /** How strongly the god-ray term brightens the fog in sun-lit shafts, 0..2. */
+            public static final FloatSetting FOG_GOD_RAYS_STRENGTH =
+                    clampedFloat("caustica.rt.fogGodRaysStrength", "composite.fog-god-rays-strength",
+                            0.75f, 0.0f, 2.0f);
+            /** Maximum distance (blocks) the fog march integrates; also the fog's far fade. */
+            public static final FloatSetting FOG_DISTANCE =
+                    clampedFloat("caustica.rt.fogDistance", "composite.fog-distance", 256.0f, 64.0f, 512.0f);
             public static final FloatSetting SUN_ANGULAR_RADIUS =
                     radians("caustica.rt.sunAngularRadius", "composite.sun-angular-radius-deg", 0.6f);
             public static final FloatSetting MOON_ANGULAR_RADIUS =

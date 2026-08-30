@@ -30,6 +30,7 @@ import trace_ser;
 #endif
 import lighting;
 import clouds;
+import fog;
 import sharc;
 
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
@@ -62,12 +63,14 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     //
     // Pass A hands back a segment that starts AT THE CAMERA for an opaque hit, but for a dielectric
     // (water, glass, ice) it consumes the camera->surface hop itself and queues continuations that
-    // start at the surface. Pass A has no radiance accumulator, so it cannot apply the cloud crossed on
-    // the way there — and Pass B's loop only ever sees the post-surface segments. The result was the
-    // reported bug: looking down at an ocean from above the clouds, the water was drawn at full
-    // brightness with no cloud in front of it, while the terrain beside it was correctly dimmed.
+    // start at the surface. Pass A has no radiance accumulator, so it cannot apply the cloud or the
+    // world fog crossed on the way there — and Pass B's loop only ever sees the post-surface segments.
+    // The result was the reported bug: looking down at an ocean from above the clouds, the water was
+    // drawn at full brightness with no cloud in front of it, while the terrain beside it was correctly
+    // dimmed. Fog has the same shape: a dielectric prefix starts with a full camera->surface air
+    // distance, which the camera segment would have integrated if Pass A owned an accumulator.
     //
-    // Recover it here by integrating the cloud over camera -> seg.ro for any segment that does not
+    // Recover it here by integrating both media over camera -> seg.ro for any segment that does not
     // start at the camera. Applying it to BOTH split branches is exact rather than a double count: the
     // two branches carry throughputs F and (1 - F), so their prefix contributions sum to exactly one
     // crossing (F*S + (1-F)*S = S), and each branch's own throughput picks up the same transmittance
@@ -76,9 +79,20 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         float3 toStart = ro - worldPush.camOffset;
         float prefixDist = length(toStart);
         if (prefixDist > 1.0e-4) {
+            float3 prefixDir = toStart / prefixDist;
+            // Atmospheric fog belongs in air only. If the eye is submerged, the camera->surface prefix
+            // already happened inside the water medium, whose own Beer-Lambert extinction is carried
+            // by the dielectric path.
+            if (!cameraSubmerged()) {
+                FogVolume preFog = fogSegment(float3(0.0, 0.0, 0.0), prefixDir,
+                                              prefixDist, seg.showCelestial);
+                L += throughput * preFog.scatter;
+                Lspec += throughput * preFog.scatter;
+                throughput *= preFog.transmittance;
+            }
             // The cloud crossing belongs to the camera->surface prefix, so it is recovered here in
             // full rather than applied per split branch.
-            CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
+            CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), prefixDir,
                                            prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
             L += throughput * pre.scatter;
             Lspec += throughput * pre.scatter;
@@ -161,6 +175,27 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 hitSpec = payload.hitT;
             }
             pendingHitChannel = 0;
+        }
+
+        // World-space volumetric fog along the segment actually travelled. Air medium only: inside a
+        // water/glass volume the dielectric's own extinction is the only participating medium, so
+        // atmospheric fog is neither double-counted there nor allowed to paint over the water surface.
+        // Bounded by the real hit distance, so fog ahead of a mountain or cave wall is integrated and
+        // fog behind it is never reached. A miss falls back to the configured fog distance.
+        {
+            bool fogAir = !medium.current.water && medium.current.ior <= 1.01;
+            if (fogAir) {
+                float fogDist = payload.hitT >= 0.0 ? payload.hitT : 10000.0;
+                FogVolume segFog = fogSegment(ro - worldPush.camOffset, rd,
+                                              fogDist, showCelestial);
+                L += throughput * segFog.scatter;
+                if (channel == 2) {
+                    Lspec += throughput * segFog.scatter;
+                } else {
+                    Ldiff += throughput * segFog.scatter;
+                }
+                throughput *= segFog.transmittance;
+            }
         }
 
         if (payload.hitT < 0.0) {
