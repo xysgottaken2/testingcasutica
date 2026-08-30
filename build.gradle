@@ -314,7 +314,7 @@ tasks.named("test", Test) {
 			}
 
 			void afterTest(TestDescriptor descriptor, TestResult result) {
-				if (result.failureCount > 0 && !result.exceptions.isEmpty()) {
+				if (result.failedCount > 0 && !result.exceptions.isEmpty()) {
 					CiDiagnostics.annotate("TEST ${descriptor.className}.${descriptor.name}: ${result.exceptions.get(0).message}")
 				}
 			}
