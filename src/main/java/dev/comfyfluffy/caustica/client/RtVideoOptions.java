@@ -183,6 +183,8 @@ public final class RtVideoOptions {
             fog(),
             fogVolumetric(),
             fogVolumetricStrength(),
+            fogVolumetricDensity(),
+            fogVolumetricDistance(),
             fogSunGlow(),
             weatherLighting(),
             metallicShininess(),
@@ -774,6 +776,45 @@ public final class RtVideoOptions {
     private static OptionInstance<Integer> fogSunGlow() {
         return percent("caustica.options.rt.fogSunGlow",
                 CausticaConfig.Rt.Composite.FOG_SUN_GLOW);
+    }
+
+    /**
+     * Volumetric fog density, 0..200% (100% = the calibrated day/night/rain value). Scales the per-block
+     * extinction, so this thins the haze toward nothing or thickens it into a much denser veil.
+     */
+    private static OptionInstance<Integer> fogVolumetricDensity() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DENSITY;
+        return new OptionInstance<>(
+            "caustica.options.rt.fogVolumetricDensity",
+            OptionInstance.cachedConstantTooltip(
+                    Component.translatable("caustica.options.rt.fogVolumetricDensity.tooltip")),
+            (caption, percent) -> Options.genericValueLabel(caption, Component.literal(percent + "%")),
+            new OptionInstance.IntRange(0, 200),
+            Math.clamp(Math.round(setting.value() * 100.0f), 0, 200),
+            percent -> setting.set(percent / 100.0f));
+    }
+
+    /**
+     * Volumetric fog reach, in blocks. 0 = "auto" (the render-distance derived plane the haze was
+     * calibrated against); otherwise a pinned reach. Displayed as a discrete block slider so it reads as a
+     * distance, not a percentage.
+     */
+    private static OptionInstance<Integer> fogVolumetricDistance() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DISTANCE;
+        int min = 0, max = 768, step = 48;
+        int steps = (max - min) / step;
+        int initial = Math.clamp(Math.round((setting.value() - min) / step), 0, steps);
+        return new OptionInstance<>(
+            "caustica.options.rt.fogVolumetricDistance",
+            OptionInstance.cachedConstantTooltip(
+                    Component.translatable("caustica.options.rt.fogVolumetricDistance.tooltip")),
+            (caption, pos) -> Options.genericValueLabel(caption,
+                    pos == 0
+                            ? Component.translatable("caustica.options.rt.fogVolumetricDistance.auto")
+                            : Component.literal((min + pos * step) + " blocks")),
+            new OptionInstance.IntRange(0, steps),
+            initial,
+            pos -> setting.set((float) (min + pos * step)));
     }
 
     /** Rain/thunderstorm sun-and-sky dimming. Off keeps clear-sky lighting in every weather state. */

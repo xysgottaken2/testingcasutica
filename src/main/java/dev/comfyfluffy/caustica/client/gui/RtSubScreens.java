@@ -257,6 +257,8 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Composite.FOG,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_STRENGTH,
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DENSITY,
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DISTANCE,
                 CausticaConfig.Rt.Composite.FOG_SUN_GLOW,
                 CausticaConfig.Rt.Composite.WEATHER_LIGHTING,
                 CausticaConfig.Rt.Composite.METALLIC_SHININESS);

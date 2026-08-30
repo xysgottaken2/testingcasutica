@@ -101,9 +101,10 @@ public struct WorldPush {
     public float4   ambientFog;       // xyz in-scatter radiance, w density per block (0 = no fog)
     // Path-integrated volumetric fog (fog.slang). Only meaningful for the Overworld, and only while
     // FEATURE_FOG_VOLUMETRIC is set. x = march/fade distance (blocks), y = strength 0..1 (also the
-    // opacity ceiling, like the cloud opacity slider), z = sun-glow strength 0..1, w reserved. Density
-    // (sigma per block) and the haze in-scatter colour come from ambientFog, so switching the renderer
-    // over to this path-integrated form keeps the calibrated per-state look while making it physical.
+    // opacity ceiling, like the cloud opacity slider), z = sun-glow strength 0..1, w = density scale
+    // multiplier (1 = the calibrated day/night/rain value). Density (sigma per block) and the haze
+    // in-scatter colour come from ambientFog, so switching the renderer over to this path-integrated
+    // form keeps the calibrated per-state look while making it physical.
     public float4   fogParams;
     // Flat vanilla-style cloud deck (clouds.slang). Coverage already folds in the weather on the Java
     // side (RtComposite.cloudState), so the shader reads one resolved state rather than re-deriving the

@@ -2495,13 +2495,16 @@ public final class RtComposite {
         if (!CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()) {
             return new Float4(0f, 0f, 0f, 0f);
         }
-        // Same render-distance-derived plane the screen-space haze was calibrated against, so the fog
-        // lands in the same place per view distance rather than being a fixed constant.
+        // x = march/fade distance in blocks. 0 in the config means "auto": the render-distance-derived
+        // plane the screen-space haze was calibrated against, so the fog lands where terrain actually
+        // ends per view distance. A positive value overrides it with a fixed reach.
+        float distanceSetting = CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DISTANCE.value();
+        float distance = distanceSetting > 0f ? distanceSetting : fogDistanceBlocks();
         return new Float4(
-                fogDistanceBlocks(),
+                distance,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_STRENGTH.value(),
                 CausticaConfig.Rt.Composite.FOG_SUN_GLOW.value(),
-                0f);
+                CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DENSITY.value());
     }
 
     /**

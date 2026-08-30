@@ -99,6 +99,37 @@ final class RtFogShaderRegressionTest {
     }
 
     @Test
+    void volumetricFogIsCulledPerPixelAndFogsTheWaterPrefix() throws IOException {
+        String world = Files.readString(WORLD);
+        String guides = Files.readString(GUIDES);
+
+        // The selective sky-exposure mask must still be computed when the volumetric facility is on,
+        // because world.rgen reads it back as the per-pixel cull distance — a covered cave/room/overhang
+        // stores zero so the per-segment medium is suppressed there.
+        String mask = slice(guides, "public float maskedFogDepth", "// Static surfaces");
+        assertTrue(mask.contains("VisibilityResult sky = visibility"),
+                "the sky-visibility mask must be computed even when volumetric fog is active (it is the cull source)");
+        assertFalse(mask.contains("FEATURE_FOG_VOLUMETRIC"),
+                "maskedFogDepth must not skip the cull ray when volumetric fog is active");
+
+        // world.rgen reads the per-pixel cull and caps every fog march with it, so an enclosed pixel
+        // reads as identity (no fog pooling inside caves/rooms/overhangs).
+        assertTrue(world.contains("float fogCull = max(gFogDepthMask[pix], 0.0);"),
+                "the per-pixel selective cull must be read once per path");
+        assertTrue(world.contains("min(prefixDist, fogCull)"),
+                "the camera->interface prefix fog must be capped by the selective cull");
+        assertTrue(world.contains("min(payload.hitT, fogCull)"),
+                "the per-hit fog must be capped by the selective cull");
+
+        // The water/glass prefix is guarded on the CAMERA being submerged, not on the segment's own medium:
+        // otherwise the refracted (transmitted) branch is wrongly treated as water and its fog dropped, so
+        // a distant lake/lava surface reads as unfogged.
+        String prefix = slice(world, "Volumetric fog over the camera->interface prefix", "The authored screen-space medium");
+        assertTrue(prefix.contains("!cameraSubmerged()"),
+                "the camera->interface prefix fog must be guarded on cameraSubmerged() so refraction keeps fog");
+    }
+
+    @Test
     void fogToggleCannotFlattenDimensionSkyboxes() throws IOException {
         String miss = Files.readString(MISS);
 

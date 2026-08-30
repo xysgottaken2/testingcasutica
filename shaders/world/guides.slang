@@ -43,14 +43,15 @@ public static SpecSurface gv_spec = {};
 // keep their authored dimension-wide haze and therefore use full depth without spending a vertical ray.
 // Atmospheric fog is suppressed while the camera is underwater: the dielectric medium already owns that
 // extinction and in-scatter.
+//
+// This mask powers BOTH fog paths. When the screen-space composite is active it is the fog depth it
+// composites over. When the path-integrated volumetric fog (FEATURE_FOG_VOLUMETRIC) is active the same
+// mask is read in world.rgen as the per-pixel culling distance: a covered cave/interior stores zero, so
+// the per-segment medium is suppressed there instead of fogging every enclosed air column. That is what
+// keeps the volumetric fog out of caves, rooms and overhangs — the same selective exclusion the old
+// screen-space haze had.
 public float maskedFogDepth(float3 hitPos, float hitDepth) {
     if (!fogEnabled() || cameraSubmerged()) {
-        return 0.0;
-    }
-    // Path-integrated volumetric fog replaces the screen-space composite for the Overworld (and the
-    // per-pixel depth mask that feeds it), so skip the sky-visibility ray here — it would only be wasted.
-    if (worldFeature(worldPush, FEATURE_FOG_VOLUMETRIC)
-            && worldPush.dimension == DIMENSION_OVERWORLD) {
         return 0.0;
     }
     float depth = max(hitDepth, 0.0);

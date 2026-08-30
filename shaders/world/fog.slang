@@ -7,7 +7,12 @@
 // screen-space composite used (Overworld day/night/rain colours + a per-block sigma calibrated against
 // the render distance). So switching the renderer over to this path-integrated form keeps the calibrated
 // look while making it physical. The extra WorldPush.fogParams lane carries the march/fade distance, the
-// overall strength (also an opacity ceiling), and the sun-glow strength.
+// overall strength (also an opacity ceiling), the sun-glow strength, and the density scale multiplier.
+//
+// The caller additionally caps each march by the per-pixel selective cull (WorldPush.ambientFog is the
+// density source, but fogCull = gFogDepthMask is passed as maxDistance in world.rgen): enclosed caves,
+// rooms and overhangs have a zero cull, so the medium is suppressed there instead of fogging every
+// enclosed air column.
 //
 // Only world_common is imported. Like clouds.slang, this module must stay usable from passes that cannot
 // pull in world_core (world.rmiss must not), so every entry point takes the WorldPush explicitly and no
@@ -48,16 +53,19 @@ float fogPhase(float cosT) {
 }
 
 /**
- * Whether this frame draws volumetric fog on path segments. Gated on the feature bit, the Overworld
- * (the Nether and End keep their authored screen-space haze, which is not marched), and a non-zero
- * density lane — so a strength sliders bottoming out or a mismatched push short-circuits to the exact
- * pre-fog result (bit-identical output when the feature is off).
+ * Whether this frame draws volumetric fog on path segments. Gated on the feature bit and the Overworld
+ * (the Nether and End keep their authored screen-space haze, which is not marched), plus a non-zero
+ * density source — so a mismatched push short-circuits to the exact pre-fog result (bit-identical output
+ * when the feature is off).
  */
 public bool fogVolumetricEnabled(WorldPush push) {
+    // Strength (fogParams.y) and density (fogParams.w) are deliberately NOT gates: when either is 0 the
+    // finished march is identity (scatter 0, transmittance 1), so "Volumetric Fog" on + Strength 0 = no
+    // fog at all, and the screen-space composite stays disabled for the Overworld. Gating on them would
+    // re-enable the old screen-space pass, contradicting the toggle.
     return worldFeature(push, FEATURE_FOG_VOLUMETRIC)
         && push.dimension == DIMENSION_OVERWORLD
-        && push.ambientFog.w > 0.0
-        && push.fogParams.y > 0.0;
+        && push.ambientFog.w > 0.0;
 }
 
 /**
@@ -83,7 +91,10 @@ public FogVolume fogSegment(WorldPush push, float3 dir, float maxDistance, bool 
     if (!fogVolumetricEnabled(push)) {
         return result;
     }
-    float density = push.ambientFog.w;
+    // Density is the calibrated per-block sigma (ambientFog.w) scaled by the player's density multiplier
+    // (fogParams.w). That multiplier is what the "Fog Density" slider drives, so the haze can be thinned
+    // toward nothing or thickened beyond the calibrated day/night/rain value without touching the colour.
+    float density = push.ambientFog.w * push.fogParams.w;
     float strength = clamp(push.fogParams.y, 0.0, 1.0);
     float fullDist = max(push.fogParams.x, 16.0);
     // Clip the segment to the far plane / full-saturation distance. A short segment keeps its fog; an

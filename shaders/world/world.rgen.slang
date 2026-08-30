@@ -58,6 +58,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     float3 ro = seg.ro;
     float3 rd = seg.rd;
     float3 throughput = seg.throughput;
+    // Per-pixel selective fog cull, written by Pass A (guides.maskedFogDepth): the primary hit's depth
+    // scaled by its sky exposure. 0 = a covered cave/room/overhang (or a submerged camera), so the fog on
+    // this pixel's path is suppressed entirely; otherwise it caps how far the fog may integrate, keeping
+    // the volumetric medium out of enclosed air columns the way the screen-space mask used to.
+    float fogCull = max(gFogDepthMask[pix], 0.0);
 
     // ---- Cloud over the prefix Pass A already consumed.
     //
@@ -82,13 +87,16 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 // prefix contributions sum to exactly one crossing (F*S + (1-F)*S = S), and each branch's own
                 // throughput picks up the same transmittance the real prefix would have applied.
                 //
-                // Guarded on the medium the consumed camera->interface hop travelled through — air only,
-                // matching the per-hit fog below. If the camera begins inside water/glass (a split off the
-                // submerged interface), the prefix column is the dielectric itself and the atmospheric fog
-                // must not be layered on top of its own participating medium.
-                if (!any(seg.medium.current.extinction > 0.0)) {
+                // Guarded on whether the CAMERA is submerged, not on the segment's own medium. The prefix is
+                // the consumed camera->surface hop, and its medium is whatever the camera eye sits in. When
+                // the camera is above water/glass the prefix is an air column, so the atmospheric fog applies
+                // to BOTH split branches (the reflected and the transmitted one) and the surface reads as
+                // fogged — checking seg.medium here would wrongly mark the transmitted (refracted) branch as
+                // water and drop its fog. When the camera IS submerged the prefix is the dielectric column
+                // itself and is left to the medium's own extinction/in-scatter, so no fog.
+                if (!cameraSubmerged()) {
                     FogVolume preFog = fogSegment(worldPush, toStart / prefixDist,
-                                                  prefixDist, seg.showCelestial);
+                                                  min(prefixDist, fogCull), seg.showCelestial);
                     L += throughput * preFog.scatter;
                     Lspec += throughput * preFog.scatter;
                     throughput *= preFog.transmittance;
@@ -239,8 +247,10 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         // point, so a swimmer's underwater view stays fog-free.
         if (!any(medium.current.extinction > 0.0)) {
             // showCelestial marks the rays whose fog is seen directly (camera + specular bounces), so it
-            // selects the full march; diffuse continuations take the cheap one — see fogSegment.
-            FogVolume segFog = fogSegment(worldPush, rd, payload.hitT, showCelestial);
+            // selects the full march; diffuse continuations take the cheap one — see fogSegment. The fog is
+            // capped by the primary pixel's selective cull (fogCull), so an enclosed cave/room/overhang
+            // reads as identity and the fog never pools inside it.
+            FogVolume segFog = fogSegment(worldPush, rd, min(payload.hitT, fogCull), showCelestial);
             L += throughput * segFog.scatter;
             if (channel == 2) {
                 Lspec += throughput * segFog.scatter;

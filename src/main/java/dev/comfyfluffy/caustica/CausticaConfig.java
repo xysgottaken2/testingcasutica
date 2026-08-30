@@ -772,6 +772,24 @@ public final class CausticaConfig {
             public static final FloatSetting FOG_SUN_GLOW =
                     clampedFloat("caustica.rt.fogSunGlow", "composite.fog-sun-glow", 0.2f, 0.0f, 1.0f);
             /**
+             * Density scale of the volumetric fog, 0..2 (1 = the calibrated day/night/rain value). Scales
+             * the per-block extinction, so 0 thins the haze to nothing and 2 thickens it toward a much
+             * closer, denser veil. Independent of the strength (opacity ceiling) and so a second, more
+             * physical way to dial how much air there is.
+             */
+            public static final FloatSetting FOG_VOLUMETRIC_DENSITY =
+                    clampedFloat("caustica.rt.fogVolumetricDensity", "composite.fog-volumetric-density",
+                            1.0f, 0.0f, 2.0f);
+            /**
+             * How far the volumetric fog reaches, in blocks. 0 (the default) is "auto": the render-distance
+             * derived plane the screen-space haze was calibrated against, so the fog lands where terrain
+             * actually ends per view distance. A positive value pins a fixed reach instead, so a fog that
+             * reads too distant or too close can be pulled in or pushed out on a fog-of-war style look.
+             */
+            public static final FloatSetting FOG_VOLUMETRIC_DISTANCE =
+                    clampedFloat("caustica.rt.fogVolumetricDistance", "composite.fog-volumetric-distance",
+                            0.0f, 0.0f, 768.0f);
+            /**
              * Weather-driven lighting. Rain and thunderstorms attenuate the sun/moon NEE radiance,
              * darken and desaturate the sky toward an overcast grey, hide the celestial discs and the
              * stars behind the cloud deck, and add a light haze to the air.
