@@ -12,7 +12,7 @@
 //     glass paints the beam), and the analytic cloud shadow dims fog under a cloud bank exactly
 //     like the terrain below it.
 //   * BLOCK EMITTERS — torches, lava, glowstone, lanterns... gathered per segment from the SAME
-//     light grid the ReSTIR emitter sampling uses, shaded with each emitter's own radiance (a soul
+//     emitter light grid the ReSTIR sampling uses, shaded with each emitter's own radiance (a soul
 //     torch glows cyan, lava deep orange) and gated by a real shadow ray. A torch is not the sun:
 //     its in-scatter falls off as 1/r^2 around it, so it paints a small local halo in the fog and
 //     nothing else.
@@ -48,9 +48,11 @@
 //   * per-step in-scatter is clamped against the light field that produced it, so no single sample
 //     can out-firefly its own light and poison the temporal history.
 //
-// The gathered emitters live in flat local arrays (pos/flux/vis), not a struct-of-arrays record:
-// dynamically indexed local arrays are the one shape this codebase's slangc is known to accept,
-// and the gather is small enough that the scratch cost is irrelevant next to its shadow rays.
+// DEPENDENCY DISCIPLINE: this module imports exactly the set the first shipped fog compiled with
+// (world_common, math, clouds, trace) and uses only scalar locals — the two strongest emitters ride
+// in named slots rather than an array. The few light-record helpers it needs are inlined below,
+// arithmetic-identical to lighting.slang's, so fog never grows an import edge nothing else in the
+// tree has proven against this slangc.
 //
 // Like clouds.slang, entry points take the WorldPush explicitly — EXCEPT the shadow rays, which
 // need the raygen bindings: this module is imported by world.rgen only (a miss shader cannot trace).
@@ -59,7 +61,6 @@ import world_common;
 import math;
 import clouds;
 import trace;
-import lighting;
 
 // ---- Shape ---------------------------------------------------------------------------------------
 
@@ -115,10 +116,6 @@ public static const float FOG_INSCATTER_LIGHT_MULTIPLE = 8.0;
 
 // ---- Local emitters (torches, lava, glowstone, held item) -----------------------------------------
 
-// Kept emitters per segment. Four is enough to halo a cluster (a torch on a wall, a lava pocket)
-// without turning the gather into a second RIS pass; anything past the strongest four contributes
-// an imperceptible amount to a low-frequency effect.
-public static const int FOG_MAX_LOCAL_LIGHTS = 4;
 // Hard cap on Light records scanned per gather. Bounds the dependent-load chain (span -> record)
 // the RIS cost profile warned about; the strongest emitters surface early anyway.
 public static const int FOG_MAX_LIGHT_CANDIDATES = 16;
@@ -168,6 +165,44 @@ float fogPhase(WorldPush push, float cosT) {
     float g = strength * 0.85;
     float lobeWeight = 0.30 + 0.55 * strength;
     return lerp(FOG_INV_4PI, hg(cosT, g), lobeWeight);
+}
+
+// ---- Inlined light-record helpers -----------------------------------------------------------------
+//
+// Arithmetic-identical copies of lighting.slang's unpack/radiance/area helpers (and the grid-cell
+// lookup body). fog.slang deliberately does not import lighting: the emitter types themselves live
+// in world_common, and keeping this module's import set at exactly what the first shipped version
+// proved against this slangc is worth twenty duplicated lines. If the two ever drift, the fog halo
+// dims wrong — it cannot crash — and the regression test pins the call sites to these names.
+
+float fogUnpackUnsignedFloat(uint bits, uint mantissaBits) {
+    uint mantissaMask = (1u << mantissaBits) - 1u;
+    uint mantissa = bits & mantissaMask;
+    uint exponent = (bits >> mantissaBits) & 31u;
+    if (exponent == 0u) {
+        return float(mantissa) * exp2(float(1 - 15 - int(mantissaBits)));
+    }
+    return (1.0 + float(mantissa) / float(1u << mantissaBits))
+            * exp2(float(int(exponent) - 15));
+}
+
+float3 fogLightRadiance(Light light) {
+    return float3(fogUnpackUnsignedFloat(light.le & 0x7ffu, 6u),
+            fogUnpackUnsignedFloat((light.le >> 11u) & 0x7ffu, 6u),
+            fogUnpackUnsignedFloat((light.le >> 22u) & 0x3ffu, 5u));
+}
+
+float3 fogLightHalfU(Light light) {
+    return float3(unpackHalf2(light.halfUxy), unpackHalf2(light.halfUzVx).x);
+}
+
+float3 fogLightHalfV(Light light) {
+    return float3(unpackHalf2(light.halfUzVx).y, unpackHalf2(light.halfVyz));
+}
+
+/** The rect spans 2U x 2V, so its area is 4|U x V| — the emitter's emitting area. */
+float fogLightArea(Light light) {
+    return 4.0 * length(cross(fogLightHalfU(light), fogLightHalfV(light)));
 }
 
 /**
@@ -254,86 +289,100 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
     // ---- Local emitter gather (torches, lava, glowstone): once per segment, at the midpoint.
     //
     // The SAME light grid the ReSTIR emitter sampling uses (16-block cells of section light ranges)
-    // supplies the candidates; the strongest few by irradiance at the midpoint are kept, and each
-    // kept emitter gets ONE shadow ray (stopping just short of the emitting surface, the same
-    // convention the hand-light NEE uses). A torch behind a wall does not halo the fog on the other
-    // side of it, a stained-glass tint passes through the shadow ray's own transmittance, and the
-    // cost is a fixed handful of rays per SEGMENT — never per sample. Emitter radiance follows the
-    // runtime block-light intensity lane, so the "Block Light" slider dims torch fog with the same
-    // knob that dims the torch itself. No grid published (no emitters, or the global-only
-    // fallback) => no local glow, exactly like the surface lighting's own degradation.
-    float3 lightPos[4];
-    float3 lightFlux[4];
-    float3 lightVis[4];
-    float lightScore[4];
-    int lightCount = 0;
+    // supplies the candidates. The TWO strongest by irradiance at the midpoint are kept — in named
+    // scalar slots (A strongest, B runner-up), per the dependency-discipline note in the module
+    // header — and each kept emitter gets ONE shadow ray (stopping just short of the emitting
+    // surface, the same convention the hand-light NEE uses). A torch behind a wall does not halo
+    // the fog on the other side of it, a stained-glass tint passes through the shadow ray's own
+    // transmittance, and the cost is a fixed handful of rays per SEGMENT — never per sample.
+    // Emitter radiance follows the runtime block-light intensity lane, so the "Block Light" slider
+    // dims torch fog with the same knob that dims the torch itself. No grid published (no
+    // emitters, or the global-only fallback) => no local glow, like the surface lighting's own
+    // degradation.
+    float3 lightPosA = float3(0.0, 0.0, 0.0);
+    float3 lightFluxA = float3(0.0, 0.0, 0.0);
+    float3 lightVisA = float3(0.0, 0.0, 0.0);
+    float lightScoreA = 0.0;
+    float3 lightPosB = float3(0.0, 0.0, 0.0);
+    float3 lightFluxB = float3(0.0, 0.0, 0.0);
+    float3 lightVisB = float3(0.0, 0.0, 0.0);
+    float lightScoreB = 0.0;
     float localPeak = 0.0;
     if (pc.lightBufAddr != 0u && pc.lightGridCellAddr != 0u && pc.lightGridSpanAddr != 0u
             && worldPush.lightCount > 0u) {
-        LightGridCell cell;
-        int3 cellCoord;
-        if (findLightGridCell(midRel, cell, cellCoord)) {
-            ConstPtr<Light> lightBuf = ConstPtr<Light>(pc.lightBufAddr);
-            ConstPtr<LightGridSpan> spans = ConstPtr<LightGridSpan>(pc.lightGridSpanAddr);
-            float emitterScale = max(worldPush.lightScales.x, 0.0);
-            int scanned = 0;
-            for (uint s = 0u; s < cell.spanCount; ++s) {
-                if (scanned >= FOG_MAX_LIGHT_CANDIDATES) {
-                    break;
-                }
-                LightGridSpan span = spans[cell.spanOffset + s];
-                uint spanLights = span.packedLightCounts & 0xffffu; // this span's own section range
-                for (uint i = 0u; i < spanLights; ++i) {
+        // Grid-cell lookup, inlined from lighting.slang's findLightGridCell.
+        int3 cellCoord = int3(floor((midRel - worldPush.lightGridOrigin.xyz)
+                / worldPush.lightGridOrigin.w));
+        if (cellCoord.x >= 0 && cellCoord.y >= 0 && cellCoord.z >= 0
+                && cellCoord.x < worldPush.lightGridDims.x
+                && cellCoord.y < worldPush.lightGridDims.y
+                && cellCoord.z < worldPush.lightGridDims.z) {
+            uint linearCell = (uint(cellCoord.z) * uint(worldPush.lightGridDims.y)
+                    + uint(cellCoord.y)) * uint(worldPush.lightGridDims.x) + uint(cellCoord.x);
+            LightGridCell cell = ConstPtr<LightGridCell>(pc.lightGridCellAddr)[linearCell];
+            if (cell.spanCount > 0u) {
+                ConstPtr<Light> lightBuf = ConstPtr<Light>(pc.lightBufAddr);
+                ConstPtr<LightGridSpan> spans = ConstPtr<LightGridSpan>(pc.lightGridSpanAddr);
+                float emitterScale = max(worldPush.lightScales.x, 0.0);
+                int scanned = 0;
+                for (uint s = 0u; s < cell.spanCount; ++s) {
                     if (scanned >= FOG_MAX_LIGHT_CANDIDATES) {
                         break;
                     }
-                    scanned += 1;
-                    Light light = lightBuf[span.firstLight + i];
-                    float3 flux = lightRadiance(light) * (emitterScale * lightArea(light));
-                    float fluxLum = luminance(flux);
-                    if (fluxLum <= 0.0) {
-                        continue;
-                    }
-                    float3 delta = light.pos - midAbs;
-                    float r2 = dot(delta, delta);
-                    if (r2 > FOG_LIGHT_RADIUS_SQ) {
-                        continue;
-                    }
-                    float score = fluxLum / max(r2, 1.0); // irradiance estimate at the midpoint
-                    localPeak = max(localPeak, score);
-                    // Keep the strongest FOG_MAX_LOCAL_LIGHTS by score: fill an empty slot, or
-                    // evict the weakest kept emitter when the newcomer beats it.
-                    int slot = -1;
-                    if (lightCount < FOG_MAX_LOCAL_LIGHTS) {
-                        slot = lightCount;
-                        lightCount += 1;
-                    } else {
-                        int weakest = 0;
-                        for (int k = 1; k < FOG_MAX_LOCAL_LIGHTS; ++k) {
-                            if (lightScore[k] < lightScore[weakest]) {
-                                weakest = k;
-                            }
+                    LightGridSpan span = spans[cell.spanOffset + s];
+                    uint spanLights = span.packedLightCounts & 0xffffu; // own section range
+                    for (uint i = 0u; i < spanLights; ++i) {
+                        if (scanned >= FOG_MAX_LIGHT_CANDIDATES) {
+                            break;
                         }
-                        if (score > lightScore[weakest]) {
-                            slot = weakest;
+                        scanned += 1;
+                        Light light = lightBuf[span.firstLight + i];
+                        float3 flux = fogLightRadiance(light) * (emitterScale * fogLightArea(light));
+                        float fluxLum = luminance(flux);
+                        if (fluxLum <= 0.0) {
+                            continue;
                         }
-                    }
-                    if (slot >= 0) {
-                        lightPos[slot] = light.pos;
-                        lightFlux[slot] = flux;
-                        lightVis[slot] = float3(1.0, 1.0, 1.0); // replaced by the probe below
-                        lightScore[slot] = score;
+                        float3 delta = light.pos - midAbs;
+                        float r2 = dot(delta, delta);
+                        if (r2 > FOG_LIGHT_RADIUS_SQ) {
+                            continue;
+                        }
+                        float score = fluxLum / max(r2, 1.0); // irradiance estimate at the midpoint
+                        localPeak = max(localPeak, score);
+                        // Keep the strongest two: a new leader demotes A into B; a runner-up
+                        // replaces B. Everything else is dropped.
+                        if (score > lightScoreA) {
+                            lightPosB = lightPosA;
+                            lightFluxB = lightFluxA;
+                            lightVisB = lightVisA;
+                            lightScoreB = lightScoreA;
+                            lightPosA = light.pos;
+                            lightFluxA = flux;
+                            lightVisA = float3(1.0, 1.0, 1.0); // replaced by the probe below
+                            lightScoreA = score;
+                        } else if (score > lightScoreB) {
+                            lightPosB = light.pos;
+                            lightFluxB = flux;
+                            lightVisB = float3(1.0, 1.0, 1.0);
+                            lightScoreB = score;
+                        }
                     }
                 }
             }
         }
     }
     // Per-kept-emitter visibility: midpoint -> emitter, stopping just short of the surface.
-    for (int k = 0; k < lightCount; ++k) {
-        float3 delta = lightPos[k] - midAbs;
+    if (lightScoreA > 0.0) {
+        float3 delta = lightPosA - midAbs;
         float dist = length(delta);
-        float3 ldir = dist > 1.0e-3 ? delta / dist : float3(0.0, 1.0, 0.0);
-        lightVis[k] = visibility(midAbs, ldir, max(dist - 0.25, 2.0 * RAY_TMIN)).transmittance;
+        float3 ldirA = dist > 1.0e-3 ? delta / dist : float3(0.0, 1.0, 0.0);
+        lightVisA = visibility(midAbs, ldirA, max(dist - 0.25, 2.0 * RAY_TMIN)).transmittance;
+    }
+    if (lightScoreB > 0.0) {
+        float3 delta = lightPosB - midAbs;
+        float dist = length(delta);
+        float3 ldirB = dist > 1.0e-3 ? delta / dist : float3(0.0, 1.0, 0.0);
+        lightVisB = visibility(midAbs, ldirB, max(dist - 0.25, 2.0 * RAY_TMIN)).transmittance;
     }
 
     // Held-item light: analytic halo, same intensity/tint lanes the surface hand-light NEE reads.
@@ -403,11 +452,18 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
         // convention handLightIrradiance uses). Visibility is the per-emitter segment ray resolved
         // above — constant along the segment, never per sample.
         float3 localTerm = float3(0.0, 0.0, 0.0);
-        for (int li = 0; li < lightCount; ++li) {
-            float3 delta = lightPos[li] - sampleAbs;
+        if (lightScoreA > 0.0) {
+            float3 delta = lightPosA - sampleAbs;
             float r2 = dot(delta, delta);
             if (r2 < FOG_LIGHT_RADIUS_SQ) {
-                localTerm += lightFlux[li] * lightVis[li] * (FOG_INV_4PI / max(r2, 0.25));
+                localTerm += lightFluxA * lightVisA * (FOG_INV_4PI / max(r2, 0.25));
+            }
+        }
+        if (lightScoreB > 0.0) {
+            float3 delta = lightPosB - sampleAbs;
+            float r2 = dot(delta, delta);
+            if (r2 < FOG_LIGHT_RADIUS_SQ) {
+                localTerm += lightFluxB * lightVisB * (FOG_INV_4PI / max(r2, 0.25));
             }
         }
         // Held-item halo: same lanes as the surface hand-light NEE (intensity x dynamic scale,
