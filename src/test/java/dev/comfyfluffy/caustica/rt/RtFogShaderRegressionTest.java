@@ -75,21 +75,20 @@ final class RtFogShaderRegressionTest {
     @Test
     void fogIsLitBySceneEmitters() throws IOException {
         String fog = Files.readString(FOG);
-        String gather = slice(fog, "FogLightSet fogGatherLights", "public FogVolume fogSegment");
         String march = slice(fog, "public FogVolume fogSegment", "public float3 fogLayer");
 
-        assertTrue(gather.contains("findLightGridCell("),
+        assertTrue(march.contains("findLightGridCell("),
                 "emitter gathering must reuse the RIS light grid, not invent its own source");
-        assertInOrder(gather,
+        assertInOrder(march,
                 "float3 flux = lightRadiance(light) * (emitterScale * lightArea(light));",
                 "float score = fluxLum / max(r2, 1.0);",
-                "set.lights[k].vis = visibility(midAbs, ldir,");
-        assertTrue(gather.contains("max(worldPush.lightScales.x, 0.0)"),
+                "lightVis[k] = visibility(midAbs, ldir,");
+        assertTrue(march.contains("max(worldPush.lightScales.x, 0.0)"),
                 "emitter in-scatter must follow the runtime block-light intensity slider");
 
         assertInOrder(march,
                 "float3 localTerm = float3(0.0, 0.0, 0.0);",
-                "localTerm += local.lights[li].flux * local.lights[li].vis",
+                "localTerm += lightFlux[li] * lightVis[li] * (FOG_INV_4PI / max(r2, 0.25));",
                 "localTerm += handColor * (handIntensity * FOG_INV_4PI / max(r2, 0.25));");
         assertTrue(march.contains("push.handLight.w"),
                 "the held-item light must contribute its own halo to the medium");
