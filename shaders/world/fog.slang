@@ -1,19 +1,28 @@
-// World-space volumetric fog — a Frostbite-style exponential height fog integrated ANALYTICALLY
+// World-space volumetric fog — an analytic exponential height fog integrated in closed form
 // along every radiance segment. Depends on common only (world.rgen imports it next to clouds).
 //
 // WORLD SPACE, NOT SCREEN SPACE. The density is a function of the ray's world position, not of
-// its screen distance: a constant bank below the base height and an exponential falloff above it
-// (WorldPush.fogParams). Every segment integral is BOUNDED by the distance to the nearest scene
-// hit (or the sky), exactly like the cloud deck, so the fog cannot pass through blocks — a segment
-// stops at the first surface it meets, and the fog beyond that surface is never integrated. A
-// mountain shows only the fog in front of it, the valley behind it shows straight through, and a
-// cave only ever carries the thin layer of air between the eye and its nearest wall.
+// its screen distance (WorldPush.fogParams): the fog is a BANK that sits at the base height —
+// densest there, thinning exponentially with altitude above it (fogParams.z), and dissipating
+// fast BELOW it, which is what keeps caves and mine shafts (underground air) fog-free while a
+// valley at bank level keeps its haze:
 //
-// The one-sided density profile is
-//     sigma(h) = A * exp(-k * max(0, h))        h = height above the base (blocks)
-// so the fog accumulates toward the base and thins with altitude — physically, fog settles low and
-// disperses upward. fogParams lanes: x = A, y = base height (camera-relative), z = k, w =
-// in-scatter strength.
+//     sigma(h) = A * exp(-k_up * h)   h >= 0      (above the base; k_up = fogParams.z)
+//     sigma(h) = A * exp( k_dn * h)   h <  0      (below the base; k_dn = FOG_UNDERBASE_FALLOFF)
+//
+// with h = height above the base (blocks). Every segment integral is BOUNDED by the distance
+// to the nearest scene hit (or the sky), exactly like the cloud deck, so the fog cannot pass
+// through blocks — a segment stops at the first surface it meets, and the fog beyond that
+// surface is never integrated. A mountain shows only the fog in front of it, the valley behind
+// it shows straight through, and a cave only ever carries the thin layer of air between the
+// eye and its nearest wall.
+//
+// The fog only exists in AIR: a segment travelling through water or any other dielectric
+// volume is not crossing the fog bank (water owns its own Beer–Lambert extinction). Call sites
+// gate on the segment medium's index of refraction (FOG_AIR_IOR_MAX) before applying it.
+//
+// fogParams lanes: x = A, y = base height (camera-relative), z = k_up, w = in-scatter strength.
+// fogParams2 lanes: x = god-ray scale (multiplier on lightRadiance * HG phase), rest reserved.
 
 import world_common;
 
@@ -25,12 +34,24 @@ static const float FOG_TAU_CAP = 60.0;
 // (the density is constant or decaying, never growing without bound), so a large finite distance
 // is exact enough: past it the missing transmittance is below exp(-FOG_TAU_CAP).
 public static const float FOG_SKY_DISTANCE = 4096.0;
+// The fog bank dissipates below the base much faster than it thins above it: a few blocks under
+// the base level the density is already a small fraction of A, so caves and deep valleys stay
+// essentially clear while the bank hugs the base. Fixed (not a slider): "no fog in caves" is a
+// behaviour, not a taste.
+static const float FOG_UNDERBASE_FALLOFF = 0.3;
+// Medium index of refraction that counts as AIR: airMedium() is exactly 1.0; water is 1.333 and
+// glass/ice above that. A segment in any denser medium is not inside the fog bank.
+public static const float FOG_AIR_IOR_MAX = 1.001;
 // Slightly cool white: the in-scatter is scattered skylight, and this scene's skylight is cool.
 static const float3 FOG_TINT = float3(0.96, 0.99, 1.05);
 // In-scatter brightness relative to the same ambient field the cloud deck shades with (see
 // cloudSkyAmbient). The fog scatters the sky, which is what makes it blend into the horizon
 // instead of floating as an independent white veil.
 static const float FOG_SCATTER_SCALE = 1.4;
+// God rays: forward-scattering anisotropy of fog droplets (Henyey–Greenstein g). 0.75 keeps a
+// tight sun/moon-centred lobe, so the bright shafts only appear when looking TOWARD the light.
+static const float FOG_HG_G = 0.75;
+static const float FOG_PI = 3.14159265359;
 
 /**
  * The fog only exists where the player can stand in it: Overworld (the other dimensions draw
@@ -51,59 +72,63 @@ static float fogHeightAboveBase(WorldPush push, float3 posRel) {
 
 /**
  * Exact integral of the density along o + d*t for t in [0, tMax]. All three ray orientations
- * (rising, falling, horizontal) have closed forms for the one-sided profile, so the fog costs a
- * handful of ALU ops and no march regardless of distance. The exponent is capped so a
- * pathological push value can only saturate to full fog, never overflow to NaN.
+ * (rising, falling, horizontal) have closed forms for the two-sided profile, so the fog costs a
+ * handful of ALU ops and no march regardless of distance. Every exponential is bounded by its
+ * argument staying <= 1 or being capped, so a pathological push value can only saturate to full
+ * fog, never overflow to NaN.
  */
 public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float tMax) {
     float A = push.fogParams.x;
     if (A <= 0.0 || tMax <= 0.0) {
         return 0.0;
     }
-    float k = max(push.fogParams.z, 1.0e-5);
+    float kUp = max(push.fogParams.z, 1.0e-5);
+    float kDn = FOG_UNDERBASE_FALLOFF;
     float y0 = fogHeightAboveBase(push, originRel);
     float dy = dir.y;
     float tau;
     if (dy > FOG_HORIZONTAL_EPS) {
         // Rising.
         if (y0 >= 0.0) {
-            // Above the base for the whole segment: sigma decays from A e^{-k y0}.
-            tau = (A / (k * dy)) * exp(-k * y0) * (1.0 - exp(-k * dy * tMax));
+            // Above the base for the whole segment: sigma decays from A e^{-kUp y0}.
+            tau = (A / (kUp * dy)) * exp(-kUp * y0) * (1.0 - exp(-kUp * dy * tMax));
         } else {
-            // Below the base (constant A) until the ray crosses the base height.
+            // Below the base until the ray crosses the base height.
             float tCross = -y0 / dy;
             if (tCross >= tMax) {
-                tau = A * tMax;
+                // Below the base the whole way: sigma GROWS from A e^{kDn y0} toward A.
+                // (Both exponent arguments stay <= 0, so nothing overflows.)
+                tau = (A / (kDn * dy)) * (exp(kDn * (y0 + dy * tMax)) - exp(kDn * y0));
             } else {
-                tau = A * tCross + (A / (k * dy)) * (1.0 - exp(-k * dy * (tMax - tCross)));
+                // Below until tCross, above after. e^{kDn h} at the crossing is 1.
+                tau = (A / (kDn * dy)) * (1.0 - exp(kDn * y0))
+                     + (A / (kUp * dy)) * (1.0 - exp(-kUp * dy * (tMax - tCross)));
             }
         }
     } else if (dy < -FOG_HORIZONTAL_EPS) {
         // Falling.
         if (y0 <= 0.0) {
-            // Below the base for the whole segment.
-            tau = A * tMax;
+            // Below the base for the whole segment: sigma decays from A e^{kDn y0}.
+            tau = (A / (kDn * (-dy))) * (exp(kDn * y0) - exp(kDn * (y0 + dy * tMax)));
         } else {
             float tCross = -y0 / dy; // > 0: where the ray descends through the base height
             if (tCross >= tMax) {
-                // Above the base for the whole segment: sigma GROWS from A e^{-k y0} toward A.
-                float range = k * (-dy) * tMax;
+                // Above the base for the whole segment: sigma GROWS from A e^{-kUp y0} toward A.
+                float range = kUp * (-dy) * tMax;
                 if (range > 25.0) {
                     tau = FOG_TAU_CAP;
                 } else {
-                    tau = (A / (k * (-dy))) * exp(-k * y0) * (exp(range) - 1.0);
+                    tau = (A / (kUp * (-dy))) * exp(-kUp * y0) * (exp(range) - 1.0);
                 }
             } else {
-                // Above the base until tCross, then constant A. sigma(t) = A e^{-k y0} e^{k|dy| t}
-                // there, and e^{k|dy| tCross} == e^{k y0}, so the crossing integral collapses to
-                // (A/(k|dy|)) (1 - e^{-k y0}) — bounded by A/(k|dy|), no overflow.
-                float e = min(k * y0, 25.0);
-                tau = (A / (k * (-dy))) * (1.0 - exp(-e)) + A * (tMax - tCross);
+                // Above until tCross, below after. e^{-kUp h} at the crossing is 1.
+                tau = (A / (kUp * (-dy))) * (1.0 - exp(-kUp * y0))
+                     + (A / (kDn * (-dy))) * (1.0 - exp(kDn * (y0 + dy * tMax)));
             }
         }
     } else {
         // Horizontal: the density is constant along the segment.
-        tau = A * exp(-k * max(y0, 0.0)) * tMax;
+        tau = A * exp(-(y0 >= 0.0 ? kUp : kDn) * abs(y0)) * tMax;
     }
     return min(tau, FOG_TAU_CAP);
 }
@@ -125,12 +150,37 @@ public struct FogVolume {
     public float transmittance;  // what the scene radiance keeps
 };
 
-// The in-scatter colour: the ambient skylight the droplets scatter — the same ambient field the
-// cloud deck shades with (sun * 0.10 + the dark ambient floor), tinted cool and scaled by the
-// pushed strength lane. At night the sun term is tiny, so the fog dims with the sky.
-public float3 fogInScatterColor(WorldPush push) {
+// Single-lobe Henyey–Greenstein phase: the forward-scattering lobe that makes god rays.
+static float fogHGPhase(float cosTheta) {
+    float g = FOG_HG_G;
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * clamp(cosTheta, -1.0, 1.0);
+    return (1.0 - g2) / (4.0 * FOG_PI * sqrt(denom) * denom);
+}
+
+/**
+ * The in-scatter colour for a given view direction: the ambient skylight the droplets scatter —
+ * the same ambient field the cloud deck shades with (sun * 0.10 + the dark ambient floor),
+ * tinted cool and scaled by the pushed strength lane — plus the god-ray term: the celestial
+ * body's own radiance forward-scattered into the eye through the fog (Henyey–Greenstein phase).
+ *
+ * <p>Because the phase depends on the view direction only (not on position), this colour is
+ * CONSTANT along a ray segment, so the S * (1 - T) composite below stays exact. At night the
+ * sun term is tiny, so the fog dims with the sky; with fogParams2.x at zero the god-ray term is
+ * skipped entirely.
+ */
+public float3 fogInScatterColor(WorldPush push, float3 viewDir) {
     float3 ambient = push.lightRadiance.xyz * 0.10 + float3(0.012, 0.017, 0.028);
-    return FOG_TINT * ambient * FOG_SCATTER_SCALE * push.fogParams.w;
+    float3 col = FOG_TINT * ambient * FOG_SCATTER_SCALE * push.fogParams.w;
+    float godRay = max(push.fogParams2.x, 0.0);
+    float3 lightDir = push.lightDir.xyz;
+    float lightLen2 = dot(lightDir, lightDir);
+    if (godRay > 0.0 && lightLen2 > 1.0e-12) {
+        lightDir = lightDir * rsqrt(lightLen2);
+        float phase = fogHGPhase(dot(viewDir, lightDir));
+        col += push.lightRadiance.xyz * phase * godRay;
+    }
+    return col;
 }
 
 /**
@@ -142,6 +192,9 @@ public float3 fogInScatterColor(WorldPush push) {
  * `maxDistance` is the distance to the nearest scene hit along the ray (or a large value when the
  * ray escapes to the sky). Bounding the integral by it is what keeps the fog from passing through
  * blocks: geometry in front of the fog stops the segment, so no fog behind it is ever integrated.
+ *
+ * NOTE: this function does NOT know the medium the segment is travelling through — call sites
+ * gate it on FOG_AIR_IOR_MAX (the fog only exists in air, not inside water or glass volumes).
  */
 public FogVolume fogSegment(WorldPush push, float3 originRel, float3 dir, float maxDistance) {
     FogVolume result;
@@ -156,8 +209,9 @@ public FogVolume fogSegment(WorldPush push, float3 originRel, float3 dir, float 
     }
     float t = exp(-tau);
     result.transmittance = t;
-    // In-scatter at a single colour: S * (1 - T) is EXACT for any density profile — the profile
-    // changes where the light is lost, the in-scatter colour is constant by construction.
-    result.scatter = fogInScatterColor(push) * (1.0 - t);
+    // In-scatter at a single (view-dependent) colour: S * (1 - T) is EXACT for any density
+    // profile — the profile changes where the light is lost, the colour is constant along the
+    // segment by construction.
+    result.scatter = fogInScatterColor(push, dir) * (1.0 - t);
     return result;
 }

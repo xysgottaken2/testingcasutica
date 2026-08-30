@@ -12,11 +12,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Regression guards for the world-space fog (fog.slang) that are easy to re-break in shader-only
  * changes.
  *
- * <p>Two properties must survive any refactor: the fog is WORLD SPACE — its density is a function
- * of the ray's world position, not of its screen distance — and it CANNOT PASS THROUGH BLOCKS:
- * every segment integral is bounded by the distance to the nearest scene hit, so geometry in front
- * of the fog stops the segment and the fog beyond it is never integrated (a mountain shows only
- * the fog in front of it; a cave only the thin air to its nearest wall).
+ * <p>Four properties must survive any refactor: the fog is WORLD SPACE — its density is a function
+ * of the ray's world position, not of its screen distance; it CANNOT PASS THROUGH BLOCKS — every
+ * segment integral is bounded by the distance to the nearest scene hit, so geometry in front of the
+ * fog stops the segment and the fog beyond it is never integrated (a mountain shows only the fog in
+ * front of it); it exists in AIR ONLY — a segment in a water or glass volume is not crossing the
+ * bank (water owns its own Beer–Lambert extinction), keyed on the medium's index of refraction;
+ * and it dissipates fast BELOW the base height, which is what keeps caves and mine shafts clear
+ * while the bank hugs the base level.
  */
 final class RtFogShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
@@ -31,8 +34,10 @@ final class RtFogShaderRegressionTest {
         // pushed base), never the segment length alone: a length-only fade would be screen-space.
         assertTrue(source.contains("posRel.y - push.fogParams.y"),
                 "fog density must be a function of the position's world height, not the segment length");
-        assertTrue(source.contains("exp(-k * max(0, h))") || source.contains("exp(-k * max(fogHeightAboveBase"),
-                "the one-sided height profile is the documented density model");
+        assertTrue(source.contains("A * exp(-k_up * h)") && source.contains("A * exp( k_dn * h)"),
+                "the two-sided height profile (thinning above the base, dissipating below it) is the documented density model");
+        assertTrue(source.contains("FOG_UNDERBASE_FALLOFF"),
+                "the steeper fixed below-base falloff is what keeps caves fog-free");
         assertTrue(source.contains("push.dimension == DIMENSION_OVERWORLD"),
                 "fog must stay in the Overworld (closed skyboxes have no air to fog)");
         assertTrue(source.contains("!worldFlag(push, WORLD_FLAG_SUBMERGED)"),
@@ -55,6 +60,35 @@ final class RtFogShaderRegressionTest {
         assertTrue(prefix >= 0, "the dielectric camera prefix must apply the fog crossed on the way to the surface");
         assertTrue(source.indexOf("prefixDist);", prefix) > prefix,
                 "the prefix fog must be bounded by the camera->surface distance");
+    }
+
+    @Test
+    void fogIsAirOnlyAndNeverCrossesWater() throws IOException {
+        String fog = Files.readString(FOG);
+        String rgen = Files.readString(WORLD_RGEN);
+        // The air gate constant must exist: airMedium() is exactly ior 1.0, water is 1.333, glass
+        // and ice are above that, so a single comparison separates the fog medium from every volume.
+        assertTrue(fog.contains("public static const float FOG_AIR_IOR_MAX = 1.001;"),
+                "the air-only gate constant must live in fog.slang");
+        // The gate must protect every fog application: the per-segment fog, the sky-miss fog and
+        // both lazy sun-attenuation sites (front NEE + SSS back face).
+        int gated = countOccurrences(rgen, "medium.current.ior < FOG_AIR_IOR_MAX");
+        assertTrue(gated >= 3,
+                "the per-segment fog, the sky fog and the sun attenuation must all be gated on the segment medium being air, found " + gated);
+    }
+
+    @Test
+    void fogCarriesGodRaysTowardTheCelestialBody() throws IOException {
+        String fog = Files.readString(FOG);
+        String common = Files.readString(WORLD_COMMON);
+        // The god-ray term forward-scatters the celestial radiance through a Henyey–Greenstein
+        // phase on the view direction; the push lane 2 owns its scale.
+        assertTrue(fog.contains("fogHGPhase"),
+                "the forward-scattering phase that produces god rays is missing from fog.slang");
+        assertTrue(fog.contains("push.fogParams2.x"),
+                "the god-ray scale must be pushed per frame (WorldPush.fogParams2.x)");
+        assertTrue(common.contains("public float4   fogParams2;"),
+                "WorldPush must carry the fogParams2 lane (x god-ray scale, rest reserved)");
     }
 
     @Test
@@ -92,6 +126,8 @@ final class RtFogShaderRegressionTest {
                 "FEATURE_FOG must own bit 512 in world_common.slang");
         assertTrue(source.contains("public float4   fogParams;"),
                 "WorldPush must carry the fogParams lane (x density, y base, z falloff, w strength)");
+        assertTrue(source.contains("public float4   fogParams2;"),
+                "WorldPush must carry the fogParams2 lane (x god-ray scale, rest reserved)");
     }
 
     private static int countOccurrences(String source, String needle) {

@@ -162,6 +162,10 @@ public struct WorldPush {
     // above the base), w = in-scatter strength multiplier. Overworld only, never while the eye
     // is submerged — see fogEnabled.
     public float4   fogParams;
+    // Fog lane 2: x = god-ray scale (multiplier on lightRadiance * HG forward phase — the
+    // bright shafts when looking toward the sun/moon through the bank), rest reserved.
+    // Only read when FEATURE_FOG is set.
+    public float4   fogParams2;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full

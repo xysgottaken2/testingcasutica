@@ -72,6 +72,7 @@ public final class CausticaConfig {
             Rt.Lights.RESTIR_SAMPLING, Rt.Lights.RESTIR_TEMPORAL_HISTORY, Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS,
             Rt.Lights.RESTIR_MAX_AGE, Rt.Hand.FOV_FOLLOWS_CAMERA,
             Rt.Composite.FOG, Rt.Composite.FOG_DENSITY, Rt.Composite.FOG_BASE_HEIGHT, Rt.Composite.FOG_FALLOFF,
+            Rt.Composite.FOG_GOD_RAYS,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
@@ -112,7 +113,8 @@ public final class CausticaConfig {
                         + " fog: world-space volumetric fog (fog.slang) - a real air volume whose density\n"
                         + " follows world height and is occluded by blocks. fog-density scales the base\n"
                         + " extinction, fog-base-height is the world Y of the fog bank, fog-falloff how fast\n"
-                        + " it thins with altitude.");
+                        + " it thins with altitude above the base (it dissipates faster below it, keeping\n"
+                        + " caves clear). fog-god-rays drives the bright shafts toward the sun/moon.");
         FILE.setComment("materials",
                 " Material appearance controls. metallic-shininess reduces roughness only on authored metallic\n"
                         + " surfaces; 0 preserves resource-pack material data and 1 gives metals their strongest shine.");
@@ -816,41 +818,53 @@ public final class CausticaConfig {
             /**
              * World-space volumetric fog (fog.slang): a real participating medium in the air, not a
              * screen-space distance fade. The density is a function of the ray's WORLD position —
-             * a constant bank below the base height, an exponential falloff above (see
-             * {@link #FOG_FALLOFF}) — and every segment integral is bounded by the distance to the
-             * first hit, so blocks occlude the fog: nothing shows through mountains, and a cave
-             * only ever carries the thin layer of air between the eye and its nearest wall.
+             * densest at the base height, thinning exponentially above (see
+             * {@link #FOG_FALLOFF}) and dissipating even faster below it, which is what keeps
+             * caves and mine shafts fog-free — and every segment integral is bounded by the
+             * distance to the first hit, so blocks occlude the fog: nothing shows through
+             * mountains, and a cave only ever carries the thin layer of air between the eye and
+             * its nearest wall.
              *
              * <p>Overworld only (the Nether and End draw closed skyboxes with no air to fog), and
-             * never while the eye is in water (water owns its own extinction). Off restores the
-             * clear-air behaviour.
+             * only in air — never through water or glass volumes (water owns its own extinction),
+             * and never while the eye is submerged. Off restores the clear-air behaviour.
              */
             public static final BooleanSetting FOG =
                     bool("caustica.rt.fog", "composite.fog", true);
             /**
-             * Fog density, 0..1: scales the base extinction (per block) at and below the base
-             * height. The default 50% (0.02 per block) leaves a 128-block view distance
-             * transmitting about 7% of the scene — a strong but not opaque distance fog; 100% is a
-             * thick bank that erases the horizon; 0 is clear air (the shader skips the whole fog
-             * path at zero density).
+             * Fog density, 0..1: scales the base extinction (per block) AT the base height. The
+             * default 50% (0.02 per block) leaves a 128-block view distance transmitting about 7%
+             * of the scene — a strong but not opaque distance fog; 100% is a thick bank that erases
+             * the horizon; 0 is clear air (the shader skips the whole fog path at zero density).
              */
             public static final FloatSetting FOG_DENSITY =
                     clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.5f, 0.0f, 1.0f);
             /**
-             * World Y the fog BASE sits at. The fog is densest at and below this height and thins
-             * exponentially above it (see {@link #FOG_FALLOFF}): valleys and caves below the base
-             * stay inside the bank, mountain tops above it clear out. The default 64 sits just
-             * above typical sea-level terrain.
+             * World Y the fog BASE sits at — the densest layer of the bank. The fog thins
+             * exponentially with altitude above it (see {@link #FOG_FALLOFF}) and dissipates even
+             * faster below it, so caves and deep valleys under the base stay essentially clear
+             * while the bank hugs the base level. The default 64 sits just above typical sea-level
+             * terrain; lower it to push the bank into a specific valley's floor.
              */
             public static final FloatSetting FOG_BASE_HEIGHT =
                     clampedFloat("caustica.rt.fogBaseHeight", "composite.fog-base-height", 64.0f, -64.0f, 256.0f);
             /**
-             * How fast the fog thins with altitude above the base, 0..1. 0 keeps a flat, unthinning
+             * How fast the fog thins with altitude ABOVE the base, 0..1. 0 keeps a flat, unthinning
              * slab (constant density at every height above the base); 1 makes the bank thin out
-             * within tens of blocks.
+             * within tens of blocks. The thinning BELOW the base is fixed and steeper, which is what
+             * keeps caves fog-free (fog.slang's FOG_UNDERBASE_FALLOFF).
              */
             public static final FloatSetting FOG_FALLOFF =
                     clampedFloat("caustica.rt.fogFalloff", "composite.fog-falloff", 0.4f, 0.0f, 1.0f);
+            /**
+             * God-rays through the fog, 0..1: the strength of the bright shafts that appear when
+             * looking toward the sun/moon through the bank. The fog's droplets forward-scatter the
+             * celestial light (a Henyey–Greenstein phase in fog.slang), so the shafts only read when
+             * the eye is roughly between the light and the bank — 0 disables the term entirely and
+             * the in-scatter stays the flat ambient fill.
+             */
+            public static final FloatSetting FOG_GOD_RAYS =
+                    clampedFloat("caustica.rt.fogGodRays", "composite.fog-god-rays", 0.5f, 0.0f, 1.0f);
             /**
              * World Y the BASE of the cloud deck sits at. Vanilla's clouds sit at 192; the default is
              * higher because Caustica's clouds have real thickness and a deck whose base is at vanilla

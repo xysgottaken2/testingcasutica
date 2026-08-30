@@ -1707,7 +1707,9 @@ public final class RtComposite {
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
                             CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
                     // World-space volumetric fog (WorldPush.fogParams, consumed by fog.slang).
-                    fogParams()
+                    fogParams(),
+                    // Fog lane 2 (WorldPush.fogParams2): god-ray scale, rest reserved.
+                    fogParams2()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -2452,6 +2454,10 @@ public final class RtComposite {
     // tops clear out while valleys below the base stay in the bank. 0 keeps a flat unthinning slab
     // (the shader floors k so the analytic integral stays finite).
     private static final float FOG_MAX_HEIGHT_FALLOFF = 0.05f;
+    // The god-rays slider (0..1) maps to the god-ray lane (WorldPush.fogParams2.x): the multiplier
+    // on lightRadiance * HG forward phase that makes the bright shafts when looking toward the
+    // sun/moon through the bank. 0.08 at 100% gives visible shafts without a whiteout, at noon.
+    private static final float FOG_MAX_GODRAY_SCALE = 0.08f;
 
     /**
      * This frame's fog lanes (see {@code WorldPush.fogParams}). The base height is pushed
@@ -2468,6 +2474,16 @@ public final class RtComposite {
         // an ABI change.
         return new Float4(density * FOG_MAX_BASE_EXTINCTION, baseRel,
                 falloff * FOG_MAX_HEIGHT_FALLOFF, 1.0f);
+    }
+
+    /**
+     * This frame's fog lane 2 (see {@code WorldPush.fogParams2}). The god-ray slider (0..1) maps
+     * to the multiplier on lightRadiance * HG forward phase in fog.slang: the bright shafts when
+     * looking toward the sun/moon through the bank. The rest of the lane is reserved.
+     */
+    private Float4 fogParams2() {
+        float godRays = Math.clamp(CausticaConfig.Rt.Composite.FOG_GOD_RAYS.value(), 0f, 1f);
+        return new Float4(godRays * FOG_MAX_GODRAY_SCALE, 0.0f, 0.0f, 0.0f);
     }
 
     /**

@@ -138,7 +138,7 @@ public final class RtSubScreens {
                         RtVideoOptions.cloudCoverageDisabledHint())));
     }
 
-    /** World-space volumetric fog: the master toggle, density, base height and altitude falloff. */
+    /** World-space volumetric fog: the master toggle, density, base height, altitude falloff and god rays. */
     public static RtSettingsSubScreen fog(Screen parent) {
         return new RtSettingsSubScreen(parent, options(),
                 Component.translatable("caustica.options.rt.fogHeader"),
@@ -300,7 +300,8 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Composite.FOG,
                 CausticaConfig.Rt.Composite.FOG_DENSITY,
                 CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT,
-                CausticaConfig.Rt.Composite.FOG_FALLOFF);
+                CausticaConfig.Rt.Composite.FOG_FALLOFF,
+                CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
     }
 
     private static List<CausticaConfig.RuntimeSetting<?>> exposureSettings() {

@@ -217,9 +217,9 @@ public final class RtVideoOptions {
     }
 
     /**
-     * World-space volumetric fog rows: the master toggle, the density slider, the base height and
-     * the altitude falloff. All four are read fresh every frame in RtComposite, so a change takes
-     * effect on the next frame.
+     * World-space volumetric fog rows: the master toggle, the density slider, the base height,
+     * the altitude falloff and the god-ray strength. All five are read fresh every frame in
+     * RtComposite, so a change takes effect on the next frame.
      */
     public static OptionInstance<?>[] fogOptions() {
         return new OptionInstance<?>[] {
@@ -227,6 +227,7 @@ public final class RtVideoOptions {
             fogDensity(),
             fogBaseHeight(),
             fogFalloff(),
+            fogGodRays(),
         };
     }
 
@@ -245,8 +246,9 @@ public final class RtVideoOptions {
     }
 
     /**
-     * World Y the fog base sits at, in whole blocks. The fog is densest at and below this height
-     * and thins with altitude above it, so valleys stay foggy while peaks clear out.
+     * World Y the fog base sits at, in whole blocks. The fog is densest at this height, thins
+     * with altitude above it, and dissipates faster below it — so the bank hugs the base level
+     * while caves and deep valleys under it stay clear.
      */
     private static OptionInstance<Integer> fogBaseHeight() {
         FloatSetting setting = CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT;
@@ -262,6 +264,11 @@ public final class RtVideoOptions {
     /** How fast the fog thins with altitude above the base, as a percentage. */
     private static OptionInstance<Integer> fogFalloff() {
         return percent("caustica.options.rt.fogFalloff", CausticaConfig.Rt.Composite.FOG_FALLOFF);
+    }
+
+    /** God-rays through the fog: the strength of the bright shafts toward the sun/moon, as a percentage. */
+    private static OptionInstance<Integer> fogGodRays() {
+        return percent("caustica.options.rt.fogGodRays", CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
     }
 
     public static OptionInstance<?>[] hdrOptions() {
