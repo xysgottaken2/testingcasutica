@@ -48,16 +48,17 @@
 //   * per-step in-scatter is clamped against the light field that produced it, so no single sample
 //     can out-firefly its own light and poison the temporal history.
 //
-// DEPENDENCY DISCIPLINE: this module imports exactly the set the first shipped fog compiled with
-// (world_common, math, clouds, trace) and uses only scalar locals — the two strongest emitters ride
-// in named slots rather than an array. The few light-record helpers it needs are inlined below,
-// arithmetic-identical to lighting.slang's, so fog never grows an import edge nothing else in the
-// tree has proven against this slangc.
+// DEPENDENCY DISCIPLINE: this module imports the base set every other world module uses
+// (world_common, world_core for the pc bindings, math, clouds, trace) and uses only scalar
+// locals — the two strongest emitters ride in named slots rather than an array. The few
+// light-record helpers it needs are inlined below, arithmetic-identical to lighting.slang's, so
+// fog never grows an import edge nothing else in the tree has proven against this slangc.
 //
 // Like clouds.slang, entry points take the WorldPush explicitly — EXCEPT the shadow rays, which
 // need the raygen bindings: this module is imported by world.rgen only (a miss shader cannot trace).
 
 import world_common;
+import world_core; // owns the pc bindings (push constants + SSBO addresses) the emitter gather reads
 import math;
 import clouds;
 import trace;
