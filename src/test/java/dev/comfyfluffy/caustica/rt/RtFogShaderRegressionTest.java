@@ -78,8 +78,8 @@ final class RtFogShaderRegressionTest {
         // recover the fog crossed on the way there, bounded by the surface like the cloud prefix.
         int prefix = source.indexOf("FogVolume preFog = fogSegment(worldPush, float3(0.0, 0.0, 0.0),");
         assertTrue(prefix >= 0, "the dielectric camera prefix must apply the fog crossed on the way to the surface");
-        assertTrue(source.indexOf("prefixDist);", prefix) > prefix,
-                "the prefix fog must be bounded by the camera->surface distance");
+        assertTrue(source.indexOf("prefixDist, true);", prefix) > prefix,
+                "the prefix fog must be bounded by the camera->surface distance (and travel in air)");
     }
 
     @Test
