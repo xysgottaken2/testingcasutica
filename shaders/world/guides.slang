@@ -16,9 +16,6 @@ public static float3 gv_normal = float3(0.0, 0.0, 0.0);
 public static float3 gv_albedo = float3(0.0, 0.0, 0.0);
 public static float gv_rough = 0.0;
 public static float3 gv_hitCamRel = float3(0.0, 0.0, 0.0);       // primary-surface hit position relative to the current camera
-// Camera depth after the per-pixel sky-exposure mask. This is deliberately captured at the FIRST
-// interface, before a water/glass guide follows transmission to a more distant destination.
-public static float gv_fogDepth = 0.0;
 public static bool gv_motionUseRefracted = false; // true when the MV tracks the refracted hit (its own reprojection delta)
 // World-space displacement of the motion-guide surface since the previous frame (0 for static
 // terrain/sky, an entity's per-vertex/object motion for a dynamic hit).
@@ -36,34 +33,6 @@ public struct SpecSurface {
     public float3 albedo;         // specular albedo fed to DLSS-RR for demodulation (0 = pure diffuse)
 };
 public static SpecSurface gv_spec = {};
-
-// Build the selective fog texture from camera depth and a deterministic vertical visibility query.
-// Covered Overworld receivers (caves, rooms, overhangs) store zero; an exposed receiver stores its full
-// primary depth, with glass/water tint naturally producing a partial mask. The Nether and End deliberately
-// keep their authored dimension-wide haze and therefore use full depth without spending a vertical ray.
-// Atmospheric fog is suppressed while the camera is underwater: the dielectric medium already owns that
-// extinction and in-scatter.
-//
-// This mask powers BOTH fog paths. When the screen-space composite is active it is the fog depth it
-// composites over. When the path-integrated volumetric fog (FEATURE_FOG_VOLUMETRIC) is active the same
-// mask is read in world.rgen as the per-pixel culling distance: a covered cave/interior stores zero, so
-// the per-segment medium is suppressed there instead of fogging every enclosed air column. That is what
-// keeps the volumetric fog out of caves, rooms and overhangs — the same selective exclusion the old
-// screen-space haze had.
-public float maskedFogDepth(float3 hitPos, float hitDepth) {
-    if (!fogEnabled() || cameraSubmerged()) {
-        return 0.0;
-    }
-    float depth = max(hitDepth, 0.0);
-    if (worldPush.dimension != DIMENSION_OVERWORLD) {
-        return depth;
-    }
-    float3 up = float3(0.0, 1.0, 0.0);
-    VisibilityResult sky = visibility(hitPos + up * (2.0 * SURF_BIAS), up, 1024.0);
-    float exposure = smoothstep(0.02, 0.98,
-            clamp(luminance(sky.transmittance), 0.0, 1.0));
-    return depth * exposure;
-}
 
 // Static surfaces reuse one normal for all three roles. Water overrides them (height-field shading
 // point, waved normal now and last frame, flat geometric normal for the bias) via the six-argument form.
@@ -231,8 +200,8 @@ public void resolveTransmissionGuide(float3 origin, float3 transmittedDir,
         uint material = payloadMaterial();
         float3 interfacePos = ro + direction * payload.hitT;
         // Transmittance of the segment just traced: Beer–Lambert over the medium it travelled in
-        // (water extinction for water, one-block-reference volume extinction for glass), bounded the
-        // way evalAmbientFog bounds its optical depth so a long segment cannot denormalize exp().
+        // (water extinction for water, one-block-reference volume extinction for glass), bounded so a
+        // long segment cannot denormalize exp().
         // This replaces the old one-shot `guideFilter *= payload.albedo` per glass entry: the medium
         // the stack pushed already encodes that tint as extinction, so applying the physical factor
         // over the real segment length matches Pass B exactly instead of over-darkening thin panes.
@@ -363,9 +332,6 @@ public void writeGuides(int2 pix, float3 primaryDir, float2 jndc, float2 size, f
     gMotion[pix] = motion;
     gSpecAlbedo[pix] = float4(specAlbedo, 1.0);
     gSpecMotion[pix] = specMotion;
-    // R16 is ample for the ray tracer's 10,000-block finite trace range. Writing this in the primary
-    // pass makes the fog mask a stable screen texture shared by every Pass B SPP/path leaf.
-    gFogDepthMask[pix] = gv_fogDepth;
 }
 
 // 48-byte queue record. float3 + uint intentionally share the first 16-byte lane; every remaining

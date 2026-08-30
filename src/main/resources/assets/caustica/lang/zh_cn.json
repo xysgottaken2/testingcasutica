@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "让光线穿过树叶、草等薄表面并发生散射，因此朝太阳方向看时植被会发光。仅影响提供次表面数据的材质，并在生效处增加一条阴影光线。",
 	"caustica.options.rt.weatherLighting": "天气光照",
 	"caustica.options.rt.weatherLighting.tooltip": "在下雨和雷暴期间减弱阳光与月光并压暗天空，同时将太阳、月亮和星星隐藏在云层之后。关闭后，任何天气下都保持晴空光照。",
-	"caustica.options.rt.fog": "遮罩雾效",
-	"caustica.options.rt.fog.tooltip": "使用深度和天空可见性选择性应用远距离雾效。被遮挡的洞穴和室内保持清晰，露天区域保留天气和地平线雾霭。关闭后不会改变各维度的天空。",
 	"caustica.options.rt.fogVolumetric": "体积雾效",
 	"caustica.options.rt.fogVolumetric.tooltip": "用沿每条路径段进行步进的真实参与介质取代主世界的屏幕空间雾效，使雾霭在反射、折射和间接反弹中也正确。使用相同校准的昼/夜/雨颜色和密度。下界和末地保留其原本的雾霭。",
 	"caustica.options.rt.fogVolumetricStrength": "体积雾强度",

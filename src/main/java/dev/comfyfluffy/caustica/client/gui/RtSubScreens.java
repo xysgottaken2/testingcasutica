@@ -254,7 +254,6 @@ public final class RtSubScreens {
     private static List<CausticaConfig.RuntimeSetting<?>> effectsSettings() {
         return List.of(
                 CausticaConfig.Rt.Composite.SSS,
-                CausticaConfig.Rt.Composite.FOG,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_STRENGTH,
                 CausticaConfig.Rt.Composite.FOG_VOLUMETRIC_DENSITY,

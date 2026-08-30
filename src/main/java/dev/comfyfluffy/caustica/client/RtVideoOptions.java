@@ -180,7 +180,6 @@ public final class RtVideoOptions {
     public static OptionInstance<?>[] effectsOptions() {
         return new OptionInstance<?>[] {
             subsurfaceScattering(),
-            fog(),
             fogVolumetric(),
             fogVolumetricStrength(),
             fogVolumetricDensity(),
@@ -751,15 +750,10 @@ public final class RtVideoOptions {
         return bool("caustica.options.rt.sss", CausticaConfig.Rt.Composite.SSS);
     }
 
-    /** Selective outdoor distance fog; cave and indoor pixels are excluded by a depth/sky mask. */
-    private static OptionInstance<Boolean> fog() {
-        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
-    }
-
     /**
-     * Path-integrated volumetric fog. Replaces the Overworld's screen-space distance composite with a
+     * Path-integrated volumetric fog. Replaces the old screen-space distance composite (removed) with a
      * participating medium marched along each path segment, so the haze is correct in reflections,
-     * refractions and indirect bounces. The Nether and End keep their authored screen-space haze.
+     * refractions and indirect bounces. Enclosed air is skipped by a per-path sky-exposure cull.
      */
     private static OptionInstance<Boolean> fogVolumetric() {
         return bool("caustica.options.rt.fogVolumetric",

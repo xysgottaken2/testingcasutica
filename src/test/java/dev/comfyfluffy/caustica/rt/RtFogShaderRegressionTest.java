@@ -6,127 +6,86 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression guards for selective cave fog and one-time screen-space composition. */
+/**
+ * Regression guards for the path-integrated volumetric fog (Method B) and the legacy screen-space fog
+ * that it replaced.
+ *
+ * <p>The old selective screen-space fog ("masked fog") was removed entirely: there is no per-pixel depth
+ * mask, no {@code maskedFogDepth}, and no post-aggregation composite. All fog now lives in the path
+ * integral in {@code fog.slang}, and enclosed air (caves/rooms/overhangs) is excluded by a per-path
+ * sky-exposure cull performed in {@code world.rgen.slang}.
+ */
 final class RtFogShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
     private static final Path CORE = REPO_ROOT.resolve("shaders/world/world_core.slang");
     private static final Path GUIDES = REPO_ROOT.resolve("shaders/world/guides.slang");
     private static final Path PRIMARY = REPO_ROOT.resolve("shaders/world/world_primary.rgen.slang");
     private static final Path WORLD = REPO_ROOT.resolve("shaders/world/world.rgen.slang");
+    private static final Path FOG = REPO_ROOT.resolve("shaders/world/fog.slang");
     private static final Path MISS = REPO_ROOT.resolve("shaders/world/world.rmiss.slang");
     private static final Path JAVA =
             REPO_ROOT.resolve("src/main/java/dev/comfyfluffy/caustica/rt/RtComposite.java");
 
     @Test
-    void primaryPassWritesDepthAndSkyVisibilityIntoFogMaskTexture() throws IOException {
+    void legacyScreenSpaceFogIsFullyRemoved() throws IOException {
         String core = Files.readString(CORE);
         String guides = Files.readString(GUIDES);
-        String primary = Files.readString(PRIMARY);
-
-        assertTrue(core.contains("RWTexture2D<float>  gFogDepthMask"),
-                "fog needs a dedicated per-pixel mask texture");
-        String maskFunction = slice(guides, "public float maskedFogDepth", "// Static surfaces");
-        assertTrue(maskFunction.contains("visibility("),
-                "the selective mask must test sky exposure instead of applying uniform fog");
-        assertTrue(maskFunction.contains("cameraSubmerged()"),
-                "atmospheric fog must not stack on the underwater medium");
-        assertInOrder(maskFunction,
-                "float depth = max(hitDepth, 0.0);",
-                "if (worldPush.dimension != DIMENSION_OVERWORLD)",
-                "return depth;",
-                "VisibilityResult sky = visibility");
-        assertTrue(guides.contains("gFogDepthMask[pix] = gv_fogDepth;"),
-                "Pass A must materialize the selective depth mask for Pass B");
-        assertInOrder(primary,
-                "float3 hitPos = ro + rd * payload.hitT;",
-                "gv_fogDepth = maskedFogDepth(hitPos, payload.hitT);",
-                "uint material = payloadMaterial();");
-    }
-
-    @Test
-    void netherAndEndRetainTheirAuthoredDistanceHaze() throws IOException {
-        String java = Files.readString(JAVA);
-
-        assertTrue(java.contains(
-                        "case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);"),
-                "the Nether's original warm fog colour and density must not be cleared with cave fog");
-        assertTrue(java.contains(
-                        "case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);"),
-                "the End's original violet fog colour and density must not be cleared with cave fog");
-    }
-
-    @Test
-    void fogIsCompositedOnceAfterStochasticPathAggregation() throws IOException {
         String world = Files.readString(WORLD);
 
-        assertEquals(1, occurrences(world, "evalAmbientFog(worldPush.ambientFog"),
-                "fog must not return to dielectric prefixes or per-bounce path segments");
-        assertFalse(world.contains("AmbientFog preFog"),
-                "split water/glass prefixes must not independently add emissive fog");
-        assertFalse(world.contains("AmbientFog segFog"),
-                "secondary path segments must not independently add emissive fog");
-        assertInOrder(world,
-                "float3 radiance = frameRadiance / float(spp);",
-                "bool screenFogActive = fogEnabled() && !fogVolumetricEnabled(worldPush);",
-                "float fogDepth = screenFogActive ? max(gFogDepthMask[pix], 0.0) : 0.0;",
-                "AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);",
-                "radiance = radiance * screenFog.transmittance + screenFog.inScatter;");
-        assertTrue(world.contains("diffRad = diffRad * screenFog.transmittance + screenFog.inScatter;")
-                        && world.contains("specRad *= screenFog.transmittance;"),
-                "optional per-lobe denoiser signals must still sum to the fogged combined image");
+        // The per-pixel depth mask and the post-aggregation composite are gone for every dimension.
+        assertFalse(core.contains("gFogDepthMask"),
+                "the per-pixel fog depth mask texture must be removed from world_core");
+        assertFalse(guides.contains("maskedFogDepth") && guides.contains("gFogDepthMask[pix]"),
+                "Pass A must no longer materialize a fog depth mask");
+        assertFalse(world.contains("evalAmbientFog") && world.contains("screenFog"),
+                "world.rgen must no longer composite emissive fog in screen space");
+        assertFalse(world.contains("fogEnabled()"),
+                "world.rgen must not depend on the removed masked fog toggle");
     }
 
     @Test
-    void volumetricFogGatesOffScreenSpaceComposite() throws IOException {
+    void volumetricFogIsIntegratedPerSegmentAndCulledBySkyExposure() throws IOException {
         String world = Files.readString(WORLD);
-        String fog = Files.readString(REPO_ROOT.resolve("shaders/world/fog.slang"));
+        String fog = Files.readString(FOG);
 
-        // The path-integrated volumetric facility is a separate medium from the selective screen-space
-        // fog. When it is active the screen-space composite must be disabled, so the two never double-count.
-        assertTrue(world.contains("fogEnabled() && !fogVolumetricEnabled(worldPush)"),
-                "the screen-space fog must be gated off when volumetric fog is active");
-        // fogSegment is integrated along path segments (prefix + per-hit), the point of a real medium.
+        // fog.slang exposes the per-segment march and its gate, and takes the sky-exposure cull factor.
+        assertTrue(fog.contains("public bool fogVolumetricEnabled(WorldPush push)"),
+                "fog.slang must expose the volumetric gate");
+        assertTrue(fog.contains("float exposure"),
+                "fogSegment must take the sky-exposure cull factor");
+
+        // The tracer integrates it over the camera->interface prefix and over every geometry hit, and
+        // passes the per-path exposure it computed once.
         assertTrue(world.contains("FogVolume preFog = fogSegment("),
-                "the dielectric camera->interface prefix must carry volumetric fog");
+                "the camera->interface prefix must carry volumetric fog");
         assertTrue(world.contains("FogVolume segFog = fogSegment("),
                 "per-hit path segments must carry volumetric fog");
-        assertTrue(fog.contains("public FogVolume fogSegment(") && fog.contains("public bool fogVolumetricEnabled("),
-                "fog.slang must expose the volumetric fog segment and gate");
+        assertTrue(world.contains("fogSkyExposure("),
+                "the sky-exposure cull helper must exist");
+        assertTrue(world.contains("float fogExposure = 1.0;"),
+                "the per-path exposure must be cached once per path");
     }
 
     @Test
-    void volumetricFogIsCulledPerPixelAndFogsTheWaterPrefix() throws IOException {
-        String world = Files.readString(WORLD);
-        String guides = Files.readString(GUIDES);
+    void ambientFogLaneIsVolumetricOnlyForTheOverworld() throws IOException {
+        String java = Files.readString(JAVA);
 
-        // The selective sky-exposure mask must still be computed when the volumetric facility is on,
-        // because world.rgen reads it back as the per-pixel cull distance — a covered cave/room/overhang
-        // stores zero so the per-segment medium is suppressed there.
-        String mask = slice(guides, "public float maskedFogDepth", "// Static surfaces");
-        assertTrue(mask.contains("VisibilityResult sky = visibility"),
-                "the sky-visibility mask must be computed even when volumetric fog is active (it is the cull source)");
-        assertFalse(mask.contains("FEATURE_FOG_VOLUMETRIC"),
-                "maskedFogDepth must not skip the cull ray when volumetric fog is active");
-
-        // world.rgen reads the per-pixel cull and caps every fog march with it, so an enclosed pixel
-        // reads as identity (no fog pooling inside caves/rooms/overhangs).
-        assertTrue(world.contains("float fogCull = max(gFogDepthMask[pix], 0.0);"),
-                "the per-pixel selective cull must be read once per path");
-        assertTrue(world.contains("min(prefixDist, fogCull)"),
-                "the camera->interface prefix fog must be capped by the selective cull");
-        assertTrue(world.contains("min(payload.hitT, fogCull)"),
-                "the per-hit fog must be capped by the selective cull");
-
-        // The water/glass prefix is guarded on the CAMERA being submerged, not on the segment's own medium:
-        // otherwise the refracted (transmitted) branch is wrongly treated as water and its fog dropped, so
-        // a distant lake/lava surface reads as unfogged.
-        String prefix = slice(world, "Volumetric fog over the camera->interface prefix", "The authored screen-space medium");
-        assertTrue(prefix.contains("!cameraSubmerged()"),
-                "the camera->interface prefix fog must be guarded on cameraSubmerged() so refraction keeps fog");
+        // The screen-space Nether/End authored haze lanes are removed: ambientFog now drives only the
+        // volumetric fog, which is Overworld-only.
+        String ambient = slice(java, "private static Float4 ambientFog", "private static Float4 fogState");
+        assertTrue(ambient.startsWith("private static Float4 ambientFog"),
+                "must be able to locate ambientFog");
+        assertTrue(ambient.contains("if (dimension != DIMENSION_OVERWORLD)"),
+                "the fog medium must be zeroed outside the Overworld");
+        assertFalse(ambient.contains("DIMENSION_NETHER -> new Float4"),
+                "the screen-space Nether haze lane must be removed");
+        assertFalse(ambient.contains("DIMENSION_END -> new Float4"),
+                "the screen-space End haze lane must be removed");
+        assertFalse(ambient.contains("Composite.FOG.value()"),
+                "the removed masked-fog toggle must not gate the fog any more");
     }
 
     @Test
@@ -140,31 +99,12 @@ final class RtFogShaderRegressionTest {
         assertTrue(dimensionMiss.contains("netherSky(dir)") && dimensionMiss.contains("endSky(dir)"));
     }
 
-    private static int occurrences(String source, String needle) {
-        int count = 0;
-        int at = 0;
-        while ((at = source.indexOf(needle, at)) >= 0) {
-            count++;
-            at += needle.length();
-        }
-        return count;
-    }
-
     private static String slice(String source, String startNeedle, String endNeedle) {
         int start = source.indexOf(startNeedle);
-        assertTrue(start >= 0, "missing shader snippet start: " + startNeedle);
+        assertTrue(start >= 0, "missing snippet start: " + startNeedle);
         int end = source.indexOf(endNeedle, start);
-        assertTrue(end > start, "missing shader snippet end: " + endNeedle);
+        assertTrue(end > start, "missing snippet end for " + startNeedle + " before " + endNeedle);
         return source.substring(start, end);
-    }
-
-    private static void assertInOrder(String source, String... needles) {
-        int at = -1;
-        for (String needle : needles) {
-            int next = source.indexOf(needle, at + 1);
-            assertTrue(next > at, "expected snippet after index " + at + ": " + needle);
-            at = next;
-        }
     }
 
     private static Path repoRoot() {

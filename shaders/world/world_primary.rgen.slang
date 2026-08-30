@@ -60,11 +60,6 @@ public PathSegment tracePrimary(PathSegment seg,
 
         float3 n = payload.normal;
         float3 hitPos = ro + rd * payload.hitT;
-        if (bounce == 0) {
-            // Capture fog against the first visible interface, never the guide destination behind
-            // water/glass. This one deterministic depth/sky-mask value is shared by every Pass B path.
-            gv_fogDepth = maskedFogDepth(hitPos, payload.hitT);
-        }
         uint material = payloadMaterial();
         if (material != MATERIAL_WATER && material != MATERIAL_DIELECTRIC) {
             float metal = material == MATERIAL_PARTICLE
@@ -99,11 +94,6 @@ public PathSegment tracePrimary(PathSegment seg,
 
         // This hit is consumed in pass A, so carry its travelled-medium absorption and cone growth into
         // the record for the next trace. The terminal hit above is deliberately not consumed here.
-        //
-        // worldPush.ambientFog is deliberately NOT applied to this segment. Fog is now a masked
-        // camera-depth composite: gv_fogDepth captured this first interface above and Pass B applies
-        // both attenuation and in-scatter exactly once after combining every split branch. The physical
-        // dielectric extinction below remains path-local.
         if (any(medium.current.extinction > 0.0)) {
             throughput *= exp(-medium.current.extinction * payload.hitT);
         }
@@ -253,9 +243,6 @@ void main() {
     DevicePtr<PackedPathSegment> queue = DevicePtr<PackedPathSegment>(pc.pathQueueAddr);
 
     seed = pcg(seed);
-    // Module globals are invocation-local, but reset explicitly so miss/debug paths always write a
-    // defined clear value to the fog mask texture.
-    gv_fogDepth = 0.0;
     PathSegment current = makePathSegment(origin, dir, float3(1.0, 1.0, 1.0),
             cameraMedium, 0.0, rayConeSpread, seed, 0, true);
     uint nextRecord;

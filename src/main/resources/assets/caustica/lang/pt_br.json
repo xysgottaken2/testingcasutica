@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "Permite que a luz se espalhe através de superfícies finas, como folhas e grama, fazendo a folhagem brilhar quando você olha através dela na direção do sol. Só afeta materiais que fornecem dados de subsuperfície; custa um raio de sombra adicional onde é aplicado.",
 	"caustica.options.rt.weatherLighting": "Iluminação do clima",
 	"caustica.options.rt.weatherLighting.tooltip": "Reduz a luz do sol e da lua e escurece o céu durante chuvas e tempestades, além de ocultar o sol, a lua e as estrelas atrás das nuvens. Desativado, mantém a iluminação de céu limpo em qualquer clima.",
-	"caustica.options.rt.fog": "Névoa mascarada",
-	"caustica.options.rt.fog.tooltip": "Aplica a névoa de distância seletivamente usando profundidade e visibilidade do céu. Cavernas e interiores cobertos ficam limpos, enquanto áreas externas mantêm a névoa do clima e do horizonte. Desativar não altera os céus das dimensões.",
 	"caustica.options.rt.fogVolumetric": "Névoa volumétrica",
 	"caustica.options.rt.fogVolumetric.tooltip": "Substitui a névoa do Overworld (em espaço de tela) por um meio participante real, integrado ao longo de cada segmento do raio, de modo que a névoa fique correta em reflexos, refrações e saltos indiretos. Usa a mesma cor e densidade calibradas de dia/noite/chuva. Nether e End mantêm a névoa original.",
 	"caustica.options.rt.fogVolumetricStrength": "Intensidade da névoa volumétrica",

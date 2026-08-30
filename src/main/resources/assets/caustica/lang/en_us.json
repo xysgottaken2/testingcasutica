@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "Let light scatter through thin surfaces such as leaves and grass, so foliage glows when you look through it toward the sun. Only affects materials that provide subsurface data; costs an extra shadow ray where it applies.",
 	"caustica.options.rt.weatherLighting": "Weather Lighting",
 	"caustica.options.rt.weatherLighting.tooltip": "Dim sunlight and moonlight and darken the sky during rain and thunderstorms, and hide the sun, moon and stars behind the clouds. Off keeps clear-sky lighting in all weather.",
-	"caustica.options.rt.fog": "Masked Fog",
-	"caustica.options.rt.fog.tooltip": "Apply distance fog selectively using primary depth and sky visibility. Covered cave and indoor pixels stay clear, while exposed outdoor terrain keeps weather and horizon haze. Off disables fog without changing dimension skyboxes.",
 	"caustica.options.rt.fogVolumetric": "Volumetric Fog",
 	"caustica.options.rt.fogVolumetric.tooltip": "Replace the Overworld's screen-space fog with a real participating medium marched along each path segment, so the haze is correct in reflections, refractions and indirect bounces. Uses the same calibrated day/night/rain colour and density. The Nether and End keep their authored haze.",
 	"caustica.options.rt.fogVolumetricStrength": "Volumetric Fog Strength",

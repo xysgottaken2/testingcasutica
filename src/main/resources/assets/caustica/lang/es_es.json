@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "Permite que la luz se disperse a través de superficies finas como hojas y hierba, de modo que el follaje brilla al mirarlo a contraluz. Solo afecta a los materiales con datos de subsuperficie y cuesta un rayo de sombra adicional donde se aplica.",
 	"caustica.options.rt.weatherLighting": "Iluminación meteorológica",
 	"caustica.options.rt.weatherLighting.tooltip": "Atenúa la luz del sol y de la luna y oscurece el cielo durante la lluvia y las tormentas, ocultando el sol, la luna y las estrellas tras las nubes. Desactivado, mantiene la iluminación de cielo despejado con cualquier clima.",
-	"caustica.options.rt.fog": "Niebla enmascarada",
-	"caustica.options.rt.fog.tooltip": "Aplica la niebla de distancia de forma selectiva usando la profundidad y la visibilidad del cielo. Las cuevas e interiores cubiertos permanecen despejados, mientras que el exterior conserva la bruma del clima y del horizonte. Desactivarla no cambia los cielos de las dimensiones.",
 	"caustica.options.rt.fogVolumetric": "Niebla volumétrica",
 	"caustica.options.rt.fogVolumetric.tooltip": "Sustituye la niebla en espacio de pantalla del Overworld por un medio participante real marchado a lo largo de cada segmento de rayo, de modo que la bruma es correcta en reflejos, refracciones y rebotes indirectos. Usa el mismo color y densidad calibrados de día/noche/lluvia. Nether y End conservan su bruma original.",
 	"caustica.options.rt.fogVolumetricStrength": "Intensidad de la niebla volumétrica",

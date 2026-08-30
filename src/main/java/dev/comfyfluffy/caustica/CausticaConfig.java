@@ -57,7 +57,7 @@ public final class CausticaConfig {
         @SuppressWarnings("unused")
         Object[] touch = {
             Rt.ENABLED, Rt.Composite.SPP, Rt.Composite.MAX_BOUNCES, Rt.Composite.SSS,
-            Rt.Composite.FOG, Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER, Rt.Composite.METALLIC_SHININESS,
+            Rt.Composite.WEATHER_LIGHTING, Rt.Composite.DENOISER, Rt.Composite.METALLIC_SHININESS,
             Rt.Composite.WATER_WAVE_STRENGTH, Rt.Composite.WATER_WAVE_SPEED, Rt.Composite.WATER_WAVE_DETAIL,
             Rt.Composite.PARALLAX_QUALITY,
             Rt.Terrain.ASYNC_DISPATCH_PER_PASS, Rt.Omm.ENABLED,
@@ -734,20 +734,10 @@ public final class CausticaConfig {
             public static final BooleanSetting SSS =
                     bool("caustica.rt.sss", "composite.subsurface-scattering", true);
             /**
-             * Depth-masked outdoor distance fog. The primary pass writes a per-pixel effective fog
-             * depth after testing whether the visible point has an unobstructed path to the sky, so
-             * covered cave and indoor pixels remain clear instead of receiving uniform emissive haze.
-             *
-             * <p>This is shader-only and takes effect on the next frame. Off skips both the sky-mask
-             * visibility query and the final fog composite; dimension skyboxes are left untouched.
-             */
-            public static final BooleanSetting FOG =
-                    bool("caustica.rt.fog", "composite.fog", true);
-            /**
-             * Path-integrated volumetric fog ({@code fog.slang}). Replaces the Overworld's screen-space
-             * distance composite with a real participating medium marched along each path segment, so the
+             * Path-integrated volumetric fog ({@code fog.slang}). Replaces the old screen-space distance
+             * composite (removed) with a real participating medium marched along each path segment, so the
              * haze is correct in reflections, refractions and indirect bounces rather than a single
-             * post-aggregation blend. The Nether and End keep their authored screen-space haze.
+             * post-aggregation blend. Enclosed air is skipped by a per-path sky-exposure cull.
              *
              * <p>Reuses {@code overworldFog}'s calibrated density and day/night/rain colour, so enabling
              * this keeps the look of the existing haze while making it physical. Off (the default) leaves

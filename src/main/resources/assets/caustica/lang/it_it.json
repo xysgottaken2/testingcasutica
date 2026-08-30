@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "Consente alla luce di diffondersi attraverso superfici sottili come foglie ed erba, così il fogliame si illumina quando lo si guarda in controluce. Interessa solo i materiali che forniscono dati di sottosuperficie e costa un raggio d'ombra aggiuntivo dove viene applicata.",
 	"caustica.options.rt.weatherLighting": "Illuminazione meteorologica",
 	"caustica.options.rt.weatherLighting.tooltip": "Attenua la luce del sole e della luna e scurisce il cielo durante pioggia e temporali, nascondendo sole, luna e stelle dietro le nuvole. Disattivato, mantiene l'illuminazione a cielo sereno con qualsiasi meteo.",
-	"caustica.options.rt.fog": "Nebbia mascherata",
-	"caustica.options.rt.fog.tooltip": "Applica selettivamente la nebbia in distanza usando profondità e visibilità del cielo. Grotte e interni coperti restano limpidi, mentre gli esterni mantengono la foschia meteo e dell’orizzonte. Disattivarla non modifica i cieli delle dimensioni.",
 	"caustica.options.rt.fogVolumetric": "Nebbia volumetrica",
 	"caustica.options.rt.fogVolumetric.tooltip": "Sostituisce la nebbia in spazio schermo dell'Overworld con un vero mezzo partecipante integrato lungo ogni segmento di raggio, così la foschia è corretta in riflessi, rifrazioni e rimbalzi indiretti. Usa lo stesso colore e la stessa densità calibrati per giorno/notte/pioggia. Nether ed End mantengono la loro foschia originale.",
 	"caustica.options.rt.fogVolumetricStrength": "Intensità della nebbia volumetrica",

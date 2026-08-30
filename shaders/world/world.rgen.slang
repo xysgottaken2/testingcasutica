@@ -40,6 +40,19 @@ import sharc;
 // ordinary (non-NRD) output is untouched. The lobe a path belongs to is decided once: dielectric
 // segments are specular from the start; an opaque shading point classifies by its chosen
 // continuation lobe; until then (camera prefix, sky) the diffuse bucket is the catch-all.
+//
+// Sky-exposure cull for the volumetric fog: how much of the sky the air at `point` can see. Enclosed
+// caves/rooms/overhangs read ~0, so the per-segment fog is scaled toward identity there; open sky reads
+// 1. `point` is in the terrain's rebased/world space — the same space `visibility()` traverses (see the
+// shadow rays in lighting.slang) — so the callers pass raw world positions and never subtract camOffset.
+// This is the cull that keeps the volumetric fog out of interiors without any screen-space depth mask or
+// composite.
+float fogSkyExposure(float3 point) {
+    float3 up = float3(0.0, 1.0, 0.0);
+    VisibilityResult sky = visibility(point + up * (2.0 * SURF_BIAS), up, 1024.0);
+    return smoothstep(0.02, 0.98, clamp(luminance(sky.transmittance), 0.0, 1.0));
+}
+
 public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                  bool restirEligiblePath, bool restirOwner, float restirSampleScale,
                  uint2 dimensions,
@@ -58,11 +71,11 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
     float3 ro = seg.ro;
     float3 rd = seg.rd;
     float3 throughput = seg.throughput;
-    // Per-pixel selective fog cull, written by Pass A (guides.maskedFogDepth): the primary hit's depth
-    // scaled by its sky exposure. 0 = a covered cave/room/overhang (or a submerged camera), so the fog on
-    // this pixel's path is suppressed entirely; otherwise it caps how far the fog may integrate, keeping
-    // the volumetric medium out of enclosed air columns the way the screen-space mask used to.
-    float fogCull = max(gFogDepthMask[pix], 0.0);
+    // Sky-exposure cull for the volumetric fog, computed lazily once per path from the first hit and
+    // reused for every fog segment on that path. 0 = the air is enclosed (cave/room/overhang), so the fog
+    // is scaled to identity there; 1 = open to the sky. This replaces the old screen-space depth mask.
+    float fogExposure = 1.0;
+    bool fogExposureReady = false;
 
     // ---- Cloud over the prefix Pass A already consumed.
     //
@@ -95,17 +108,20 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 // water and drop its fog. When the camera IS submerged the prefix is the dielectric column
                 // itself and is left to the medium's own extinction/in-scatter, so no fog.
                 if (!cameraSubmerged()) {
+                    if (!fogExposureReady) {
+                        // World-space air/interface position for the exposure ray: toStart is camera-relative,
+                        // so the world-space point is toStart + camOffset (== seg.ro, the interface hit).
+                        fogExposure = fogSkyExposure(toStart + worldPush.camOffset);
+                        fogExposureReady = true;
+                    }
                     FogVolume preFog = fogSegment(worldPush, toStart / prefixDist,
-                                                  min(prefixDist, fogCull), seg.showCelestial);
+                                                  prefixDist, seg.showCelestial, fogExposure);
                     L += throughput * preFog.scatter;
                     Lspec += throughput * preFog.scatter;
                     throughput *= preFog.transmittance;
                 }
-            // The authored screen-space medium is still NOT integrated here. Pass A wrote one
-            // first-interface depth/sky mask and Pass B composites that deterministic screen-space medium
-            // after all Fresnel branches and SPP samples have been aggregated. Keeping that emissive fog
-            // out of split branches removes the bright/noisy fringe that used to form around thin
-            // falling-water columns.
+            // The cloud deck is integrated over the same camera->interface prefix so the reflection and
+            // transmission branches both occlude the deck behind the surface (see cloudSegment).
             CloudVolume pre = cloudSegment(worldPush, float3(0.0, 0.0, 0.0), toStart / prefixDist,
                                            prefixDist, cloudSkyAmbient(worldPush), seg.showCelestial);
             L += throughput * pre.scatter;
@@ -228,12 +244,6 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             throughput *= exp(-medium.current.extinction * payload.hitT);
         }
 
-        // The authored screen-space dimension fog is intentionally absent from individual path segments.
-        // It is a selective camera-depth effect, composited once from gFogDepthMask after path aggregation
-        // below — the Nether/End retain it. The OPTIONAL path-integrated volumetric facility (fog.slang)
-        // is NOT that screen-space pass, so it is integrated here per segment. Dielectric extinction above
-        // remains physical and continues through reflections/refractions.
-
         // Volumetric fog crossed on the way to this hit. The fog fills the air between the camera and the
         // surface, so every geometry hit reads it as a participating medium along the segment. It is
         // composed BEFORE the clouds because the fog nearest the camera must occlude the cloud deck behind
@@ -248,9 +258,15 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
         if (!any(medium.current.extinction > 0.0)) {
             // showCelestial marks the rays whose fog is seen directly (camera + specular bounces), so it
             // selects the full march; diffuse continuations take the cheap one — see fogSegment. The fog is
-            // capped by the primary pixel's selective cull (fogCull), so an enclosed cave/room/overhang
-            // reads as identity and the fog never pools inside it.
-            FogVolume segFog = fogSegment(worldPush, rd, min(payload.hitT, fogCull), showCelestial);
+            // scaled by this path's sky-exposure cull, so an enclosed cave/room/overhang reads as identity
+            // and the fog never pools inside it.
+            if (!fogExposureReady) {
+                // World-space hit position (hitPos); no camOffset subtraction — visibility() traverses
+                // the rebased world, so the exposure ray must start from the same space.
+                fogExposure = fogSkyExposure(ro + rd * payload.hitT);
+                fogExposureReady = true;
+            }
+            FogVolume segFog = fogSegment(worldPush, rd, payload.hitT, showCelestial, fogExposure);
             L += throughput * segFog.scatter;
             if (channel == 2) {
                 Lspec += throughput * segFog.scatter;
@@ -935,19 +951,10 @@ void main() {
     }
     float3 radiance = frameRadiance / float(spp);
 
-    // Selective screen-space fog: Pass A stored first-interface depth multiplied by deterministic sky
-    // exposure in an R16 texture. Composite exactly once AFTER all stochastic path leaves and SPP have
-    // converged into one pixel. Besides excluding covered caves/interiors, this prevents each Fresnel
-    // branch around a thin waterfall from independently sampling emissive in-scatter (the old bright,
-    // noisy outline). Miss pixels store zero, so dimension skyboxes remain untouched.
-    //
-    // When path-integrated volumetric fog is active (Overworld), the fog was already accumulated along
-    // each path segment, so this screen-space composite is disabled to avoid double-counting it. The
-    // Nether and End keep their authored screen-space haze, which is never marched.
-    bool screenFogActive = fogEnabled() && !fogVolumetricEnabled(worldPush);
-    float fogDepth = screenFogActive ? max(gFogDepthMask[pix], 0.0) : 0.0;
-    AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);
-    radiance = radiance * screenFog.transmittance + screenFog.inScatter;
+    // All fog now lives in the path integral (fog.slang): it is already accumulated along each segment
+    // and folded into every lobe accumulator, so there is no screen-space composite here. Enclosed air is
+    // excluded by the per-path sky-exposure cull inside the march itself (see fogSkyExposure), so caves
+    // and interiors stay clear without a depth mask.
 
     // Sanitize the combined radiance every downstream consumer reads. A single non-finite sample
     // (a 0/0 or inf-inf from some BSDF corner surviving the walk) would be written into outImage
@@ -998,10 +1005,8 @@ void main() {
         // anti-firefly pass owns that job on the denoised path, and clamping twice would darken it.
         float3 diffRad = frameDiff / float(spp);
         float3 specRad = frameSpec / float(spp);
-        // Atmospheric in-scatter is diffuse; both lobes take the same camera-segment extinction, so
-        // the per-lobe pair still sums exactly to the combined output.
-        diffRad = diffRad * screenFog.transmittance + screenFog.inScatter;
-        specRad *= screenFog.transmittance;
+        // The volumetric fog is already folded into the per-lobe accumulators inside the path trace, so
+        // no screen-space post-add is needed; the pair still sums to the fogged combined output.
         if (any(isnan(diffRad)) || any(isinf(diffRad))) {
             diffRad = float3(0.0, 0.0, 0.0);
         }

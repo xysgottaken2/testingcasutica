@@ -9,10 +9,10 @@
 // look while making it physical. The extra WorldPush.fogParams lane carries the march/fade distance, the
 // overall strength (also an opacity ceiling), the sun-glow strength, and the density scale multiplier.
 //
-// The caller additionally caps each march by the per-pixel selective cull (WorldPush.ambientFog is the
-// density source, but fogCull = gFogDepthMask is passed as maxDistance in world.rgen): enclosed caves,
-// rooms and overhangs have a zero cull, so the medium is suppressed there instead of fogging every
-// enclosed air column.
+// Culling is done by the caller with a per-point sky-exposure factor (`exposure`, 0..1) passed into
+// fogSegment: enclosed caves, rooms and overhangs read ~0, so the medium is scaled toward nothing there
+// instead of fogging every enclosed air column. There is no screen-space depth mask or composite — the
+// volumetric fog lives entirely in the path integral.
 //
 // Only world_common is imported. Like clouds.slang, this module must stay usable from passes that cannot
 // pull in world_core (world.rmiss must not), so every entry point takes the WorldPush explicitly and no
@@ -54,15 +54,14 @@ float fogPhase(float cosT) {
 
 /**
  * Whether this frame draws volumetric fog on path segments. Gated on the feature bit and the Overworld
- * (the Nether and End keep their authored screen-space haze, which is not marched), plus a non-zero
- * density source — so a mismatched push short-circuits to the exact pre-fog result (bit-identical output
- * when the feature is off).
+ * (the Nether and End have no fog — the old screen-space composite was removed), plus a non-zero density
+ * source — so a mismatched push short-circuits to the exact pre-fog result (bit-identical output when the
+ * feature is off).
  */
 public bool fogVolumetricEnabled(WorldPush push) {
     // Strength (fogParams.y) and density (fogParams.w) are deliberately NOT gates: when either is 0 the
     // finished march is identity (scatter 0, transmittance 1), so "Volumetric Fog" on + Strength 0 = no
-    // fog at all, and the screen-space composite stays disabled for the Overworld. Gating on them would
-    // re-enable the old screen-space pass, contradicting the toggle.
+    // fog at all. Gating on them would be a second, separate enable path and contradict the toggle.
     return worldFeature(push, FEATURE_FOG_VOLUMETRIC)
         && push.dimension == DIMENSION_OVERWORLD
         && push.ambientFog.w > 0.0;
@@ -71,20 +70,25 @@ public bool fogVolumetricEnabled(WorldPush push) {
 /**
  * Integrate the atmospheric medium along one ray segment, returning premultiplied in-scatter plus the
  * transmittance the background keeps. Callers composite with {@code col * transmittance + scatter}, the
- * identical two lines they already use for clouds and for {@code evalAmbientFog}, so fog inherits the
- * correct behaviour over reflections, refractions and indirect bounces for free.
+ * identical two lines they already use for clouds, so fog inherits the correct behaviour over
+ * reflections, refractions and indirect bounces for free.
  *
  * `maxDistance` is the distance to the nearest scene hit along the ray (or a large value when the ray
  * escapes to the sky). Fog is bounded by it and by {@code fogParams.x} (the fade distance), so a grazing
  * ray cannot integrate an unbounded air column and turn the whole horizon white — the same cap the cloud
  * deck uses for its slab crossings.
  *
- * The medium is homogeneous for now — sigma = ambientFog.w per block, the value the screen-space
- * composite already calibrated. That keeps the look identical while the path placement supplies the
+ * `exposure` is the sky-exposure cull (0..1) the caller computes for this segment's air: 0 means the air
+ * is enclosed (cave/room/overhang) and the fog is scaled to identity; 1 means fully open to the sky. It
+ * multiplies the strength, so it is a clean blend rather than a hard toggle.
+ *
+ * The medium is homogeneous for now — sigma = ambientFog.w per block, the value the aerial haze was
+ * calibrated against. That keeps the look familiar while the path placement supplies the physical
  * correctness. A height-falloff field could replace the single sigma sample below, but is intentionally
  * left out of this first iteration so the effect stays easy to reason about and debug.
  */
-public FogVolume fogSegment(WorldPush push, float3 dir, float maxDistance, bool highQuality) {
+public FogVolume fogSegment(WorldPush push, float3 dir, float maxDistance, bool highQuality,
+                            float exposure) {
     FogVolume result;
     result.scatter = float3(0.0, 0.0, 0.0);
     result.transmittance = 1.0;
@@ -95,7 +99,9 @@ public FogVolume fogSegment(WorldPush push, float3 dir, float maxDistance, bool 
     // (fogParams.w). That multiplier is what the "Fog Density" slider drives, so the haze can be thinned
     // toward nothing or thickened beyond the calibrated day/night/rain value without touching the colour.
     float density = push.ambientFog.w * push.fogParams.w;
-    float strength = clamp(push.fogParams.y, 0.0, 1.0);
+    // Sky-exposure cull and the strength ceiling both scale the finished march. exposure 0 = enclosed
+    // air, so the fog collapses to identity without touching the march below.
+    float strength = clamp(push.fogParams.y, 0.0, 1.0) * clamp(exposure, 0.0, 1.0);
     float fullDist = max(push.fogParams.x, 16.0);
     // Clip the segment to the far plane / full-saturation distance. A short segment keeps its fog; an
     // escaping ray is capped so fog never over-integrates toward an infinite horizon.

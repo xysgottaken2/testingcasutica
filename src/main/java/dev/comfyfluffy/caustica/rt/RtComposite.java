@@ -125,9 +125,8 @@ public final class RtComposite {
     // Hot addresses/frameIndex and raygen's debugView avoid unnecessary global-memory dereferences;
     // WorldPushConstantsData is generated from the same Slang module and owns this second ABI as well.
     // RR guide buffers (bindings 3..8) + NRD signals (bindings 9..11: viewZ + per-lobe radiance/hit
-    // distance) + the selective fog depth mask (binding 12). The NRD images are only written when
-    // FEATURE_NRD is on, but the bindings always exist.
-    private static final int GUIDE_COUNT = 10;
+    // distance). The NRD images are only written when FEATURE_NRD is on, but the bindings always exist.
+    private static final int GUIDE_COUNT = 9;
     private static final long PATH_RECORD_BYTES = 48L;
     // Reflected from PackedRestirReservoir's std430 array stride (world_layout_probe.slang).
     private static final long RESTIR_RECORD_BYTES = RestirReservoirData.BYTE_SIZE;
@@ -187,7 +186,6 @@ public final class RtComposite {
     // gViewZ capture. Every denoised non-DLSS path needs it (SVGF's reprojection validation and
     // sky cutoff, NRD's IN_VIEWZ), so it is set for both denoisers.
     private static final int FEATURE_VIEWZ = 128;
-    private static final int FEATURE_FOG = 256;
     private static final int FEATURE_FOG_VOLUMETRIC = 1024;
     private static final int FEATURE_SHARC = 512;
 
@@ -210,9 +208,6 @@ public final class RtComposite {
         }
         if (CausticaConfig.Rt.Composite.WEATHER_LIGHTING.value()) {
             flags |= FEATURE_WEATHER_LIGHTING;
-        }
-        if (CausticaConfig.Rt.Composite.FOG.value()) {
-            flags |= FEATURE_FOG;
         }
         if (CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()) {
             flags |= FEATURE_FOG_VOLUMETRIC;
@@ -625,8 +620,6 @@ public final class RtComposite {
     private RtImage gViewZ;
     private RtImage gNrdDiff;
     private RtImage gNrdSpec;
-    // R16 per-pixel effective fog depth: primary camera depth multiplied by the sky-exposure mask.
-    private RtImage gFogDepthMask;
     // ---- SVGF (the renderer's own denoiser for every non-DLSS path).
     //
     // colour/history ping-pong (rgb = colour, a = accumulated frame count), the luminance-moment
@@ -1117,8 +1110,6 @@ public final class RtComposite {
         worldPipeline.setExtraStorageImage(6, gViewZ.view);
         worldPipeline.setExtraStorageImage(7, gNrdDiff.view);
         worldPipeline.setExtraStorageImage(8, gNrdSpec.view);
-        // Selective fog depth mask: written in Pass A and consumed in Pass B.
-        worldPipeline.setExtraStorageImage(9, gFogDepthMask.view);
     }
 
     private void destroyGuideImages() {
@@ -1157,10 +1148,6 @@ public final class RtComposite {
         if (gNrdSpec != null) {
             gNrdSpec.destroy();
             gNrdSpec = null;
-        }
-        if (gFogDepthMask != null) {
-            gFogDepthMask.destroy();
-            gFogDepthMask = null;
         }
         if (svgfHistoryPing != null) {
             svgfHistoryPing.destroy();
@@ -1399,7 +1386,6 @@ public final class RtComposite {
         gViewZ = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R32_SFLOAT, "nrd viewZ " + renderW + "x" + renderH);
         gNrdDiff = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "nrd diffuse radiance+hitdist " + renderW + "x" + renderH);
         gNrdSpec = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16G16B16A16_SFLOAT, "nrd specular radiance+hitdist " + renderW + "x" + renderH);
-        gFogDepthMask = ctx.createStorageImage(renderW, renderH, VK10.VK_FORMAT_R16_SFLOAT, "fog depth mask " + renderW + "x" + renderH);
         // SVGF working set: colour/frame-count history, luminance moments, and the à-trous
         // ping-pong (whose alpha carries variance), plus copies of last frame's depth/normal guides
         // so the reprojection can validate history against the geometry it came from.
@@ -1705,8 +1691,8 @@ public final class RtComposite {
                     // dayFactor rides in sunDir.w (see skyPush): the fog dims and cools with it, so the
                     // haze follows the same dusk curve as the light rather than switching at an angle.
                     ambientFog(dimension, weather, sky.sunDir().w()),
-                    // Path-integrated volumetric fog lane (see fogState): the screen-space fog above is
-                    // bypassed for the Overworld when this is non-zero, so the two never double-count.
+                    // Path-integrated volumetric fog lane (see fogState): the fog medium is Overworld-only
+                    // and gated by the feature bit, so it is zeroed everywhere else.
                     fogState(weather, sky.sunDir().w()),
                     clouds.clouds(),
                     clouds.anchor(),
@@ -2401,35 +2387,19 @@ public final class RtComposite {
     }
 
     /**
-     * Distance-medium parameters ({@code WorldPush.ambientFog}: rgb in-scatter radiance, w extinction
-     * per block). Pass A writes a per-pixel effective depth; Pass B composites the medium once after path
-     * aggregation, keeping it stable across water/glass Fresnel branches instead of injecting it into
-     * every path segment.
-     *
-     * <p>Overworld depth is multiplied by sky visibility so caves/interiors remain clear. The Nether and
-     * End intentionally keep their original haze at full primary depth: those dimension-wide atmospheres
-     * are part of their authored looks rather than Overworld-style outdoor fog. Disabling the live fog
-     * option still zeros every dimension's parameters as well as the shader feature bit.
-     *
-     * <p>Densities are per block: the Nether's 0.012 halves radiance at roughly 58 blocks, while the End's
-     * 0.0016 does so at roughly 430 blocks.
+     * Volumetric-fog medium parameters ({@code WorldPush.ambientFog}: rgb in-scatter radiance, w density
+     * per block). There is no screen-space composite anymore — this lane is the density/colour source the
+     * path-integrated volumetric fog (fog.slang) reads. It is meaningfully non-zero only for the Overworld
+     * and only while the volumetric facility is switched on; otherwise it is zeroed, which short-circuits
+     * the March to identity (no fog). The Nether and End no longer have a fog pass.
      */
     private static Float4 ambientFog(int dimension, WeatherState weather, float dayFactor) {
-        if (!CausticaConfig.Rt.Composite.FOG.value()) {
+        if (dimension != DIMENSION_OVERWORLD) {
             return new Float4(0.0f, 0.0f, 0.0f, 0.0f);
         }
-        return switch (dimension) {
-            case DIMENSION_NETHER -> new Float4(0.052f, 0.0125f, 0.0065f, 0.012f);
-            case DIMENSION_END -> new Float4(0.010f, 0.0055f, 0.016f, 0.0016f);
-            // Investigative disable of the Overworld day/night distance haze (see overworldFog).
-            // The reported block/shadow/water artifacts are suspected to come from that screen-space fog,
-            // so it is zeroed out unless the path-integrated volumetric facility is switched on — in which
-            // case its density/colour drive the per-segment medium (fog.slang) instead. The authored
-            // Nether/End haze and the cloud fog (clouds.slang) are deliberately kept intact.
-            default -> CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()
-                    ? overworldFog(weather, dayFactor)
-                    : new Float4(0.0f, 0.0f, 0.0f, 0.0f);
-        };
+        return CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()
+                ? overworldFog(weather, dayFactor)
+                : new Float4(0.0f, 0.0f, 0.0f, 0.0f);
     }
 
     /**
@@ -2488,8 +2458,8 @@ public final class RtComposite {
      * Path-integrated volumetric fog parameters ({@code WorldPush.fogParams}): x = march/fade distance
      * (blocks), y = strength 0..1 (also the path-integral's opacity ceiling), z = sun-glow strength 0..1.
      * Density and in-scatter colour come from {@link #ambientFog}'s Overworld haze (see overworldFog), so
-     * the look stays calibrated while the medium is now marched along each path segment instead of being
-     * composited once in screen space. Off pushes a zeroed lane, which short-circuits {@code fog.slang}.
+     * the look stays calibrated while the medium is marched along each path segment. Off pushes a zeroed
+     * lane, which short-circuits {@code fog.slang}.
      */
     private static Float4 fogState(WeatherState weather, float dayFactor) {
         if (!CausticaConfig.Rt.Composite.FOG_VOLUMETRIC.value()) {

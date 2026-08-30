@@ -6,10 +6,11 @@ import clouds;
 // Vanilla celestials atlas (sun + moon-phase sprites), sampled for the discs below.
 // IMPORTANT: binding must equal RtPipeline's skyBinding = firstExtraBinding(3) + GUIDE_COUNT —
 // the guide images occupy bindings 3..(3+GUIDE_COUNT-1) and the atlas sampler sits right after
-// them. It used to be binding 9 back when GUIDE_COUNT was 6; when the NRD guides (viewZ, per-lobe
-// radiance, reactive) grew the guide block, the atlas slid up here but this declaration stayed at
-// 9 — sampling the gViewZ storage image instead, which turned the sun and moon black ("evaporated").
-[[vk::binding(13, 0)]] Sampler2D celestialsAtlas;
+// them. GUIDE_COUNT is 9 now that the masked-fog depth guide was removed, so the atlas is at
+// binding 12 (it slid to 13 when the NRD guides grew the block; removing the fog depth guide
+// slid it back down one). If this goes stale the sun/moon sample reads a storage image instead
+// of the atlas and the discs "evaporate".
+[[vk::binding(12, 0)]] Sampler2D celestialsAtlas;
 
 static const float PI = 3.14159265359;
 float pow2(float x) { return x * x; }

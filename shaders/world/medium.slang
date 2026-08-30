@@ -45,37 +45,6 @@ public float3 volumeExtinction(float3 tint, float transmission) {
     return -log(blockTransmittance) / VOLUME_TINT_REFERENCE_DISTANCE;
 }
 
-// ---- Masked atmospheric fog (worldPush.ambientFog).
-//
-// The parameters still describe a homogeneous emissive medium: over effective depth d, radiance keeps
-// exp(-sigma*d) and picks up the fog colour over the part it lost. The caller supplies d from the
-// per-pixel primary-depth/sky-exposure texture, rather than integrating this at every stochastic path
-// segment. That makes the medium selective (covered caves/interiors have d=0), preserves far-field
-// skyboxes, and keeps fog stable around split water/glass branches.
-//
-// Density (w) is per block. A zero density or masked depth is the exact identity operation.
-public struct AmbientFog {
-    public float3 inScatter;   // radiance added over the segment
-    public float3 transmittance; // what survives of the radiance coming from beyond it
-};
-
-public AmbientFog evalAmbientFog(float4 ambientFog, float distance) {
-    AmbientFog result;
-    result.inScatter = float3(0.0, 0.0, 0.0);
-    result.transmittance = float3(1.0, 1.0, 1.0);
-    float density = ambientFog.w;
-    if (density <= 0.0 || distance <= 0.0) {
-        return result;
-    }
-    // Clamp the optical depth. exp(-huge) is zero either way, but bounding the exponent keeps the
-    // result out of the denormal range on a very long segment (a far shadow/guide ray can report
-    // thousands of blocks), which some drivers handle at a large penalty.
-    float t = exp(-min(density * distance, 32.0));
-    result.transmittance = float3(t, t, t);
-    result.inScatter = ambientFog.xyz * (1.0 - t);
-    return result;
-}
-
 // ---- Participating medium the path is currently inside.
 //
 // Refraction needs the RELATIVE index across an interface, so the renderer has to know what it is

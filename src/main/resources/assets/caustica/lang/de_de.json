@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "Lässt Licht durch dünne Oberflächen wie Blätter und Gras streuen, sodass Laub leuchtet, wenn man in Richtung Sonne hindurchschaut. Betrifft nur Materialien mit Subsurface-Daten und kostet dort einen zusätzlichen Schattenstrahl.",
 	"caustica.options.rt.weatherLighting": "Wetterbeleuchtung",
 	"caustica.options.rt.weatherLighting.tooltip": "Dämpft Sonnen- und Mondlicht und verdunkelt den Himmel bei Regen und Gewitter; Sonne, Mond und Sterne verschwinden hinter den Wolken. Aus behält bei jedem Wetter die Beleuchtung eines klaren Himmels bei.",
-	"caustica.options.rt.fog": "Maskierter Nebel",
-	"caustica.options.rt.fog.tooltip": "Wendet Entfernungsnebel anhand von Tiefe und Sicht zum Himmel nur gezielt an. Höhlen und Innenräume bleiben klar, während Gelände im Freien Wetter- und Horizontdunst behält. Aus deaktiviert Nebel, ohne Dimensionshimmel zu ändern.",
 	"caustica.options.rt.fogVolumetric": "Volumetrischer Nebel",
 	"caustica.options.rt.fogVolumetric.tooltip": "Ersetzt den bildschirmbasierten Nebel des Overworlds durch ein echtes partizipierendes Medium, das entlang jedes Pfadsegments integriert wird, sodass der Dunst auch in Reflexionen, Brechungen und indirekten Sprüngen korrekt ist. Verwendet dieselbe kalibrierte Farbe und Dichte für Tag/Nacht/Regen. Nether und End behalten ihren autorisierten Dunst.",
 	"caustica.options.rt.fogVolumetricStrength": "Stärke des volumetrischen Nebels",

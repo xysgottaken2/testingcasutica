@@ -73,8 +73,6 @@
 	"caustica.options.rt.sss.tooltip": "葉や草などの薄い面を光が透過して散乱し、太陽に向かって見たときに葉が輝くようになります。サブサーフェス情報を持つマテリアルにのみ影響し、適用箇所ではシャドウレイが1本増えます。",
 	"caustica.options.rt.weatherLighting": "天候による照明",
 	"caustica.options.rt.weatherLighting.tooltip": "雨や雷雨の間、太陽光と月光を弱めて空を暗くし、太陽・月・星を雲の後ろに隠します。オフにすると、どの天候でも快晴時の照明を維持します。",
-	"caustica.options.rt.fog": "マスク付きフォグ",
-	"caustica.options.rt.fog.tooltip": "深度と空への可視性を使い、距離フォグを選択的に適用します。覆われた洞窟や屋内は鮮明なまま、屋外には天候と地平線の霞が残ります。オフにしてもディメンションの空は変わりません。",
 	"caustica.options.rt.fogVolumetric": "ボリュメトリックフォグ",
 	"caustica.options.rt.fogVolumetric.tooltip": "Overworld のスクリーンスペースフォグを、各パスセグメントに沿ってマーチする本物の参加媒質に置き換え、反射・屈折・間接バウンスでも霞が正しくなります。同じ較正された昼夜・雨の色と密度を使用します。ネザーとエンドは元の霞を維持します。",
 	"caustica.options.rt.fogVolumetricStrength": "ボリュメトリックフォグの強さ",
