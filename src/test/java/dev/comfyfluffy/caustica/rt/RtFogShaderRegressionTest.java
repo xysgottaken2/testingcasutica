@@ -71,12 +71,31 @@ final class RtFogShaderRegressionTest {
                 "secondary path segments must not independently add emissive fog");
         assertInOrder(world,
                 "float3 radiance = frameRadiance / float(spp);",
-                "float fogDepth = fogEnabled() ? max(gFogDepthMask[pix], 0.0) : 0.0;",
+                "bool screenFogActive = fogEnabled() && !fogVolumetricEnabled(worldPush);",
+                "float fogDepth = screenFogActive ? max(gFogDepthMask[pix], 0.0) : 0.0;",
                 "AmbientFog screenFog = evalAmbientFog(worldPush.ambientFog, fogDepth);",
                 "radiance = radiance * screenFog.transmittance + screenFog.inScatter;");
         assertTrue(world.contains("diffRad = diffRad * screenFog.transmittance + screenFog.inScatter;")
                         && world.contains("specRad *= screenFog.transmittance;"),
                 "optional per-lobe denoiser signals must still sum to the fogged combined image");
+    }
+
+    @Test
+    void volumetricFogGatesOffScreenSpaceComposite() throws IOException {
+        String world = Files.readString(WORLD);
+        String fog = Files.readString(REPO_ROOT.resolve("shaders/world/fog.slang"));
+
+        // The path-integrated volumetric facility is a separate medium from the selective screen-space
+        // fog. When it is active the screen-space composite must be disabled, so the two never double-count.
+        assertTrue(world.contains("fogEnabled() && !fogVolumetricEnabled(worldPush)"),
+                "the screen-space fog must be gated off when volumetric fog is active");
+        // fogSegment is integrated along path segments (prefix + per-hit), the point of a real medium.
+        assertTrue(world.contains("FogVolume preFog = fogSegment("),
+                "the dielectric camera->interface prefix must carry volumetric fog");
+        assertTrue(world.contains("FogVolume segFog = fogSegment("),
+                "per-hit path segments must carry volumetric fog");
+        assertTrue(fog.contains("public FogVolume fogSegment(") && fog.contains("public bool fogVolumetricEnabled("),
+                "fog.slang must expose the volumetric fog segment and gate");
     }
 
     @Test
