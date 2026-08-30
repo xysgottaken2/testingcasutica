@@ -308,7 +308,7 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
     float3 lightVisB = float3(0.0, 0.0, 0.0);
     float lightScoreB = 0.0;
     float localPeak = 0.0;
-    if (pc.lightBufAddr != 0u && pc.lightGridCellAddr != 0u && pc.lightGridSpanAddr != 0u
+    if (pc.lightBufAddr != 0 && pc.lightGridCellAddr != 0 && pc.lightGridSpanAddr != 0
             && worldPush.lightCount > 0u) {
         // Grid-cell lookup, inlined from lighting.slang's findLightGridCell.
         int3 cellCoord = int3(floor((midRel - worldPush.lightGridOrigin.xyz)
@@ -325,13 +325,13 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
                 ConstPtr<LightGridSpan> spans = ConstPtr<LightGridSpan>(pc.lightGridSpanAddr);
                 float emitterScale = max(worldPush.lightScales.x, 0.0);
                 int scanned = 0;
-                for (uint s = 0u; s < cell.spanCount; ++s) {
+                for (uint s = 0u; s < cell.spanCount; s++) {
                     if (scanned >= FOG_MAX_LIGHT_CANDIDATES) {
                         break;
                     }
                     LightGridSpan span = spans[cell.spanOffset + s];
                     uint spanLights = span.packedLightCounts & 0xffffu; // own section range
-                    for (uint i = 0u; i < spanLights; ++i) {
+                    for (uint i = 0u; i < spanLights; i++) {
                         if (scanned >= FOG_MAX_LIGHT_CANDIDATES) {
                             break;
                         }
