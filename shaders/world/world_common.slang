@@ -156,6 +156,12 @@ public struct WorldPush {
     // y = spatial neighbour count (0 = temporal only), z = max reservoir age in frames, w reserved.
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
+    // World-space volumetric fog (fog.slang): x = base extinction A (per block; 0 = no fog),
+    // y = base height RELATIVE TO THE CAMERA (fog world Y minus camera Y — the same
+    // camera-relative space every tracer position lives in), z = height falloff k (per block,
+    // above the base), w = in-scatter strength multiplier. Overworld only, never while the eye
+    // is submerged — see fogEnabled.
+    public float4   fogParams;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full
@@ -177,6 +183,7 @@ public static const uint FEATURE_RESTIR = 32u;            // temporal + spatial 
 public static const uint FEATURE_NRD = 64u;              // NRD denoiser signal capture (per-lobe radiance + hit distance)
 public static const uint FEATURE_VIEWZ = 128u;           // a renderer-side denoiser needs gViewZ (reprojection validation + sky cutoff)
 public static const uint FEATURE_SHARC = 256u;           // experimental spatial-hash radiance cache
+public static const uint FEATURE_FOG = 512u;             // world-space volumetric fog (fog.slang)
 
 // WorldPush.flags: physical state of the camera/frame, not user options (those are featureFlags).
 public static const uint WORLD_FLAG_SUBMERGED = 1u; // bit0: the eye is inside a water volume

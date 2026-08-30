@@ -216,6 +216,54 @@ public final class RtVideoOptions {
         return options.toArray(OptionInstance<?>[]::new);
     }
 
+    /**
+     * World-space volumetric fog rows: the master toggle, the density slider, the base height and
+     * the altitude falloff. All four are read fresh every frame in RtComposite, so a change takes
+     * effect on the next frame.
+     */
+    public static OptionInstance<?>[] fogOptions() {
+        return new OptionInstance<?>[] {
+            fogEnabled(),
+            fogDensity(),
+            fogBaseHeight(),
+            fogFalloff(),
+        };
+    }
+
+    /**
+     * Master toggle for the world-space fog bank. The fog is a real volume in the air (fog.slang):
+     * its density follows world height, and blocks occlude it, so it never shows through
+     * mountains or into caves.
+     */
+    private static OptionInstance<Boolean> fogEnabled() {
+        return bool("caustica.options.rt.fog", CausticaConfig.Rt.Composite.FOG);
+    }
+
+    /** How thick the fog bank is, as a percentage of the maximum base extinction. */
+    private static OptionInstance<Integer> fogDensity() {
+        return percent("caustica.options.rt.fogDensity", CausticaConfig.Rt.Composite.FOG_DENSITY);
+    }
+
+    /**
+     * World Y the fog base sits at, in whole blocks. The fog is densest at and below this height
+     * and thins with altitude above it, so valleys stay foggy while peaks clear out.
+     */
+    private static OptionInstance<Integer> fogBaseHeight() {
+        FloatSetting setting = CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT;
+        return new OptionInstance<>(
+            "caustica.options.rt.fogBaseHeight",
+            OptionInstance.cachedConstantTooltip(Component.translatable("caustica.options.rt.fogBaseHeight.tooltip")),
+            (caption, blocks) -> Options.genericValueLabel(caption, Component.literal("Y " + blocks)),
+            new OptionInstance.IntRange(-64, 256),
+            Math.clamp(Math.round(setting.value()), -64, 256),
+            blocks -> setting.set(blocks.floatValue()));
+    }
+
+    /** How fast the fog thins with altitude above the base, as a percentage. */
+    private static OptionInstance<Integer> fogFalloff() {
+        return percent("caustica.options.rt.fogFalloff", CausticaConfig.Rt.Composite.FOG_FALLOFF);
+    }
+
     public static OptionInstance<?>[] hdrOptions() {
         return new OptionInstance<?>[] {
             hdrEnabled(),

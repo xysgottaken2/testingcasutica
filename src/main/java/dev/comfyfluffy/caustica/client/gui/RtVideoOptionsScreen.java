@@ -18,8 +18,8 @@ import net.minecraft.network.chat.Component;
  * <p>The hub is deliberately just a directory: practically everything Caustica lets you configure
  * per-frame lives in its own sub-screen — Quality, Upscaling (DLSS RR / FSR 3 / XeSS), Frame
  * Generation &amp; Latency, Lighting &amp; ReSTIR, Sky, World &amp; Entities, Effects, Water, POM,
- * Clouds, Exposure, Tonemapping, HDR, Terrain Streaming, Debug and the experimental SHaRC page — each
- * opened by one of the buttons below (see {@link RtSubScreens} for the factories).
+ * Clouds, Fog, Exposure, Tonemapping, HDR, Terrain Streaming, Debug and the experimental SHaRC page —
+ * each opened by one of the buttons below (see {@link RtSubScreens} for the factories).
  *
  * <p>Every sub-screen starts with a "Reset to Defaults" row covering only that page's settings, so a
  * botched experiment is never fatal; the hub itself carries the matching global "Reset All RT
@@ -85,6 +85,7 @@ public class RtVideoOptionsScreen extends OptionsSubScreen {
         list.addBig(RtSubScreens.openButton(this, "caustica.options.rt.waterHeader", RtSubScreens::water));
         list.addBig(RtSubScreens.openButton(this, "caustica.options.rt.pomHeader", RtSubScreens::pom));
         list.addBig(RtSubScreens.openButton(this, "caustica.options.rt.cloudsHeader", RtSubScreens::clouds));
+        list.addBig(RtSubScreens.openButton(this, "caustica.options.rt.fogHeader", RtSubScreens::fog));
 
         // --- Advanced ---
         list.addHeader(ADVANCED_HEADER);

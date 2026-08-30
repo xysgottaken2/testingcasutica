@@ -138,6 +138,14 @@ public final class RtSubScreens {
                         RtVideoOptions.cloudCoverageDisabledHint())));
     }
 
+    /** World-space volumetric fog: the master toggle, density, base height and altitude falloff. */
+    public static RtSettingsSubScreen fog(Screen parent) {
+        return new RtSettingsSubScreen(parent, options(),
+                Component.translatable("caustica.options.rt.fogHeader"),
+                fogSettings(), RtSubScreens::fog,
+                reopen -> List.of(RtSettingsSubScreen.Section.of(null, RtVideoOptions.fogOptions())));
+    }
+
     /** Manual/auto exposure and the whole auto-exposure internal state. */
     public static RtSettingsSubScreen exposure(Screen parent) {
         return new RtSettingsSubScreen(parent, options(),
@@ -287,6 +295,14 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Composite.CLOUD_OPACITY);
     }
 
+    private static List<CausticaConfig.RuntimeSetting<?>> fogSettings() {
+        return List.of(
+                CausticaConfig.Rt.Composite.FOG,
+                CausticaConfig.Rt.Composite.FOG_DENSITY,
+                CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT,
+                CausticaConfig.Rt.Composite.FOG_FALLOFF);
+    }
+
     private static List<CausticaConfig.RuntimeSetting<?>> exposureSettings() {
         return List.of(
                 CausticaConfig.Rt.Exposure.MODE,
@@ -349,6 +365,7 @@ public final class RtSubScreens {
                 waterSettings(),
                 pomSettings(),
                 cloudsSettings(),
+                fogSettings(),
                 exposureSettings(),
                 tonemapSettings(),
                 hdrSettings(),

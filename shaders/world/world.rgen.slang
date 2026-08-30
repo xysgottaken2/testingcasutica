@@ -30,6 +30,7 @@ import trace_ser;
 #endif
 import lighting;
 import clouds;
+import fog;
 import sharc;
 
 // First-bounce lobe decomposition for NRD (REBLUR_DIFFUSE_SPECULAR): alongside the combined
@@ -83,6 +84,14 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             L += throughput * pre.scatter;
             Lspec += throughput * pre.scatter;
             throughput *= pre.transmittance;
+            // The fog crossed on the same camera->surface hop, bounded by the surface as the cloud
+            // is (fog.slang) — so a dielectric seen through the bank carries exactly the fog in
+            // front of it, nothing behind.
+            FogVolume preFog = fogSegment(worldPush, float3(0.0, 0.0, 0.0),
+                                          toStart / prefixDist, prefixDist);
+            L += throughput * preFog.scatter;
+            Lspec += throughput * preFog.scatter;
+            throughput *= preFog.transmittance;
         }
     }
     // Pass A is fixed at one sample per pixel. Decorrelate each Pass B resample here so configured SPP
@@ -167,11 +176,17 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // world.rmiss writes sky radiance (gradient + sun/moon disc + stars) into payload.albedo. The
             // packed show-celestial flag decides whether this path segment may see the bright disc.
             float3 sky = payload.albedo;
-            L += throughput * sky;
+            // Fog in front of the sky: the analytic integral saturates, so the large finite range
+            // is exact enough (FOG_SKY_DISTANCE). The sky keeps the transmittance, the in-scatter
+            // rides on top — the same premultiplied pair the geometry case below uses. Sun and
+            // moon discs and stars are dimmed by it too, the way a real bank does.
+            FogVolume skyFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, FOG_SKY_DISTANCE);
+            float3 foggedSky = sky * skyFog.transmittance + skyFog.scatter;
+            L += throughput * foggedSky;
             if (channel == 2) {
-                Lspec += throughput * sky;
+                Lspec += throughput * foggedSky;
             } else {
-                Ldiff += throughput * sky;
+                Ldiff += throughput * foggedSky;
             }
             // SHaRC: the sky is a real light source for every earlier path vertex. Propagating it
             // back teaches their voxels the sky ambient their continuation rays would find — this is
@@ -217,6 +232,23 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 Ldiff += throughput * segCloud.scatter;
             }
             throughput *= segCloud.transmittance;
+        }
+
+        // World-space fog crossed on the way to this hit — the same participating-medium treatment
+        // as the cloud above. The density field is a function of WORLD position (fog.slang), and
+        // the integral is bounded by payload.hitT, so geometry occludes the fog: only the air in
+        // front of the surface is ever integrated. A mountain therefore carries only the fog in
+        // front of it, the valley behind it stays clear, and a cave shows only the thin layer of
+        // air between the eye and its nearest wall.
+        {
+            FogVolume segFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT);
+            L += throughput * segFog.scatter;
+            if (channel == 2) {
+                Lspec += throughput * segFog.scatter;
+            } else {
+                Ldiff += throughput * segFog.scatter;
+            }
+            throughput *= segFog.transmittance;
         }
 
         float3 n = payload.normal; // oriented toward the incoming ray by the closest-hit
@@ -597,6 +629,10 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             float3 vis = shadow.transmittance;
             if (max(vis.r, max(vis.g, vis.b)) > 0.0) {
                 cloudShadow = cloudSunShadow(worldPush, hitPos - worldPush.camOffset, lightDir);
+                // The fog between the shading point and the sun: the same analytic query the
+                // camera-segment fog uses (fog.slang), so light does not leak unattenuated into a
+                // fog bank and the in-scatter above stays energy-balanced with the direct term.
+                cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir);
                 cloudShadowReady = true;
                 vis *= cloudShadow;
                 // Underwater receiver whose shadow ray crossed a water surface: scale the direct light by
@@ -714,6 +750,8 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                     // visibility ray has proven that some direct light remains.
                     if (!cloudShadowReady) {
                         cloudShadow = cloudSunShadow(worldPush, hitPos - worldPush.camOffset, lightDir);
+                        // Same fog sun-attenuation as the front-face NEE (see above).
+                        cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir);
                         cloudShadowReady = true;
                     }
                     visB *= cloudShadow;

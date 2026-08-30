@@ -187,6 +187,10 @@ public final class RtComposite {
     // sky cutoff, NRD's IN_VIEWZ), so it is set for both denoisers.
     private static final int FEATURE_VIEWZ = 128;
     private static final int FEATURE_SHARC = 256;
+    // World-space volumetric fog (fog.slang). The shader additionally gates on the Overworld
+    // dimension and on the eye not being submerged; those are frame STATE (dimension,
+    // WORLD_FLAG_SUBMERGED), not player options, so they are not feature bits.
+    private static final int FEATURE_FOG = 512;
 
     // ---- Dimension ids (WorldPush.dimension). Mirrors world_common.slang's DIMENSION_* constants.
     // The Overworld runs the atmosphere march and the sun/moon cycle; the Nether and the End have no
@@ -213,6 +217,9 @@ public final class RtComposite {
         }
         if (CausticaConfig.Rt.Sharc.ENABLED.value() && RtSharc.INSTANCE.entryCount() > 0) {
             flags |= FEATURE_SHARC;
+        }
+        if (CausticaConfig.Rt.Composite.FOG.value()) {
+            flags |= FEATURE_FOG;
         }
         if (CausticaConfig.Rt.Composite.CLOUDS.value()) {
             flags |= FEATURE_CLOUDS;
@@ -1698,7 +1705,9 @@ public final class RtComposite {
                     // lighting.slang resolves against its compiled RESTIR_* caps.
                     new Int4(CausticaConfig.Rt.Lights.RESTIR_TEMPORAL_HISTORY.value(),
                             CausticaConfig.Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS.value(),
-                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0)
+                            CausticaConfig.Rt.Lights.RESTIR_MAX_AGE.value(), 0),
+                    // World-space volumetric fog (WorldPush.fogParams, consumed by fog.slang).
+                    fogParams()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -2431,6 +2440,34 @@ public final class RtComposite {
                 new Float4(wrapCloudAnchor(anchorX), wrapCloudAnchor(anchorZ),
                         thickness, cloudViewLimit(deckCentre - (float) cameraY)),
                 cloudColorState(fill));
+    }
+
+    // ---- World-space volumetric fog. Mirrors fog.slang's WorldPush.fogParams contract.
+    // The density slider (0..1) maps to the base extinction A in per-block units: at the default
+    // 50% (A = 0.02) a 128-block view distance transmits exp(-2.56) ~= 7% of the scene, a strong
+    // but not opaque distance fog; 100% doubles the extinction.
+    private static final float FOG_MAX_BASE_EXTINCTION = 0.04f;
+    // The falloff slider (0..1) maps to k, the exponential thinning rate ABOVE the base, per block:
+    // at the default 40% (k = 0.02) the density is at 1/e after 50 blocks of altitude, so mountain
+    // tops clear out while valleys below the base stay in the bank. 0 keeps a flat unthinning slab
+    // (the shader floors k so the analytic integral stays finite).
+    private static final float FOG_MAX_HEIGHT_FALLOFF = 0.05f;
+
+    /**
+     * This frame's fog lanes (see {@code WorldPush.fogParams}). The base height is pushed
+     * camera-relative ({@code fog world Y - camY}, exactly like the cloud deck's base in
+     * {@link #cloudState}), because every tracer position is camera-relative: the shader subtracts
+     * the lane from a camera-relative y and gets the world height above the base back.
+     */
+    private Float4 fogParams() {
+        float density = Math.clamp(CausticaConfig.Rt.Composite.FOG_DENSITY.value(), 0f, 1f);
+        float falloff = Math.clamp(CausticaConfig.Rt.Composite.FOG_FALLOFF.value(), 0f, 1f);
+        float baseRel = (float) (CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT.value() - camY);
+        // w: in-scatter strength. Fixed at 1.0 for now — the ambient-derived in-scatter colour in
+        // fog.slang owns the look; the lane exists so a later intensity option has a home without
+        // an ABI change.
+        return new Float4(density * FOG_MAX_BASE_EXTINCTION, baseRel,
+                falloff * FOG_MAX_HEIGHT_FALLOFF, 1.0f);
     }
 
     /**

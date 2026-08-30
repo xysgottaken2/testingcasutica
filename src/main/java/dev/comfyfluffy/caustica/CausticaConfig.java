@@ -71,6 +71,7 @@ public final class CausticaConfig {
             Rt.Reflex.ENABLED, Rt.Lights.HELD_ITEM_LIGHT, Rt.Lights.DYNAMIC_INTENSITY, Rt.Lights.BLOCK_INTENSITY,
             Rt.Lights.RESTIR_SAMPLING, Rt.Lights.RESTIR_TEMPORAL_HISTORY, Rt.Lights.RESTIR_SPATIAL_NEIGHBOURS,
             Rt.Lights.RESTIR_MAX_AGE, Rt.Hand.FOV_FOLLOWS_CAMERA,
+            Rt.Composite.FOG, Rt.Composite.FOG_DENSITY, Rt.Composite.FOG_BASE_HEIGHT, Rt.Composite.FOG_FALLOFF,
             Rt.Exposure.MODE, Rt.Tonemapping.OPERATOR, Rt.FrameStats.ENABLED, Rt.Hdr.ENABLED, Ngx.PATH,
         };
     }
@@ -107,7 +108,11 @@ public final class CausticaConfig {
                         + " path-traced image at full resolution (noisy reference view). Requires dlss-rr.enabled.\n"
                         + " water-wave-strength/-speed/-detail: height multiplier, animation speed and spectrum\n"
                         + " component count for Animated Water. parallax-quality: multiplier on the POM\n"
-                        + " texel-crossing budget (sampling level), independent of parallax-strength (relief depth).");
+                        + " texel-crossing budget (sampling level), independent of parallax-strength (relief depth).\n"
+                        + " fog: world-space volumetric fog (fog.slang) - a real air volume whose density\n"
+                        + " follows world height and is occluded by blocks. fog-density scales the base\n"
+                        + " extinction, fog-base-height is the world Y of the fog bank, fog-falloff how fast\n"
+                        + " it thins with altitude.");
         FILE.setComment("materials",
                 " Material appearance controls. metallic-shininess reduces roughness only on authored metallic\n"
                         + " surfaces; 0 preserves resource-pack material data and 1 gives metals their strongest shine.");
@@ -808,6 +813,44 @@ public final class CausticaConfig {
              */
             public static final FloatSetting CLOUD_OPACITY =
                     clampedFloat("caustica.rt.cloudOpacity", "composite.cloud-opacity", 0.9f, 0.0f, 1.0f);
+            /**
+             * World-space volumetric fog (fog.slang): a real participating medium in the air, not a
+             * screen-space distance fade. The density is a function of the ray's WORLD position —
+             * a constant bank below the base height, an exponential falloff above (see
+             * {@link #FOG_FALLOFF}) — and every segment integral is bounded by the distance to the
+             * first hit, so blocks occlude the fog: nothing shows through mountains, and a cave
+             * only ever carries the thin layer of air between the eye and its nearest wall.
+             *
+             * <p>Overworld only (the Nether and End draw closed skyboxes with no air to fog), and
+             * never while the eye is in water (water owns its own extinction). Off restores the
+             * clear-air behaviour.
+             */
+            public static final BooleanSetting FOG =
+                    bool("caustica.rt.fog", "composite.fog", true);
+            /**
+             * Fog density, 0..1: scales the base extinction (per block) at and below the base
+             * height. The default 50% (0.02 per block) leaves a 128-block view distance
+             * transmitting about 7% of the scene — a strong but not opaque distance fog; 100% is a
+             * thick bank that erases the horizon; 0 is clear air (the shader skips the whole fog
+             * path at zero density).
+             */
+            public static final FloatSetting FOG_DENSITY =
+                    clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.5f, 0.0f, 1.0f);
+            /**
+             * World Y the fog BASE sits at. The fog is densest at and below this height and thins
+             * exponentially above it (see {@link #FOG_FALLOFF}): valleys and caves below the base
+             * stay inside the bank, mountain tops above it clear out. The default 64 sits just
+             * above typical sea-level terrain.
+             */
+            public static final FloatSetting FOG_BASE_HEIGHT =
+                    clampedFloat("caustica.rt.fogBaseHeight", "composite.fog-base-height", 64.0f, -64.0f, 256.0f);
+            /**
+             * How fast the fog thins with altitude above the base, 0..1. 0 keeps a flat, unthinning
+             * slab (constant density at every height above the base); 1 makes the bank thin out
+             * within tens of blocks.
+             */
+            public static final FloatSetting FOG_FALLOFF =
+                    clampedFloat("caustica.rt.fogFalloff", "composite.fog-falloff", 0.4f, 0.0f, 1.0f);
             /**
              * World Y the BASE of the cloud deck sits at. Vanilla's clouds sit at 192; the default is
              * higher because Caustica's clouds have real thickness and a deck whose base is at vanilla
