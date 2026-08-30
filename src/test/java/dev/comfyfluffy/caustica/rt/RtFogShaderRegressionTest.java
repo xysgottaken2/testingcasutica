@@ -59,8 +59,10 @@ final class RtFogShaderRegressionTest {
                 "if (max(vis.r, max(vis.g, vis.b)) > 0.0) {",
                 "vis *= cloudSunShadow(push, sampleRel, lightDir);",
                 "sunTerm = sunRadiance * phase * vis;");
-        assertTrue(march.contains("hg("),
-                "god rays come from the forward-scattering phase lobe, which cannot be dropped");
+        assertTrue(march.contains("float phase = fogPhase(push, dot(-dir, lightDir));"),
+                "the sun term must be phased by the view/light angle inside the march");
+        assertTrue(fog.contains("hg(cosT, g)"),
+                "god rays come from the Henyey-Greenstein forward lobe, which cannot be dropped");
     }
 
     /**
@@ -109,6 +111,8 @@ final class RtFogShaderRegressionTest {
      * The dielectric split (water surface, glass) must recover the fog over the camera→surface
      * prefix it consumed in Pass A, on BOTH branches — the F/(1−F) throughputs make that exactly one
      * crossing — which is what keeps a water surface fogged like any other surface at that distance.
+     * The march must start at the camera itself (worldPush.camOffset), not at the split's surface
+     * origin.
      */
     @Test
     void dielectricPrefixRecoversFogForBothSplitBranches() throws IOException {
@@ -118,8 +122,7 @@ final class RtFogShaderRegressionTest {
                 "float rayConeWidth = seg.rayConeWidth;");
 
         assertInOrder(prefixBlock,
-                "if (seg.bounce > 0) {",
-                "FogVolume preFog = fogSegment(",
+                "FogVolume preFog = fogSegment(worldPush, worldPush.camOffset,",
                 "L += throughput * preFog.scatter;",
                 "throughput *= preFog.transmittance;");
         assertTrue(prefixBlock.contains("Lspec += throughput * preFog.scatter;"),
