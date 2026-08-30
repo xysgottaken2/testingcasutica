@@ -14,65 +14,6 @@ base {
 	archivesName = project.archives_base_name
 }
 
-// TEMPORARY CI DIAGNOSTICS — GitHub Actions turns "::error ::message" lines printed to a step's
-// stdout into check-run annotations, which are readable through the REST API even when the raw job
-// log cannot be downloaded from the development environment. Every hook below is REPORTING-ONLY:
-// it never changes task inputs, outputs, or outcomes. Remove this block once the build is green.
-class CiDiagnostics {
-	private static int budget = 24
-
-	static void annotate(String msg) {
-		if (budget <= 0) {
-			return
-		}
-		budget -= 1
-		String safe = msg.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-		if (safe.length() > 900) {
-			safe = safe.substring(0, 900)
-		}
-		println("::error ::[ci-diag] ${safe}")
-	}
-
-	static void reportShaderFailure(String tool, int exit, ByteArrayOutputStream err, ByteArrayOutputStream std) {
-		def lines = []
-		if (err != null) {
-			lines.addAll(err.toString().readLines())
-		}
-		if (std != null) {
-			lines.addAll(std.toString().readLines())
-		}
-		lines = lines.findAll { it.trim() }
-		if (lines.isEmpty()) {
-			annotate("${tool} exited ${exit} with no diagnostics")
-		} else {
-			lines.take(8).each { line -> annotate("${tool}: ${line.trim()}") }
-		}
-	}
-}
-
-try {
-	gradle.addListener(new TaskExecutionListener() {
-		void beforeExecute(Task task) {
-		}
-
-		void afterExecute(Task task, TaskState state) {
-			if (state.failure == null) {
-				return
-			}
-			Throwable cause = state.failure
-			int depth = 0
-			while (cause != null && depth < 5) {
-				CiDiagnostics.annotate("task ${task.path} failed: ${cause.message ?: cause}")
-				cause = cause.cause
-				depth += 1
-			}
-		}
-	})
-} catch (Throwable ignored) {
-	// Reporting-only: never break the build over diagnostics.
-}
-// END TEMPORARY CI DIAGNOSTICS
-
 repositories {
 	maven {
 		name = "Fabric"
@@ -174,53 +115,28 @@ abstract class CompileShaders extends DefaultTask {
 		def stageIncludes = ["rgen", "rchit", "rahit", "rmiss", "rcall", "comp", "vert", "frag"]
 				.collectMany { stage -> ["**/*.${stage}", "**/*.${stage}.slang"] }
 		def validate = { File spv ->
-			def valErr = new ByteArrayOutputStream()
-			def valRes = execOps.exec {
+			execOps.exec {
 				commandLine spirvVal.get(), "--target-env", "vulkan1.2", spv.absolutePath
-				errorOutput = valErr
-				ignoreExitValue = true
-			}
-			if (valRes.exitValue != 0) {
-				CiDiagnostics.reportShaderFailure("spirv-val ${spv.name}", valRes.exitValue, valErr, null)
-				throw new GradleException("spirv-val failed for ${spv.name} (exit ${valRes.exitValue})")
 			}
 		}
 		def compileOne = { File src, File spv, List<String> defines ->
-			def errOut = new ByteArrayOutputStream()
-			def stdOut = new ByteArrayOutputStream()
-			def res = execOps.exec {
+			execOps.exec {
 				// -g (OpLine/OpSource debug info), not -gVS: the NonSemantic.Shader.DebugInfo form (-gVS)
 				// emits OpExtInstWithForwardRefsKHR (SPV_KHR_relaxed_extended_instruction), which trips a
 				// validation error unless the shaderRelaxedExtendedInstruction device feature is enabled.
 				// -g keeps source-level debug info for Nsight/RenderDoc without needing that extension.
 				commandLine([glslang.get(), "-V", "--target-env", "vulkan1.2", "-g"] + defines
 						+ [src.absolutePath, "-o", spv.absolutePath])
-				standardOutput = stdOut
-				errorOutput = errOut
-				ignoreExitValue = true
-			}
-			if (res.exitValue != 0) {
-				CiDiagnostics.reportShaderFailure("glslang ${src.name}", res.exitValue, errOut, stdOut)
-				throw new GradleException("glslang failed for ${src.name} (exit ${res.exitValue})")
 			}
 			validate(spv)
 		}
 		def compileOneSlang = { File src, File spv, List<String> extra ->
-			def errOut = new ByteArrayOutputStream()
-			def stdOut = new ByteArrayOutputStream()
-			def res = execOps.exec {
+			execOps.exec {
 				// Embed Slang source and line mappings in SPIR-V for RenderDoc/Nsight source debugging.
 				commandLine([slangc.get(), src.absolutePath, "-target", "spirv",
-					"-profile", "spirv_1_5", "-matrix-layout-column-major",
-					"-warnings-as-errors", "all", "-warnings-disable", "41012", "-g"] + extra
+						"-profile", "spirv_1_5", "-matrix-layout-column-major",
+						"-warnings-as-errors", "all", "-warnings-disable", "41012", "-g"] + extra
 						+ ["-o", spv.absolutePath])
-				standardOutput = stdOut
-				errorOutput = errOut
-				ignoreExitValue = true
-			}
-			if (res.exitValue != 0) {
-				CiDiagnostics.reportShaderFailure("slangc ${src.name}", res.exitValue, errOut, stdOut)
-				throw new GradleException("slangc failed for ${src.name} (exit ${res.exitValue})")
 			}
 			validate(spv)
 		}
@@ -303,28 +219,6 @@ def generateShaderRecords = tasks.register("generateShaderRecords", GenerateShad
 
 tasks.named("test", Test) {
 	useJUnitPlatform()
-	// TEMPORARY CI DIAGNOSTICS (see the CiDiagnostics block above): report failed tests as
-	// annotations so their names/messages are readable without downloading the job log.
-	try {
-		addTestListener(new TestListener() {
-			void beforeSuite(TestDescriptor suite) {
-			}
-
-			void beforeTest(TestDescriptor testDescriptor) {
-			}
-
-			void afterTest(TestDescriptor descriptor, TestResult result) {
-				if (result.failedCount > 0 && !result.exceptions.isEmpty()) {
-					CiDiagnostics.annotate("TEST ${descriptor.className}.${descriptor.name}: ${result.exceptions.get(0).message}")
-				}
-			}
-
-			void afterSuite(TestDescriptor suite, TestResult result) {
-			}
-		})
-	} catch (Throwable ignored) {
-		// Reporting-only: never break the build over diagnostics.
-	}
 }
 
 sourceSets.main.java.srcDir(files(layout.buildDirectory.dir("generated/sources/shaderRecords")).builtBy(generateShaderRecords))
