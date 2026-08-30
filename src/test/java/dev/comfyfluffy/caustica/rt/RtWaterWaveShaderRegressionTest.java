@@ -64,6 +64,9 @@ final class RtWaterWaveShaderRegressionTest {
                 "transmission guides must follow the displaced surface or RR will halo");
         assertTrue(primary.contains("isWater ? waterSurf.motionPrev : payload.motionPrev"),
                 "primary water motion must come from the height-field time derivative");
+        assertTrue(primary.contains("? waterWaveContinueOrigin(waterSurf, reflectedDir, SURF_BIAS)")
+                        && primary.contains("? waterWaveContinueOrigin(waterSurf, deferredDir, transmitBias)"),
+                "every Pass A water continuation, including the non-split/TIR path, must start from the displaced surface");
     }
 
     @Test

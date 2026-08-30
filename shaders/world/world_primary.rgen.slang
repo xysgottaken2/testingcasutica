@@ -205,7 +205,9 @@ public PathSegment tracePrimary(PathSegment seg,
         if (!hasTransmission || F >= 1.0) {
             float3 reflectedDir = reflect(rd, n);
             continuation = makePathSegment(
-                    offsetSurfaceOrigin(hitPos, geometricNormal, reflectedDir, SURF_BIAS),
+                    isWater && waterWaves
+                            ? waterWaveContinueOrigin(waterSurf, reflectedDir, SURF_BIAS)
+                            : offsetSurfaceOrigin(hitPos, geometricNormal, reflectedDir, SURF_BIAS),
                     reflectedDir, throughput * F, medium,
                     rayConeWidth, rayConeSpread, seed, bounce + 1,
                     true);
@@ -217,7 +219,9 @@ public PathSegment tracePrimary(PathSegment seg,
                 mediumPop(medium);
             }
             continuation = makePathSegment(
-                    offsetSurfaceOrigin(hitPos, geometricNormal, deferredDir, transmitBias),
+                    isWater && waterWaves
+                            ? waterWaveContinueOrigin(waterSurf, deferredDir, transmitBias)
+                            : offsetSurfaceOrigin(hitPos, geometricNormal, deferredDir, transmitBias),
                     deferredDir, throughput * (1.0 - F), medium,
                     rayConeWidth, rayConeSpread, seed, bounce + 1,
                     true);
