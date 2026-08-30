@@ -14,12 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Four properties must survive any refactor: the fog is WORLD SPACE — its density is a function
  * of the ray's world position, not of its screen distance; it CANNOT PASS THROUGH BLOCKS — every
- * segment integral is bounded by the distance to the nearest scene hit, so geometry in front of the
- * fog stops the segment and the fog beyond it is never integrated (a mountain shows only the fog in
- * front of it); it exists in AIR ONLY — a segment in a water or glass volume is not crossing the
- * bank (water owns its own Beer–Lambert extinction), keyed on the medium's index of refraction;
- * and it dissipates fast BELOW the base height, which is what keeps caves and mine shafts clear
- * while the bank hugs the base level.
+ * segment integral is bounded by the distance to the nearest scene hit, so geometry in front of
+ * the fog stops the segment and the fog beyond it is never integrated (a mountain shows only the
+ * fog in front of it); the below-base profile is MEDIUM-DEPENDENT — underground AIR dissipates
+ * fast below the base (which is what keeps caves and mine shafts clear), while WATER stays at the
+ * bank density so a water body seen from the surface is fogged the same as the air above it; and
+ * the fog is disabled while the eye itself is submerged.
  */
 final class RtFogShaderRegressionTest {
     private static final Path REPO_ROOT = repoRoot();
@@ -34,10 +34,8 @@ final class RtFogShaderRegressionTest {
         // pushed base), never the segment length alone: a length-only fade would be screen-space.
         assertTrue(source.contains("posRel.y - push.fogParams.y"),
                 "fog density must be a function of the position's world height, not the segment length");
-        assertTrue(source.contains("A * exp(-k_up * h)") && source.contains("A * exp( k_dn * h)"),
-                "the two-sided height profile (thinning above the base, dissipating below it) is the documented density model");
-        assertTrue(source.contains("FOG_UNDERBASE_FALLOFF"),
-                "the steeper fixed below-base falloff is what keeps caves fog-free");
+        assertTrue(source.contains("A * exp(-k_up * h)") && source.contains("A * exp(-k_dn * |h|)"),
+                "the height profile (thinning above the base, dissipation below it) is the documented density model");
         assertTrue(source.contains("push.dimension == DIMENSION_OVERWORLD"),
                 "fog must stay in the Overworld (closed skyboxes have no air to fog)");
         assertTrue(source.contains("!worldFlag(push, WORLD_FLAG_SUBMERGED)"),
@@ -45,14 +43,36 @@ final class RtFogShaderRegressionTest {
     }
 
     @Test
+    void belowBaseProfileDependsOnTheMedium() throws IOException {
+        String fog = Files.readString(FOG);
+        String rgen = Files.readString(WORLD_RGEN);
+        // The medium selects the below-base profile: air dissipates fast (FOG_UNDERBASE_FALLOFF —
+        // the cave-clearing behaviour), water stays at the constant bank density.
+        assertTrue(fog.contains("isAir ? FOG_UNDERBASE_FALLOFF : 0.0"),
+                "the below-base falloff must depend on the segment medium");
+        assertTrue(fog.contains("static const float FOG_UNDERBASE_FALLOFF = 0.3;"),
+                "the fixed under-base air dissipation that keeps caves clear is missing");
+        assertTrue(fog.contains("public static const float FOG_AIR_IOR_MAX = 1.001;"),
+                "the air/water medium threshold must live in fog.slang");
+        int constant = countOccurrences(fog, "tau = A * tMax;");
+        assertTrue(constant >= 2,
+                "the water profile must integrate the constant bank density below the base (rising + falling), found " + constant);
+        // Every world-space call site (per-segment, sky-miss, both lazy sun-attenuation sites) must
+        // hand the segment medium to the fog — that is what keeps a cave clear while fogging the water.
+        int gated = countOccurrences(rgen, "medium.current.ior < FOG_AIR_IOR_MAX");
+        assertTrue(gated >= 4,
+                "the per-segment fog, the sky fog and both sun-attenuation sites must pass the segment medium to the fog, found " + gated);
+    }
+
+    @Test
     void fogIsBoundedByTheFirstHitOnEverySegment() throws IOException {
         String source = Files.readString(WORLD_RGEN);
         // The per-segment fog must take payload.hitT as its range — the same first-hit bound the
         // cloud deck uses — so fog beyond a surface is never integrated.
-        assertTrue(source.contains("fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT)"),
+        assertTrue(source.contains("fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT,"),
                 "the camera->hit segment must integrate fog bounded by payload.hitT");
         // The sky-miss case integrates over a large finite range (the analytic integral saturates).
-        assertTrue(source.contains("fogSegment(worldPush, ro - worldPush.camOffset, rd, FOG_SKY_DISTANCE)"),
+        assertTrue(source.contains("fogSegment(worldPush, ro - worldPush.camOffset, rd, FOG_SKY_DISTANCE,"),
                 "the sky must be fogged over the analytic sky range");
         // The dielectric camera prefix (segments that start at the surface, not the camera) must
         // recover the fog crossed on the way there, bounded by the surface like the cloud prefix.
@@ -60,21 +80,6 @@ final class RtFogShaderRegressionTest {
         assertTrue(prefix >= 0, "the dielectric camera prefix must apply the fog crossed on the way to the surface");
         assertTrue(source.indexOf("prefixDist);", prefix) > prefix,
                 "the prefix fog must be bounded by the camera->surface distance");
-    }
-
-    @Test
-    void fogIsAirOnlyAndNeverCrossesWater() throws IOException {
-        String fog = Files.readString(FOG);
-        String rgen = Files.readString(WORLD_RGEN);
-        // The air gate constant must exist: airMedium() is exactly ior 1.0, water is 1.333, glass
-        // and ice are above that, so a single comparison separates the fog medium from every volume.
-        assertTrue(fog.contains("public static const float FOG_AIR_IOR_MAX = 1.001;"),
-                "the air-only gate constant must live in fog.slang");
-        // The gate must protect every fog application: the per-segment fog, the sky-miss fog and
-        // both lazy sun-attenuation sites (front NEE + SSS back face).
-        int gated = countOccurrences(rgen, "medium.current.ior < FOG_AIR_IOR_MAX");
-        assertTrue(gated >= 3,
-                "the per-segment fog, the sky fog and the sun attenuation must all be gated on the segment medium being air, found " + gated);
     }
 
     @Test
@@ -96,7 +101,7 @@ final class RtFogShaderRegressionTest {
         String source = Files.readString(WORLD_RGEN);
         // Premultiplied participating-medium composite, same shape as the cloud segment: in-scatter
         // added at the lobe's channel, transmittance multiplied into the throughput.
-        assertTrue(source.contains("FogVolume segFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT)"),
+        assertTrue(source.contains("FogVolume segFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT,"),
                 "per-segment fog is missing from the bounce loop");
         int at = source.indexOf("FogVolume segFog");
         String tail = source.substring(at, Math.min(at + 1200, source.length()));
@@ -114,7 +119,7 @@ final class RtFogShaderRegressionTest {
         // bank unattenuated while the in-scatter above brightens it. Both lazy sites (front NEE and
         // SSS back-face) must carry the same attenuation.
         int count = countOccurrences(source,
-                "cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir);");
+                "cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir,");
         assertTrue(count >= 2,
                 "both the front-face NEE and the SSS lazy site must apply the fog sun-attenuation, found " + count);
     }

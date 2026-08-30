@@ -33,14 +33,15 @@ changes while the renderer is being built.
 - Weather-driven lighting: rain and thunderstorms dim the sun/moon and darken the sky
 - Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
   with adjustable thickness, opacity and cloud shadows, visible in reflections
-- World-space volumetric fog: an analytic exponential height fog in the air, thickest at a
-  configurable base height, thinning with altitude above it and dissipating even faster below it, so
-  caves and deep valleys under the bank stay clear. It is a real participating medium — density is a
-  function of world position, integrated along each ray up to the first hit, and only in air — so
-  blocks occlude it (nothing shows through mountains) and water is never fogged (it keeps its own
-  Beer–Lambert extinction). Looking toward the sun/moon through the bank raises god rays via a
-  Henyey–Greenstein forward-scatter term. Density, base height, falloff and god-ray strength are
-  live-tunable from the RT settings
+- World-space volumetric fog: an analytic exponential height fog, thickest at a configurable base
+  height and thinning with altitude above it. It is a real participating medium — density is a
+  function of world position, integrated along each ray up to the first hit — so blocks occlude it
+  (nothing shows through mountains). Below the base the profile depends on the medium: underground
+  air dissipates fast, so caves and mine shafts stay clear, while water stays at the bank density,
+  so a lake seen from the surface is fogged just like the air above it (plus its own Beer–Lambert
+  extinction). Looking toward the sun/moon through the bank raises god rays via a Henyey–Greenstein
+  forward-scatter term. Density, base height, falloff and god-ray strength are live-tunable from
+  the RT settings
 - Dedicated Nether and End skyboxes
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
 - Experimental NVIDIA SHaRC-style world-space radiance cache (Spatially Hashed Radiance Cache) to

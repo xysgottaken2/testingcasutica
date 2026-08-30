@@ -246,9 +246,9 @@ public final class RtVideoOptions {
     }
 
     /**
-     * World Y the fog base sits at, in whole blocks. The fog is densest at this height, thins
-     * with altitude above it, and dissipates faster below it — so the bank hugs the base level
-     * while caves and deep valleys under it stay clear.
+     * World Y the fog base sits at, in whole blocks. The fog is densest at this height and thins
+     * with altitude above it. Below it, underground air dissipates fast (caves stay clear), while
+     * water keeps the bank density — so the water reads fogged from the surface.
      */
     private static OptionInstance<Integer> fogBaseHeight() {
         FloatSetting setting = CausticaConfig.Rt.Composite.FOG_BASE_HEIGHT;

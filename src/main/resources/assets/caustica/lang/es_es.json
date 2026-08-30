@@ -93,7 +93,7 @@
 	"caustica.options.rt.cloudOpacity.tooltip": "Cuán sólidas son las nubes. 0 % es totalmente transparente (las nubes se omiten por completo); 100 % es lo más sólidas que la forma permite. Es un techo estricto: al 20 % una nube nunca supera el 20 % de opacidad, por gruesa que sea o por lejos que esté, así que nunca se cierra hacia el horizonte.",
 	"caustica.options.rt.fogHeader": "Niebla",
 	"caustica.options.rt.fog": "Niebla volumétrica",
-	"caustica.options.rt.fog.tooltip": "Dibuja una banqueta de niebla como un volumen real en el aire. La niebla se mide en el espacio del mundo: se ajusta a la altura base, se va adelgazando con la altitud y la ocultan los bloques: nunca se ve a través de las montañas, y una caverna queda libre de ella. Solo en el mundo principal; el agua nunca tiene niebla: tiene su propia atenuación.",
+	"caustica.options.rt.fog.tooltip": "Dibuja una banqueta de niebla como un volumen real. La niebla se mide en el espacio del mundo: se ajusta a la altura base, se adelgaza con la altitud y la ocultan los bloques: nunca se ve a través de las montañas. Bajo la base, el aire subterráneo se disipa rápido (las cavernas permanecen claras), pero el agua conserva la densidad de la banqueta, de modo que, vista desde la superficie, se niebla igual que el aire de arriba. Solo en el mundo principal; desactivada cuando el ojo está sumergido.",
 	"caustica.options.rt.fogDensity": "Densidad de niebla",
 	"caustica.options.rt.fogDensity.tooltip": "Qué tan espesa es la banqueta de niebla. 50% da una niebla de distancia fuerte; 100% borra el horizonte; 0% es aire limpio.",
 	"caustica.options.rt.fogBaseHeight": "Altura base de la niebla",

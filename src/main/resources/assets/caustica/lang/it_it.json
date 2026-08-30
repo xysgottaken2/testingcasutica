@@ -93,7 +93,7 @@
 	"caustica.options.rt.cloudOpacity.tooltip": "Quanto sono solide le nuvole. 0% è completamente trasparente (le nuvole vengono saltate interamente); 100% è il massimo che la forma consente. È un tetto rigido: al 20% una nuvola non è mai opaca più del 20%, per quanto spessa o lontana sia, quindi non si riempie mai verso l'orizzonte.",
 	"caustica.options.rt.fogHeader": "Nebbia",
 	"caustica.options.rt.fog": "Nebbia volumetrica",
-	"caustica.options.rt.fog.tooltip": "Disegna una banca di nebbia come volume reale nell'aria. La nebbia è misurata nello spazio del mondo: aderisce all'altezza di base, si assottiglia con l'altitudine ed è occlusa dai blocchi: non passa mai attraverso le montagne, e una grotta ne resta libera. Solo nel mondo principale; l'acqua non è mai offuscata: ha la sua propria attenuazione.",
+	"caustica.options.rt.fog.tooltip": "Disegna una banca di nebbia come volume reale. La nebbia è misurata nello spazio del mondo: aderisce all'altezza di base, si assottiglia con l'altitudine ed è occlusa dai blocchi: non passa mai attraverso le montagne. Sotto la base, l'aria sotterranea si dissolve in fretta (le grotte restano limpide), mentre l'acqua mantiene la densità della banca, quindi vista dalla superficie è offuscata come l'aria sopra. Solo nel mondo principale; disattivata mentre l'occhio è sommerso.",
 	"caustica.options.rt.fogDensity": "Densità della nebbia",
 	"caustica.options.rt.fogDensity.tooltip": "Quanto è spessa la banca di nebbia. 50% dà una nebbia di distanza forte; 100% cancella l'orizzonte; 0% è aria limpida.",
 	"caustica.options.rt.fogBaseHeight": "Altezza base della nebbia",

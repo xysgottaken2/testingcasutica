@@ -87,8 +87,10 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // The fog crossed on the same camera->surface hop, bounded by the surface as the cloud
             // is (fog.slang) — so a dielectric seen through the bank carries exactly the fog in
             // front of it, nothing behind.
+            // The prefix hop (camera -> surface) travels in the AIR: the fog is disabled while the
+            // eye is submerged, so whenever this runs the camera is in the air. Hence isAir = true.
             FogVolume preFog = fogSegment(worldPush, float3(0.0, 0.0, 0.0),
-                                          toStart / prefixDist, prefixDist);
+                                          toStart / prefixDist, prefixDist, true);
             L += throughput * preFog.scatter;
             Lspec += throughput * preFog.scatter;
             throughput *= preFog.transmittance;
@@ -179,16 +181,12 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
             // Fog in front of the sky: the analytic integral saturates, so the large finite range
             // is exact enough (FOG_SKY_DISTANCE). The sky keeps the transmittance, the in-scatter
             // rides on top — the same premultiplied pair the geometry case below uses. Sun and
-            // moon discs and stars are dimmed by it too, the way a real bank does.
-            //
-            // The bank only exists in air: a ray that escapes the world from inside a water volume
-            // is still underwater (water owns its own extinction), so the same medium gate as the
-            // geometry case below keeps the fog out of it.
-            float3 foggedSky = sky;
-            if (medium.current.ior < FOG_AIR_IOR_MAX) {
-                FogVolume skyFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, FOG_SKY_DISTANCE);
-                foggedSky = sky * skyFog.transmittance + skyFog.scatter;
-            }
+            // moon discs and stars are dimmed by it too, the way a real bank does. The medium
+            // argument picks the below-base profile (fog.slang): air dissipates fast under the
+            // base, water stays at the bank density.
+            FogVolume skyFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, FOG_SKY_DISTANCE,
+                                          medium.current.ior < FOG_AIR_IOR_MAX);
+            float3 foggedSky = sky * skyFog.transmittance + skyFog.scatter;
             L += throughput * foggedSky;
             if (channel == 2) {
                 Lspec += throughput * foggedSky;
@@ -243,17 +241,19 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
 
         // World-space fog crossed on the way to this hit — the same participating-medium treatment
         // as the cloud above. The density field is a function of WORLD position (fog.slang), and
-        // the integral is bounded by payload.hitT, so geometry occludes the fog: only the air in
-        // front of the surface is ever integrated. A mountain therefore carries only the fog in
-        // front of it, the valley behind it stays clear, and a cave shows only the thin layer of
-        // air between the eye and its nearest wall.
+        // the integral is bounded by payload.hitT, so geometry occludes the fog: only the volume
+        // in front of the surface is ever integrated. A mountain therefore carries only the fog in
+        // front of it, and the valley behind it stays clear.
         //
-        // The bank only exists in AIR: a segment travelling through a water or glass volume is
-        // not crossing the fog (water owns its own Beer–Lambert extinction, applied above), so
-        // the medium gate keys off the segment's index of refraction — airMedium() is exactly
-        // 1.0, water is 1.333, glass/ice above that (see FOG_AIR_IOR_MAX).
-        if (medium.current.ior < FOG_AIR_IOR_MAX) {
-            FogVolume segFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT);
+        // The medium argument picks the below-base profile (fog.slang): in AIR the bank dissipates
+        // fast under the base, so a cave shows only the thin layer of air between the eye and its
+        // nearest wall; in WATER it stays at the bank density, so a water body seen from the
+        // surface is fogged the same as the air above it (the water's own Beer–Lambert extinction,
+        // applied above, rides on top of that). airMedium() is exactly ior 1.0; water is 1.333,
+        // glass/ice above that (see FOG_AIR_IOR_MAX).
+        {
+            FogVolume segFog = fogSegment(worldPush, ro - worldPush.camOffset, rd, payload.hitT,
+                                          medium.current.ior < FOG_AIR_IOR_MAX);
             L += throughput * segFog.scatter;
             if (channel == 2) {
                 Lspec += throughput * segFog.scatter;
@@ -644,11 +644,10 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                 // The fog between the shading point and the sun: the same analytic query the
                 // camera-segment fog uses (fog.slang), so light does not leak unattenuated into a
                 // fog bank and the in-scatter above stays energy-balanced with the direct term.
-                // Air only — an underwater receiver's direct light is attenuated by water's own
-                // extinction, not by the fog bank (same medium gate as the segment fog above).
-                if (medium.current.ior < FOG_AIR_IOR_MAX) {
-                    cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir);
-                }
+                // The medium argument picks the below-base profile (fog.slang), same as the
+                // segment fog above.
+                cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir,
+                                                 medium.current.ior < FOG_AIR_IOR_MAX);
                 cloudShadowReady = true;
                 vis *= cloudShadow;
                 // Underwater receiver whose shadow ray crossed a water surface: scale the direct light by
@@ -767,10 +766,9 @@ public float3 tracePath(PathSegment seg, uint2 pix, uint sampleIndex,
                     if (!cloudShadowReady) {
                         cloudShadow = cloudSunShadow(worldPush, hitPos - worldPush.camOffset, lightDir);
                         // Same fog sun-attenuation as the front-face NEE (see above), including
-                        // its air-only medium gate.
-                        if (medium.current.ior < FOG_AIR_IOR_MAX) {
-                            cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir);
-                        }
+                        // its medium-dependent below-base profile.
+                        cloudShadow *= fogSunAttenuation(worldPush, hitPos - worldPush.camOffset, lightDir,
+                                                         medium.current.ior < FOG_AIR_IOR_MAX);
                         cloudShadowReady = true;
                     }
                     visB *= cloudShadow;

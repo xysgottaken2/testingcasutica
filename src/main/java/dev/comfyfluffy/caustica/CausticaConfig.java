@@ -110,11 +110,12 @@ public final class CausticaConfig {
                         + " water-wave-strength/-speed/-detail: height multiplier, animation speed and spectrum\n"
                         + " component count for Animated Water. parallax-quality: multiplier on the POM\n"
                         + " texel-crossing budget (sampling level), independent of parallax-strength (relief depth).\n"
-                        + " fog: world-space volumetric fog (fog.slang) - a real air volume whose density\n"
-                        + " follows world height and is occluded by blocks. fog-density scales the base\n"
-                        + " extinction, fog-base-height is the world Y of the fog bank, fog-falloff how fast\n"
-                        + " it thins with altitude above the base (it dissipates faster below it, keeping\n"
-                        + " caves clear). fog-god-rays drives the bright shafts toward the sun/moon.");
+                        + " fog: world-space volumetric fog (fog.slang) - a real participating volume\n"
+                        + " whose density follows world height and is occluded by blocks. fog-density scales\n"
+                        + " the base extinction, fog-base-height is the world Y of the fog bank, fog-falloff\n"
+                        + " how fast it thins with altitude above the base. Underground air dissipates\n"
+                        + " faster below the base (caves stay clear); water keeps the bank density, so it\n"
+                        + " reads fogged from the surface. fog-god-rays drives the shafts toward the sun/moon.");
         FILE.setComment("materials",
                 " Material appearance controls. metallic-shininess reduces roughness only on authored metallic\n"
                         + " surfaces; 0 preserves resource-pack material data and 1 gives metals their strongest shine.");
@@ -816,18 +817,18 @@ public final class CausticaConfig {
             public static final FloatSetting CLOUD_OPACITY =
                     clampedFloat("caustica.rt.cloudOpacity", "composite.cloud-opacity", 0.9f, 0.0f, 1.0f);
             /**
-             * World-space volumetric fog (fog.slang): a real participating medium in the air, not a
+             * World-space volumetric fog (fog.slang): a real participating medium, not a
              * screen-space distance fade. The density is a function of the ray's WORLD position —
-             * densest at the base height, thinning exponentially above (see
-             * {@link #FOG_FALLOFF}) and dissipating even faster below it, which is what keeps
-             * caves and mine shafts fog-free — and every segment integral is bounded by the
-             * distance to the first hit, so blocks occlude the fog: nothing shows through
-             * mountains, and a cave only ever carries the thin layer of air between the eye and
-             * its nearest wall.
+             * densest at the base height, thinning exponentially above (see {@link #FOG_FALLOFF}) —
+             * and every segment integral is bounded by the distance to the first hit, so blocks
+             * occlude the fog: nothing shows through mountains, and a cave only ever carries the
+             * thin layer of air between the eye and its nearest wall.
              *
              * <p>Overworld only (the Nether and End draw closed skyboxes with no air to fog), and
-             * only in air — never through water or glass volumes (water owns its own extinction),
-             * and never while the eye is submerged. Off restores the clear-air behaviour.
+             * never while the eye itself is submerged (a view from under the surface is already
+             * attenuated by the water's own Beer–Lambert extinction). Seen from the surface, a
+             * water body is fogged the same as the air above it; only underground air dissipates
+             * under the bank, which keeps caves clear. Off restores the clear-air behaviour.
              */
             public static final BooleanSetting FOG =
                     bool("caustica.rt.fog", "composite.fog", true);
@@ -841,18 +842,20 @@ public final class CausticaConfig {
                     clampedFloat("caustica.rt.fogDensity", "composite.fog-density", 0.5f, 0.0f, 1.0f);
             /**
              * World Y the fog BASE sits at — the densest layer of the bank. The fog thins
-             * exponentially with altitude above it (see {@link #FOG_FALLOFF}) and dissipates even
-             * faster below it, so caves and deep valleys under the base stay essentially clear
-             * while the bank hugs the base level. The default 64 sits just above typical sea-level
-             * terrain; lower it to push the bank into a specific valley's floor.
+             * exponentially with altitude above it (see {@link #FOG_FALLOFF}); below it,
+             * underground air dissipates fast (so caves stay clear) while water stays at the
+             * bank density (so the water reads fogged from the surface). The default 64 sits just
+             * above typical sea-level terrain; lower it to push the bank into a specific
+             * valley's floor.
              */
             public static final FloatSetting FOG_BASE_HEIGHT =
                     clampedFloat("caustica.rt.fogBaseHeight", "composite.fog-base-height", 64.0f, -64.0f, 256.0f);
             /**
              * How fast the fog thins with altitude ABOVE the base, 0..1. 0 keeps a flat, unthinning
              * slab (constant density at every height above the base); 1 makes the bank thin out
-             * within tens of blocks. The thinning BELOW the base is fixed and steeper, which is what
-             * keeps caves fog-free (fog.slang's FOG_UNDERBASE_FALLOFF).
+             * within tens of blocks. The dissipation BELOW the base in air is fixed and steeper
+             * (fog.slang's FOG_UNDERBASE_FALLOFF) — that is what keeps caves fog-free — and water
+             * below the base is not subject to it.
              */
             public static final FloatSetting FOG_FALLOFF =
                     clampedFloat("caustica.rt.fogFalloff", "composite.fog-falloff", 0.4f, 0.0f, 1.0f);

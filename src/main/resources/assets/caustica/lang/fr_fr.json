@@ -93,7 +93,7 @@
 	"caustica.options.rt.cloudOpacity.tooltip": "La solidité des nuages. 0 % est entièrement transparent (les nuages sont carrément sautés) ; 100 % est le maximum que la forme permet. Un plafond strict : à 20 %, un nuage n'est jamais opaque à plus de 20 %, quelle que soit son épaisseur ou sa distance, donc il ne se bouche jamais vers l'horizon.",
 	"caustica.options.rt.fogHeader": "Brouillard",
 	"caustica.options.rt.fog": "Brouillard volumétrique",
-	"caustica.options.rt.fog.tooltip": "Dessine une nappe de brouillard en volume réel dans l'air. Le brouillard est mesuré dans l'espace du monde : il épouse l'altitude de base, s'amenuise avec l'altitude et est masqué par les blocs : il ne traverse jamais les montagnes, et une grotte en reste dégagée. Monde principal uniquement ; l'eau n'est jamais brouillardeuse - elle a son propre atténuation.",
+	"caustica.options.rt.fog.tooltip": "Dessine une nappe de brouillard en volume réel. Le brouillard est mesuré dans l'espace du monde : il épouse l'altitude de base, s'amenuise avec l'altitude et est masqué par les blocs : il ne traverse jamais les montagnes. Sous la base, l'air souterrain se dissipe vite (les grottes restent dégagées), mais l'eau conserve la densité de la nappe, de sorte qu'elle est brouillardisée comme l'air au-dessus, vue depuis la surface. Monde principal uniquement ; désactivé tant que l'œil est immergé.",
 	"caustica.options.rt.fogDensity": "Densité du brouillard",
 	"caustica.options.rt.fogDensity.tooltip": "L'épaisseur de la nappe de brouillard. 50 % donne un brouillard de distance fort ; 100 % efface l'horizon ; 0 % est un air limpide.",
 	"caustica.options.rt.fogBaseHeight": "Hauteur de base du brouillard",

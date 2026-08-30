@@ -93,7 +93,7 @@
 	"caustica.options.rt.cloudOpacity.tooltip": "Wie massiv die Wolken sind. 0 % ist völlig transparent (Wolken werden komplett übersprungen); 100 % so massiv, wie es die Wolkenform zulässt. Eine harte Obergrenze: bei 20 % ist eine Wolke nie mehr als 20 % undurchsichtig – egal wie dick sie ist oder wie weit entfernt – deshalb füllt sie sich am Horizont nie zu.",
 	"caustica.options.rt.fogHeader": "Nebel",
 	"caustica.options.rt.fog": "Volumetrischer Nebel",
-	"caustica.options.rt.fog.tooltip": "Zeichnet eine Nebelbank als echtes Volumen in der Luft. Der Nebel wird im Weltraum gemessen - er liegt auf der Basishöhe, wird mit der Höhe dünner und wird von Blöcken verdeckt: Er zeigt niemals durch Berge, und eine Höhle bleibt frei von ihm. Nur in der Overworld; Wasser wird nie neblig - es hat seine eigene Dämpfung.",
+	"caustica.options.rt.fog.tooltip": "Zeichnet eine Nebelbank als echtes Volumen. Der Nebel wird im Weltraum gemessen - er liegt auf der Basishöhe, wird mit der Höhe dünner und wird von Blöcken verdeckt: Er zeigt niemals durch Berge. Unter der Basis löst sich Untergrund-Luft schnell auf (Höhlen bleiben frei), während Wasser die Bankdichte beibehält, sodass es von der Oberfläche aus wie die Luft darüber neblig wirkt. Nur in der Overworld; deaktiviert, solange das Auge untergetaucht ist.",
 	"caustica.options.rt.fogDensity": "Nebeldichte",
 	"caustica.options.rt.fogDensity.tooltip": "Wie dick die Nebelbank ist. 50% ergibt einen starken Distanznebel; 100% ist eine dicke Bank, die den Horizont auslöscht; 0% ist klare Luft.",
 	"caustica.options.rt.fogBaseHeight": "Nebel-Basishöhe",

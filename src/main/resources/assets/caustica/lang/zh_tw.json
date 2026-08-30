@@ -93,7 +93,7 @@
 	"caustica.options.rt.cloudOpacity.tooltip": "雲的厚實程度。0% 完全透明（雲完全略過）；100% 是雲形狀能達到的最大不透明度。這是硬性上限：20% 時無論多厚多遠，雲的不透明度都不會超過 20%，因此不會朝地平線方向填滿。",
 	"caustica.options.rt.fogHeader": "霧",
 	"caustica.options.rt.fog": "體積霧",
-	"caustica.options.rt.fog.tooltip": "在空氣中繪製真實的霧層體積。霧在世界空間中測量：它貼著基準高度，隨海拔升高而變淡，並被方塊遮蔽——它永遠不會透過山脈顯現，洞穴中也不會積霧。僅主世界可用；水永遠不會被霧籠罩——水有自己獨立的衰減。",
+	"caustica.options.rt.fog.tooltip": "在空氣中繪製真實的霧層體積。霧在世界空間中測量：它貼著基準高度，隨海拔升高而變淡，並被方塊遮蔽——永遠不會透過山脈。基準高度以下的空氣快速消散（洞穴保持清澈），但水保持霧層密度，所以從表面看，水會像上面的空氣一樣被霧籠罩。僅主世界可用；視線沒入水中時關閉。",
 	"caustica.options.rt.fogDensity": "霧密度",
 	"caustica.options.rt.fogDensity.tooltip": "霧層的厚度。50% 產生強烈的遠景霧；100% 是濃霧，會抹去地平線；0% 是清晰的空氣。",
 	"caustica.options.rt.fogBaseHeight": "霧基準高度",

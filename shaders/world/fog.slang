@@ -1,27 +1,28 @@
 // World-space volumetric fog — an analytic exponential height fog integrated in closed form
 // along every radiance segment. Depends on common only (world.rgen imports it next to clouds).
 //
-// WORLD SPACE, NOT SCREEN SPACE. The density is a function of the ray's world position, not of
+// WORLD SPACE, NOT SCREEN SPACE. The density is a function of the ray's WORLD position, not of
 // its screen distance (WorldPush.fogParams): the fog is a BANK that sits at the base height —
-// densest there, thinning exponentially with altitude above it (fogParams.z), and dissipating
-// fast BELOW it, which is what keeps caves and mine shafts (underground air) fog-free while a
-// valley at bank level keeps its haze:
+// densest there, thinning exponentially with altitude above it (fogParams.z) — and, seen from the
+// surface, it fogs a water body the same as the air above it, so the screen reads uniform. Every
+// segment integral is BOUNDED by the distance to the nearest scene hit (or the sky), exactly like
+// the cloud deck, so the fog cannot pass through blocks — a segment stops at the first surface it
+// meets, and the fog beyond that surface is never integrated. A mountain shows only the fog in
+// front of it, the valley behind it shows straight through, and a cave only ever carries the fog
+// the air between the eye and its nearest wall actually contains.
 //
-//     sigma(h) = A * exp(-k_up * h)   h >= 0      (above the base; k_up = fogParams.z)
-//     sigma(h) = A * exp( k_dn * h)   h <  0      (below the base; k_dn = FOG_UNDERBASE_FALLOFF)
+// BELOW the base height the profile depends on the MEDIUM the segment is in:
 //
-// with h = height above the base (blocks). Every segment integral is BOUNDED by the distance
-// to the nearest scene hit (or the sky), exactly like the cloud deck, so the fog cannot pass
-// through blocks — a segment stops at the first surface it meets, and the fog beyond that
-// surface is never integrated. A mountain shows only the fog in front of it, the valley behind
-// it shows straight through, and a cave only ever carries the thin layer of air between the
-// eye and its nearest wall.
+//     air   (ior < FOG_AIR_IOR_MAX):  sigma(h) = A * exp(-k_dn * |h|)   (k_dn = FOG_UNDERBASE_FALLOFF)
+//     water (ior >= FOG_AIR_IOR_MAX): sigma(h) = A                      (constant, like the bank)
 //
-// The fog only exists in AIR: a segment travelling through water or any other dielectric
-// volume is not crossing the fog bank (water owns its own Beer–Lambert extinction). Call sites
-// gate on the segment medium's index of refraction (FOG_AIR_IOR_MAX) before applying it.
+// and above it, in every medium, sigma(h) = A * exp(-k_up * h) (k_up = fogParams.z). The steep
+// under-base dissipation in AIR is what keeps caves and mine shafts (underground air) fog-free,
+// while a water body at the base level stays as fogged as the air above it — so standing at the
+// surface in the bank, the screen reads uniform: air and water are both fogged.
 //
-// fogParams lanes: x = A, y = base height (camera-relative), z = k_up, w = in-scatter strength.
+// With h = height above the base (blocks). fogParams lanes: x = A, y = base height
+// (camera-relative), z = k_up, w = in-scatter strength.
 // fogParams2 lanes: x = god-ray scale (multiplier on lightRadiance * HG phase), rest reserved.
 
 import world_common;
@@ -34,13 +35,13 @@ static const float FOG_TAU_CAP = 60.0;
 // (the density is constant or decaying, never growing without bound), so a large finite distance
 // is exact enough: past it the missing transmittance is below exp(-FOG_TAU_CAP).
 public static const float FOG_SKY_DISTANCE = 4096.0;
-// The fog bank dissipates below the base much faster than it thins above it: a few blocks under
-// the base level the density is already a small fraction of A, so caves and deep valleys stay
-// essentially clear while the bank hugs the base. Fixed (not a slider): "no fog in caves" is a
-// behaviour, not a taste.
+// How fast the bank dissipates below the base IN AIR: a few blocks under the base level the
+// density is already a small fraction of A, so caves and mine shafts stay essentially clear while
+// the bank hugs the base. Fixed (not a slider): "no fog in caves" is a behaviour, not a taste.
+// Water does not use it — there the fog stays at the base density (see the profile above).
 static const float FOG_UNDERBASE_FALLOFF = 0.3;
 // Medium index of refraction that counts as AIR: airMedium() is exactly 1.0; water is 1.333 and
-// glass/ice above that. A segment in any denser medium is not inside the fog bank.
+// glass/ice above that. The medium selects the below-base profile (see the header).
 public static const float FOG_AIR_IOR_MAX = 1.001;
 // Slightly cool white: the in-scatter is scattered skylight, and this scene's skylight is cool.
 static const float3 FOG_TINT = float3(0.96, 0.99, 1.05);
@@ -54,9 +55,10 @@ static const float FOG_HG_G = 0.75;
 static const float FOG_PI = 3.14159265359;
 
 /**
- * The fog only exists where the player can stand in it: Overworld (the other dimensions draw
- * closed skyboxes with no air to fog), never while the eye is inside a water medium (water owns
- * its own Beer–Lambert extinction), and never at zero density (the whole path is then free).
+ * The fog only exists where there is sky to look through: Overworld (the other dimensions draw
+ * closed skyboxes with no air to fog), and never while the eye is itself inside a water volume
+ * (a submerged view is already attenuated by the water's own Beer–Lambert extinction, and fog
+ * sitting ON the surface is not what you see from under it).
  */
 public bool fogEnabled(WorldPush push) {
     return worldFeature(push, FEATURE_FOG)
@@ -72,18 +74,21 @@ static float fogHeightAboveBase(WorldPush push, float3 posRel) {
 
 /**
  * Exact integral of the density along o + d*t for t in [0, tMax]. All three ray orientations
- * (rising, falling, horizontal) have closed forms for the two-sided profile, so the fog costs a
- * handful of ALU ops and no march regardless of distance. Every exponential is bounded by its
- * argument staying <= 1 or being capped, so a pathological push value can only saturate to full
- * fog, never overflow to NaN.
+ * (rising, falling, horizontal) have closed forms for both media, so the fog costs a handful of
+ * ALU ops and no march regardless of distance. Every exponential is bounded by its argument
+ * staying <= 1 or being capped, so a pathological push value can only saturate to full fog,
+ * never overflow to NaN.
+ *
+ * `isAir` selects the below-base profile: true = the steep dissipation that keeps caves clear,
+ * false (water) = constant bank density, the look the water body gets when viewed from the air.
  */
-public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float tMax) {
+public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float tMax, bool isAir) {
     float A = push.fogParams.x;
     if (A <= 0.0 || tMax <= 0.0) {
         return 0.0;
     }
     float kUp = max(push.fogParams.z, 1.0e-5);
-    float kDn = FOG_UNDERBASE_FALLOFF;
+    float kDn = isAir ? FOG_UNDERBASE_FALLOFF : 0.0;
     float y0 = fogHeightAboveBase(push, originRel);
     float dy = dir.y;
     float tau;
@@ -93,23 +98,41 @@ public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float
             // Above the base for the whole segment: sigma decays from A e^{-kUp y0}.
             tau = (A / (kUp * dy)) * exp(-kUp * y0) * (1.0 - exp(-kUp * dy * tMax));
         } else {
-            // Below the base until the ray crosses the base height.
+            // Below the base until the ray crosses the base height (or not).
             float tCross = -y0 / dy;
             if (tCross >= tMax) {
-                // Below the base the whole way: sigma GROWS from A e^{kDn y0} toward A.
-                // (Both exponent arguments stay <= 0, so nothing overflows.)
-                tau = (A / (kDn * dy)) * (exp(kDn * (y0 + dy * tMax)) - exp(kDn * y0));
+                if (kDn > 0.0) {
+                    // Air: sigma GROWS from A e^{kDn y0} toward A.
+                    // (Both exponent arguments stay <= 0, so nothing overflows.)
+                    tau = (A / (kDn * dy)) * (exp(kDn * (y0 + dy * tMax)) - exp(kDn * y0));
+                } else {
+                    // Water: constant A.
+                    tau = A * tMax;
+                }
             } else {
-                // Below until tCross, above after. e^{kDn h} at the crossing is 1.
-                tau = (A / (kDn * dy)) * (1.0 - exp(kDn * y0))
+                // Below until tCross, above after. The density at the crossing is A either way.
+                // (if/else rather than a ternary: with kDn == 0 the other operand would be inf*0.)
+                float below;
+                if (kDn > 0.0) {
+                    below = (A / (kDn * dy)) * (1.0 - exp(kDn * y0));
+                } else {
+                    below = A * tCross;
+                }
+                tau = below
                      + (A / (kUp * dy)) * (1.0 - exp(-kUp * dy * (tMax - tCross)));
             }
         }
     } else if (dy < -FOG_HORIZONTAL_EPS) {
         // Falling.
         if (y0 <= 0.0) {
-            // Below the base for the whole segment: sigma decays from A e^{kDn y0}.
-            tau = (A / (kDn * (-dy))) * (exp(kDn * y0) - exp(kDn * (y0 + dy * tMax)));
+            // Below the base for the whole segment.
+            if (kDn > 0.0) {
+                // Air: sigma decays from A e^{kDn y0}.
+                tau = (A / (kDn * (-dy))) * (exp(kDn * y0) - exp(kDn * (y0 + dy * tMax)));
+            } else {
+                // Water: constant A.
+                tau = A * tMax;
+            }
         } else {
             float tCross = -y0 / dy; // > 0: where the ray descends through the base height
             if (tCross >= tMax) {
@@ -121,14 +144,23 @@ public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float
                     tau = (A / (kUp * (-dy))) * exp(-kUp * y0) * (exp(range) - 1.0);
                 }
             } else {
-                // Above until tCross, below after. e^{-kUp h} at the crossing is 1.
-                tau = (A / (kUp * (-dy))) * (1.0 - exp(-kUp * y0))
-                     + (A / (kDn * (-dy))) * (1.0 - exp(kDn * (y0 + dy * tMax)));
+                // Above until tCross, below after. The density at the crossing is A either way.
+                // (if/else rather than a ternary: with kDn == 0 the other operand would be inf*0.)
+                float below;
+                if (kDn > 0.0) {
+                    below = (A / (kDn * (-dy))) * (1.0 - exp(kDn * (y0 + dy * tMax)));
+                } else {
+                    below = A * (tMax - tCross);
+                }
+                tau = (A / (kUp * (-dy))) * (1.0 - exp(-kUp * y0)) + below;
             }
         }
     } else {
         // Horizontal: the density is constant along the segment.
-        tau = A * exp(-(y0 >= 0.0 ? kUp : kDn) * abs(y0)) * tMax;
+        float sigma = (y0 >= 0.0)
+                ? A * exp(-kUp * y0)
+                : A * ((kDn > 0.0) ? exp(-kDn * abs(y0)) : 1.0);
+        tau = sigma * tMax;
     }
     return min(tau, FOG_TAU_CAP);
 }
@@ -138,11 +170,11 @@ public float fogOpticalDepth(WorldPush push, float3 originRel, float3 dir, float
  * from the shading point toward the light, exponentiated. 1.0 whenever the fog is off, so the
  * call site costs one flag test in the common case.
  */
-public float fogSunAttenuation(WorldPush push, float3 originRel, float3 dir) {
+public float fogSunAttenuation(WorldPush push, float3 originRel, float3 dir, bool isAir) {
     if (!fogEnabled(push)) {
         return 1.0;
     }
-    return exp(-fogOpticalDepth(push, originRel, dir, FOG_SKY_DISTANCE));
+    return exp(-fogOpticalDepth(push, originRel, dir, FOG_SKY_DISTANCE, isAir));
 }
 
 public struct FogVolume {
@@ -193,17 +225,18 @@ public float3 fogInScatterColor(WorldPush push, float3 viewDir) {
  * ray escapes to the sky). Bounding the integral by it is what keeps the fog from passing through
  * blocks: geometry in front of the fog stops the segment, so no fog behind it is ever integrated.
  *
- * NOTE: this function does NOT know the medium the segment is travelling through — call sites
- * gate it on FOG_AIR_IOR_MAX (the fog only exists in air, not inside water or glass volumes).
+ * `isAir` selects the below-base profile for the medium the segment travels in (see the header):
+ * pass {@code medium.current.ior < FOG_AIR_IOR_MAX} at world-space call sites — water stays as
+ * fogged as the bank, air dissipates fast under it, so caves stay clear.
  */
-public FogVolume fogSegment(WorldPush push, float3 originRel, float3 dir, float maxDistance) {
+public FogVolume fogSegment(WorldPush push, float3 originRel, float3 dir, float maxDistance, bool isAir) {
     FogVolume result;
     result.scatter = float3(0.0, 0.0, 0.0);
     result.transmittance = 1.0;
     if (!fogEnabled(push)) {
         return result;
     }
-    float tau = fogOpticalDepth(push, originRel, dir, max(0.0, maxDistance));
+    float tau = fogOpticalDepth(push, originRel, dir, max(0.0, maxDistance), isAir);
     if (tau <= 1.0e-5) {
         return result;
     }
