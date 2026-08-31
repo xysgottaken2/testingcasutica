@@ -157,11 +157,10 @@ public struct WorldPush {
     // Kept in the BDA struct rather than the 128-byte push-constant block, which is already full.
     public uint4    restirTuning;
     // World-space volumetric fog (fog.slang), resolved on the CPU from the sliders plus the weather
-    // (RtComposite.fogState): x = base extinction per block at the band's base height (0 disarms
-    // every fog path), y = height falloff scale in blocks (density falls as exp(-(y-base)/y) above
-    // the base), z = camera-relative base height of the band, w = god-ray strength 0..1 driving the
-    // Henyey-Greenstein forward lobe the sun in-scatter uses. One lane, like clouds, so a mid-frame
-    // slider change lands on the next frame.
+    // (RtComposite.fogState): x = extinction per block of the uniform medium (0 disarms every fog
+    // path), y/z reserved (the old height-band lanes, kept so the layout stays put), w = god-ray
+    // strength 0..1 driving the Henyey-Greenstein forward lobe the sun in-scatter uses. One lane,
+    // like clouds, so a mid-frame slider change lands on the next frame.
     public float4   fog;
 };
 

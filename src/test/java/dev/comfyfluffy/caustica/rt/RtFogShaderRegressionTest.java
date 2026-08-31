@@ -57,7 +57,7 @@ final class RtFogShaderRegressionTest {
         assertInOrder(march,
                 "float3 vis = visibility(",
                 "if (max(vis.r, max(vis.g, vis.b)) > 0.0) {",
-                "vis *= cloudSunShadow(push, sampleRel, lightDir);",
+                "vis *= cloudSunShadow(push, sampleWorld, lightDir);",
                 "sunTerm = sunRadiance * phase * vis;");
         assertTrue(march.contains("float phase = fogPhase(push, dot(-dir, lightDir));"),
                 "the sun term must be phased by the view/light angle inside the march");
@@ -79,6 +79,10 @@ final class RtFogShaderRegressionTest {
 
         assertTrue(march.contains("ConstPtr<LightGridCell>(pc.lightGridCellAddr)"),
                 "emitter gathering must read the RIS light grid cells, not invent its own source");
+        assertTrue(march.contains("floor((midAbs - worldPush.lightGridOrigin.xyz)"),
+                "the light grid is indexed in the same rebased space as the surface NEE's hit"
+                        + " positions — subtracting camOffset here shifts every lookup out of the"
+                        + " grid and silently kills all emitter halos");
         assertTrue(march.contains("pc.lightGridSpanAddr") && march.contains("pc.lightBufAddr"),
                 "emitter gathering must walk the grid spans into the light buffer");
         assertInOrder(march,
@@ -117,6 +121,25 @@ final class RtFogShaderRegressionTest {
                 "the ambient floor must carry its own tint lane, separate from the sun's");
         assertTrue(fog.contains("public static const float FOG_AMBIENT_WEIGHT = 0.12;"),
                 "the ambient floor must stay a floor — a bright constant here was the white veil");
+    }
+
+    /**
+     * The medium is UNIFORM: no height band, no base altitude, no falloff scale. Where the fog is
+     * visible is decided by the lights (and the weather thickening), never by the ray's altitude —
+     * the density the march integrates is exactly the pushed extinction, constant along the ray.
+     */
+    @Test
+    void fogIsUniformNotHeightBanded() throws IOException {
+        String fog = Files.readString(FOG);
+
+        assertTrue(fog.contains("float density = fogDensity(push);"),
+                "the march must integrate the pushed uniform extinction");
+        assertTrue(fog.contains("return push.fog.x;"),
+                "fogDensity is the pushed extinction, nothing else");
+        assertFalse(fog.contains("FOG_BAND_CEILING_SCALES"),
+                "the height-band ceiling belongs to the removed band model");
+        assertFalse(fog.contains("fogDensityAt"),
+                "an altitude-dependent density is the height-band model this feature dropped");
     }
 
     /**

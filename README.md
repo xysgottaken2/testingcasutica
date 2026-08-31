@@ -33,13 +33,13 @@ changes while the renderer is being built.
 - Weather-driven lighting: rain and thunderstorms dim the sun/moon and darken the sky
 - Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
   with adjustable thickness, opacity and cloud shadows, visible in reflections
-- World-space volumetric fog with ray-traced god rays: a real height-banded participating medium
-  integrated along every camera, reflection and refraction ray, lit by the scene's own sources —
-  sun/moon shafts, a soft local halo around torches, lava and glowstone (each with its own colour
-  and a 1/r² falloff, so a torch is nothing like the sun), the held-item flame, and a faint
+- World-space volumetric fog with ray-traced god rays: a uniform participating medium integrated
+  along every camera, reflection and refraction ray, lit by the scene's own sources — sun/moon
+  shafts, a soft local halo around torches, lava and glowstone (each with its own colour and a
+  1/r² falloff, so a torch is nothing like the sun), the held-item flame, and a faint
   sky-visibility-gated haze floor. Unlit fog is invisible, so dark caves hold no fog; the march
   stops at the first block hit and every light is gated by a shadow ray, so haze never glows
-  through mountains or walls. Rain thickens the fog; water and glass keep their own absorption
+  through mountains or walls. Rain thickens the air; water and glass keep their own absorption
 - Dedicated Nether and End skyboxes
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
 - Experimental NVIDIA SHaRC-style world-space radiance cache (Spatially Hashed Radiance Cache) to

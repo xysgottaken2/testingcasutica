@@ -24,10 +24,12 @@
 //     unlit fog is invisible — exactly the physics. The ambient contribution is deliberately small
 //     and cool-tinted; it is a floor, not a fill light.
 //
-// THE MEDIUM: a height band anchored to world Y (density falls off exponentially above the pushed
-// base and is clamped at it below), integrated inside the path integral with the same two-line
-// composite the cloud deck uses ({@code L += T * scatter; T *= transmittance;}) — so the fog is
-// correct in water reflections, through glass, and over indirect bounce light for free.
+// THE MEDIUM: a UNIFORM participating medium — the same air everywhere, with no height band and no
+// base altitude. Where the medium is visible is decided entirely by the lights above (and by rain,
+// which thickens the air), which is the whole point: the fog is a reading of the scene's lighting,
+// not a weather layer pasted at an altitude. It integrates inside the path integral with the same
+// two-line composite the cloud deck uses ({@code L += T * scatter; T *= transmittance;}) — so the
+// fog is correct in water reflections, through glass, and over indirect bounce light for free.
 //
 // THE BLOCK-OCCLUSION CONTRACT (the point of doing this in world space):
 //   * the march is bounded by the distance to the nearest scene hit — fog exists only in the open
@@ -65,14 +67,12 @@ import trace;
 
 // ---- Shape ---------------------------------------------------------------------------------------
 
-// Base extinction at the slider's maximum (per block). The Java side maps the density slider 0..1
-// linearly onto this; 0.05 gives roughly e^-0.05 ~= 95% transmission per block at full density —
-// a heavy but not opaque valley haze at the default height falloff.
-public static const float FOG_SIGMA_MAX = 0.05;
-// Height falloff of the band: density falls as exp(-(y - baseY) / H). The band's effective ceiling
-// is this many falloff scales above the base; beyond it the density is < 0.7% of the base value and
-// the march stops tracking it.
-public static const float FOG_BAND_CEILING_SCALES = 5.0;
+// Ceiling extinction per block, reached only at the density slider's 100% (and in storms, on top
+// of it). The Java side maps the slider onto this PERCEPTUALLY (squared — see RtComposite.fogState)
+// so the low end stays usable: at a 10% slider the extinction is a hundredth of this, a whisper of
+// haze, while 100% is a deliberate pea-soup. Extinction is also capped well below opaque: even the
+// maximum keeps near geometry readable.
+public static const float FOG_SIGMA_MAX = 0.06;
 // Longest distance a single segment marches. The geometric step distribution spends the sample
 // budget near the camera, so the far field is covered by the analytic extinction tail below; this
 // cap just bounds the loop for near-horizontal escape rays.
@@ -140,16 +140,12 @@ public bool fogEnabled(WorldPush push) {
 }
 
 /**
- * Fog extinction density at a camera-relative height.
- *
- * exp falls off above the pushed base height and is CLAMPED at the base value below it: a valley
- * floor or a cave under the base line gets the base density, not an exponentially thickening soup.
- * The DENSITY says where the medium is — whether the player can SEE it is entirely the lights'
- * business (a dark cave holds the same invisible air).
+ * Fog extinction density — uniform: the medium is the same air everywhere (the slider and the
+ * weather set how thick it is; RtComposite.fogState packs it into {@code push.fog.x}). Whether the
+ * player can SEE it is entirely the lights' business: a dark cave holds the same invisible air.
  */
-float fogDensityAt(WorldPush push, float relY) {
-    float above = max(relY - push.fog.z, 0.0);
-    return push.fog.x * exp(-above / max(push.fog.y, 1.0));
+float fogDensity(WorldPush push) {
+    return push.fog.x;
 }
 
 /**
@@ -207,19 +203,19 @@ float fogLightArea(Light light) {
 }
 
 /**
- * Integrate the fog band along ONE segment, as premultiplied in-scatter plus the transmittance the
+ * Integrate the fog along ONE segment, as premultiplied in-scatter plus the transmittance the
  * background keeps — the same contract as {@code clouds.cloudSegment}.
  *
  * {@code origin} is in the terrain's rebased coordinates (what TraceRay consumes, so the shadow
- * rays below need no translation); the height query subtracts camOffset internally. {@code dir} is
+ * rays below need no translation — and what the light grid is indexed in). {@code dir} is
  * normalized. {@code maxDistance} is the distance to the nearest scene hit (or a large value for a
  * sky escape): the march NEVER reads past it, which is half of the block-occlusion contract. The
  * other half is the per-source visibility gating inside the march (see the module header).
  *
  * Sample spacing is geometric and stratified: each step owns one cell of [0,1), the cell's position
- * is squared into distance (fine near the camera where parallax moves the band fastest, coarse far
- * away where the field is near-constant), and a jitter inside the cell dithers the residual banding
- * into noise the denoiser already averages. If the budget runs out while still inside the band, the
+ * is squared into distance (fine near the camera where parallax moves the medium fastest, coarse
+ * far away where the field is near-constant), and a jitter inside the cell dithers the residual
+ * banding into noise the denoiser already averages. If the budget runs out mid-segment, the
  * remaining extinction is added analytically from the last sample's density, so distant surfaces
  * never pop out of the fog when the step count is finite.
  */
@@ -232,30 +228,13 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
         return result;
     }
 
-    // ---- Interval of the segment that lies inside the band -------------------------------
+    // ---- March interval ---------------------------------------------------------------------------
     //
-    // The band is every height at or below base + ceiling. A rising ray leaves it at tExit; a
-    // falling ray from above the ceiling enters at tEnter; anything else is inside from the start.
-    // When the interval is empty the fog costs nothing — looking up at a clear sky above the band
-    // never marches.
-    float3 originRel = origin - push.camOffset;
-    float topRel = push.fog.z + max(push.fog.y, 1.0) * FOG_BAND_CEILING_SCALES;
+    // The medium is uniform, so the only bounds are the scene hit and the loop cap: the march
+    // covers [0, t1] of the segment and nothing else. Every visibility gate below decides what is
+    // actually VISIBLE in it.
     float t0 = 0.0;
     float t1 = min(maxDistance, FOG_MAX_MARCH_BLOCKS);
-    if (dir.y > 1.0e-6) {
-        float tExit = (topRel - originRel.y) / dir.y;
-        if (tExit <= 0.0) {
-            return result; // already above the band and rising: no fog on this segment
-        }
-        t1 = min(t1, tExit);
-    } else if (dir.y < -1.0e-6) {
-        float tEnter = (topRel - originRel.y) / dir.y; // positive while the origin is above the band
-        if (tEnter > 0.0) {
-            t0 = min(tEnter, t1);
-        }
-    } else if (originRel.y > topRel) {
-        return result; // level ray above the ceiling
-    }
     if (t1 - t0 < 1.0e-3) {
         return result;
     }
@@ -283,7 +262,6 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
     // weighting concentrates the probe where the sky actually is (up), and the per-segment jitter
     // turns a hard occlusion edge into soft noise the denoiser already averages.
     float3 midAbs = origin + dir * (t0 + span * 0.5);
-    float3 midRel = midAbs - push.camOffset;
     float3 skyDir = cosineDir(float3(0.0, 1.0, 0.0), seed);
     float skyVis = clamp(luminance(visibility(midAbs, skyDir, 1.0e4).transmittance), 0.0, 1.0);
 
@@ -311,8 +289,11 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
     float localPeak = 0.0;
     if (pc.lightBufAddr != 0 && pc.lightGridCellAddr != 0 && pc.lightGridSpanAddr != 0
             && worldPush.lightCount > 0u) {
-        // Grid-cell lookup, inlined from lighting.slang's findLightGridCell.
-        int3 cellCoord = int3(floor((midRel - worldPush.lightGridOrigin.xyz)
+        // Grid-cell lookup, inlined from lighting.slang's findLightGridCell. The grid is indexed
+        // in the SAME rebased (trace) space the surface NEE's hitPos already lives in — midAbs
+        // needs no camOffset correction here. (Subtracting camOffset once silently shifted every
+        // lookup out of the grid and killed all emitter halos: a bug worth pinning in a test.)
+        int3 cellCoord = int3(floor((midAbs - worldPush.lightGridOrigin.xyz)
                 / worldPush.lightGridOrigin.w));
         if (cellCoord.x >= 0 && cellCoord.y >= 0 && cellCoord.z >= 0
                 && cellCoord.x < worldPush.lightGridDims.x
@@ -422,11 +403,12 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
         float tm = tPrev - dt * 0.5;
 
         float3 sampleAbs = origin + dir * tm;
-        float3 sampleRel = originRel + dir * tm;
-        float density = fogDensityAt(push, sampleRel.y);
+        // cloudSunShadow anchors its plane in world space (rgen passes hitPos - camOffset too).
+        float3 sampleWorld = sampleAbs - push.camOffset;
+        float density = fogDensity(push);
         lastDensity = density;
         if (density <= 0.0) {
-            continue; // above the band's usable ceiling (can only happen on the clamped tail)
+            continue;
         }
 
         // ---- Sun / moon in-scatter: the god-ray term.
@@ -439,7 +421,7 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
         if (sunActive) {
             float3 vis = visibility(sampleAbs, lightDir, 10000.0).transmittance;
             if (max(vis.r, max(vis.g, vis.b)) > 0.0) {
-                vis *= cloudSunShadow(push, sampleRel, lightDir);
+                vis *= cloudSunShadow(push, sampleWorld, lightDir);
                 sunTerm = sunRadiance * phase * vis;
             }
         }
@@ -504,8 +486,8 @@ public FogVolume fogSegment(WorldPush push, float3 origin, float3 dir, float max
         }
     }
 
-    // Analytic extinction tail: the geometric budget may run out while still inside the band
-    // (near-horizontal rays). Density varies slowly out there, so the last sample's value times the
+    // Analytic extinction tail: the geometric budget may run out before the far hit
+    // (near-horizontal rays). Density is uniform, so the last sample's value times the
     // remaining distance is the standard far-field approximation — distant surfaces keep sinking
     // into the fog instead of popping out of it.
     if (tPrev < t1 && lastDensity > 0.0) {

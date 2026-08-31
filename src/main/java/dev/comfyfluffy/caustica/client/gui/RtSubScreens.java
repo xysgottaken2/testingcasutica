@@ -303,8 +303,6 @@ public final class RtSubScreens {
         return List.of(
                 CausticaConfig.Rt.Composite.FOG,
                 CausticaConfig.Rt.Composite.FOG_DENSITY,
-                CausticaConfig.Rt.Composite.FOG_BASE_Y,
-                CausticaConfig.Rt.Composite.FOG_HEIGHT,
                 CausticaConfig.Rt.Composite.FOG_GOD_RAYS);
     }
 

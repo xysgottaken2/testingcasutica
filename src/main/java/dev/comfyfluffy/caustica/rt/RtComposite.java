@@ -437,10 +437,12 @@ public final class RtComposite {
     // blocks overhead is already ~1750 blocks out. Keeping at least this many multiples of the deck's
     // height in view means the fade always stays down near the horizon where it belongs.
     private static final float CLOUD_VIEW_LIMIT_HEIGHT_MULTIPLE = 6.0f;
-    // Fog extinction per block at the density slider's 100% and the band's base height (fog.slang's
-    // FOG_SIGMA_MAX mirror). At 0.05 a horizontal in-band ray carries e^-0.05 ~= 95% of its radiance
-    // per block — a heavy valley haze that still lets the near field read through.
-    private static final float FOG_SIGMA_MAX = 0.05f;
+    // Fog extinction per block at the density slider's 100% (fog.slang's FOG_SIGMA_MAX mirror). The
+    // slider maps onto it PERCEPTUALLY — squared, so the low percentages stay a whisper of haze
+    // instead of a white-out (a linear mapping put an 8% slider at roughly e^-0.5 over a vista and
+    // blinded the player). At 100% a ray carries e^-0.06 ~= 94% of its radiance per block: heavy,
+    // deliberately soup-like, but the near field still reads through.
+    private static final float FOG_SIGMA_MAX = 0.06f;
     // Rain/thunder thickening applied on top of the density slider (see fogState). Rain alone tops
     // out at 2.4x, a thunderstorm at 3.0x — the fog is the readable cue that the air itself has
     // changed, on the same weather curve the sky darkening and light attenuation already follow.
@@ -1641,8 +1643,8 @@ public final class RtComposite {
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
             CloudPush clouds = cloudState(dimension, weather, camY);
-            // Fog lane: same weather + camera readings the sky and cloud state already resolved.
-            Float4 fog = fogState(dimension, weather, camY);
+            // Fog lane: same weather reading the sky and cloud state above already resolved.
+            Float4 fog = fogState(dimension, weather);
             // Analytic held-item light: position + intensity lane and the item's RGB tint; w == 0
             // disables the shader term (toggle off, no luminous item, or no player).
             HandLightState hand = handLightState(terrain);
@@ -2486,10 +2488,15 @@ public final class RtComposite {
 
     /**
      * Resolve this frame's world-space volumetric fog into the single {@code WorldPushData} lane
-     * {@code fog.slang} reads: {@code fog} (x base extinction per block, y height falloff scale,
-     * z camera-relative band base, w god-ray strength).
+     * {@code fog.slang} reads: {@code fog} (x extinction per block of the uniform medium, y/z
+     * reserved, w god-ray strength).
      *
-     * <p><b>Weather.</b> Rain and thunder thicken the band on top of the density slider, using the
+     * <p><b>Perceptual density.</b> The slider maps onto {@link #FOG_SIGMA_MAX} SQUARED: extinction
+     * is a contrast control, and perception of haze is roughly logarithmic, so a linear mapping put
+     * usable-looking low percentages at a blinding thickness. Squared, 10% is a hundredth of the
+     * maximum — a whisper — and 100% is the deliberate pea-soup.
+     *
+     * <p><b>Weather.</b> Rain and thunder thicken the air on top of the density slider, using the
      * same {@link WeatherState} the sky darkening and the light attenuation are resolved from — the
      * storm's dark sky, its dimmer sunlight and its heavier haze are three readings of one state.
      * The in-scatter itself needs no extra weather term: it is driven by {@code lightRadiance},
@@ -2499,25 +2506,20 @@ public final class RtComposite {
      * <p><b>Dimensions.</b> The Nether and the End get a zeroed lane: both render closed skyboxes
      * with no celestial light to scatter, and the shader's own gate ({@code fog.x > 0}) then skips
      * every fog path in those dimensions for free.
-     *
-     * <p><b>Height anchoring.</b> The band is anchored to world Y (sea level by default), pushed
-     * camera-relative exactly like the cloud deck height — the terrain rebase means absolute
-     * coordinates are not meaningful in the shader, and {@code camY} is the same camera reading
-     * {@link #cloudState} already receives.
      */
-    private Float4 fogState(int dimension, WeatherState weather, double cameraY) {
+    private Float4 fogState(int dimension, WeatherState weather) {
         float density = CausticaConfig.Rt.Composite.FOG_DENSITY.value();
         if (dimension != DIMENSION_OVERWORLD || density <= 0f) {
             return new Float4(0f, 0f, 0f, 0f);
         }
         float weatherBoost = 1f + FOG_RAIN_DENSITY_BOOST * Math.clamp(weather.rain(), 0f, 1f)
                 + FOG_THUNDER_DENSITY_BOOST * Math.clamp(weather.thunder(), 0f, 1f);
-        float sigma = Math.clamp(density * FOG_SIGMA_MAX * weatherBoost, 0f,
+        float sigma = Math.clamp(density * density * FOG_SIGMA_MAX * weatherBoost, 0f,
                 FOG_SIGMA_MAX * (1f + FOG_RAIN_DENSITY_BOOST + FOG_THUNDER_DENSITY_BOOST));
         return new Float4(
                 sigma,
-                Math.max(CausticaConfig.Rt.Composite.FOG_HEIGHT.value(), 1f),
-                (float) (CausticaConfig.Rt.Composite.FOG_BASE_Y.value() - cameraY),
+                0f,
+                0f,
                 Math.clamp(CausticaConfig.Rt.Composite.FOG_GOD_RAYS.value(), 0f, 1f));
     }
 
