@@ -1719,8 +1719,9 @@ public final class RtComposite {
                             CausticaConfig.Rt.Composite.FOG_DISTANCE.value(),
                             weather.rain()),
                     // Fog shaping: reference surface height, altitude falloff, sky-fill scale and the
-                    // HG forward-scattering constant.
-                    new Float4(64.0f, 96.0f, 0.35f, 0.35f),
+                    // HG forward-scattering constant. The falloff is deliberately short: it keeps the
+                    // fog as a low-altitude valley haze instead of sieving the whole sky grey.
+                    new Float4(64.0f, 24.0f, 0.35f, 0.35f),
                     // Terrain rebase origin for the fog noise: X/Z reduced to shader period so a
                     // rebase cannot slide the pattern; Y stays true for the cave/height cutoff.
                     new Float4(terrain.blockX & FOG_ANCHOR_MASK,
