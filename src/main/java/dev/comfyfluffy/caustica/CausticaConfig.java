@@ -207,16 +207,85 @@ public final class CausticaConfig {
         return config;
     }
 
+    /**
+     * Reads a boolean from the config file, tolerating a leftover entry of the wrong type.
+     *
+     * <p>The config file outlives any single build: entries written by an older version — or by
+     * another experimental build of the mod that used the same path with a different type (a
+     * numeric fog amount under {@code composite.fog}, say) — are merged in verbatim, and a blind
+     * cast here crashed startup with a {@link ClassCastException} before the file could ever
+     * self-heal. Wrongly typed values are interpreted instead (a non-zero number is true), and
+     * the next {@link #save()} rewrites the entry with the proper type.
+     */
     private static Boolean fileBoolean(String tomlPath) {
-        return FILE.contains(tomlPath) ? FILE.<Boolean>get(tomlPath) : null;
+        if (!FILE.contains(tomlPath)) {
+            return null;
+        }
+        Object raw = FILE.get(tomlPath);
+        if (raw instanceof Boolean bool) {
+            return bool;
+        }
+        if (raw instanceof Number number) {
+            LOGGER.warn("Config entry {} is a number ({}); reading it as a boolean", tomlPath, raw);
+            return number.doubleValue() != 0.0;
+        }
+        if (raw instanceof String string) {
+            String trimmed = string.trim();
+            LOGGER.warn("Config entry {} is the string '{}'; parsing it as a boolean",
+                    tomlPath, trimmed);
+            if ("true".equalsIgnoreCase(trimmed)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(trimmed)) {
+                return false;
+            }
+            try {
+                return Double.parseDouble(trimmed) != 0.0;
+            } catch (NumberFormatException ignored) {
+                // fall through to the default below
+            }
+        }
+        LOGGER.warn("Config entry {} has an unreadable value ({}); using the default", tomlPath, raw);
+        return null;
     }
 
+    /** Same tolerance as {@link #fileBoolean} for numeric entries: booleans read as 0/1, numeric
+     *  strings parse, anything unreadable falls back to the setting's default. */
     private static Number fileNumber(String tomlPath) {
-        return FILE.contains(tomlPath) ? FILE.<Number>get(tomlPath) : null;
+        if (!FILE.contains(tomlPath)) {
+            return null;
+        }
+        Object raw = FILE.get(tomlPath);
+        if (raw instanceof Number number) {
+            return number;
+        }
+        if (raw instanceof Boolean bool) {
+            LOGGER.warn("Config entry {} is a boolean ({}); reading it as 0/1", tomlPath, raw);
+            return bool ? 1 : 0;
+        }
+        if (raw instanceof String string) {
+            try {
+                LOGGER.warn("Config entry {} is the string '{}'; parsing it as a number",
+                        tomlPath, string.trim());
+                return Double.parseDouble(string.trim());
+            } catch (NumberFormatException ignored) {
+                // fall through to the default below
+            }
+        }
+        LOGGER.warn("Config entry {} has an unreadable value ({}); using the default", tomlPath, raw);
+        return null;
     }
 
     private static String fileString(String tomlPath) {
-        return FILE.contains(tomlPath) ? FILE.<String>get(tomlPath) : null;
+        if (!FILE.contains(tomlPath)) {
+            return null;
+        }
+        Object raw = FILE.get(tomlPath);
+        if (raw instanceof String string) {
+            return string;
+        }
+        LOGGER.warn("Config entry {} is not a string ({}); using the default", tomlPath, raw);
+        return null;
     }
 
     public interface RuntimeSetting<T> {
