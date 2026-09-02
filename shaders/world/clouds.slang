@@ -260,15 +260,23 @@ public static const float CLOUD_SHEET_COVERAGE_HI = 0.92;
 // is where the top begins to round off. Measured liquid-water profiles of shallow convective layers
 // ramp up roughly linearly from cloud base and decay near the top as dry air is entrained, so the
 // profile is asymmetric on purpose — a symmetric lens is what makes a procedural deck read as a slab.
-public static const float CLOUD_BASE_RAMP_HEAP = 0.07;
+public static const float CLOUD_BASE_RAMP_HEAP = 0.06;
 public static const float CLOUD_BASE_RAMP_SHEET = 0.22;
-public static const float CLOUD_CROWN_START_HEAP = 0.70;
+public static const float CLOUD_CROWN_START_HEAP = 0.55;
 public static const float CLOUD_CROWN_START_SHEET = 0.48;
 public static const float CLOUD_CROWN_START_TOWER = 0.94;
-public static const float CLOUD_CROWN_ROUNDING = 0.30;
-// Dense cores tower: the crown starts lower where the local coverage is thin, so a bank develops
-// cauliflower towers out of its thick parts while its wispy edges stay low and flat.
-public static const float CLOUD_TOWER_COVERAGE_LIFT = 0.55;
+public static const float CLOUD_CROWN_ROUNDING = 0.26;
+// Dense cores tower. The crown's height is lifted by the LOCAL coverage through this smoothstep, so a
+// bank develops cauliflower towers out of its thick parts while its wispy edges stay low and flat — and
+// so one sky holds low fringes, mid-height heaps and tall towers at once, each where its own density
+// says it belongs. A linear lift cannot do that: it makes every cloud in the sky the same height.
+public static const float CLOUD_TOWER_COVERAGE_LO = 0.35;
+public static const float CLOUD_TOWER_COVERAGE_HI = 0.90;
+// Clear-sky peak of the convection parabola. The raw parabola 4c(1-c) peaks at 1.0 for 50% coverage,
+// which would make every scattered fair-weather sky a slab-filling congestus; the published cumulus
+// height gradient closes its dome at about half the layer instead, so the clear-sky peak is scaled down
+// and thunderstorms (w.convection's other input) carry the full range on their own.
+public static const float CLOUD_CONVECTION_PEAK = 0.45;
 // How much wider a cloud gets around its belly than at its base/crown, for the heaped genus. Turns a
 // straight-sided extrusion into a rounded, bulging mass; a sheet has no belly, so it is scaled out.
 public static const float CLOUD_BULGE = 0.30;
@@ -481,7 +489,7 @@ public CloudWeather cloudWeather(WorldPush push) {
     // Convection peaks at intermediate coverage (a sunny day building cumulus) and in thunderstorms,
     // where the tower is the storm. An overcast sheet suppresses it: nothing is being heated from
     // below. 4*c*(1-c) is the parabola through that behaviour, peaking at 50% coverage.
-    float scattered = 4.0 * w.coverage * (1.0 - w.coverage);
+    float scattered = 4.0 * w.coverage * (1.0 - w.coverage) * CLOUD_CONVECTION_PEAK;
     w.convection = clamp(max(scattered * (1.0 - w.sheet), thunder), 0.0, 1.0);
     // Precipitating cloud absorbs: droplets grow past the size that scatters cleanly, and the deck
     // darkens toward grey-green. This is the HZD rain-cloud term, and it is why a storm deck reads
@@ -537,6 +545,13 @@ float cloudVolumetricCoverage(float coverage, float2 samplePos) {
     }
     float threshold = 1.0 - clamp(coverage, 0.0, 1.0);
     float shape = cloudCoverageField(samplePos * (CLOUD_VOLUMETRIC_SCALE / CLOUD_SHAPE_DIV));
+    // Contrast, applied to the field BEFORE the threshold. A raw value-noise field is a Gaussian-ish wash
+    // around 0.5, so thresholding it directly gives every cloud the same soft wide skirt and leaves no
+    // clean air between neighbours — a sky of connected blobs rather than a sky of clouds. Pushing the
+    // field toward its own extremes first is what separates individual clouds with real gaps between
+    // them and gives each one a crisp edge: most of the difference between a cloudy wash and the
+    // scattered cumulus of a fair-weather sky.
+    shape = shape * shape * (3.0 - 2.0 * shape);
     return smoothstep(threshold, threshold + CLOUD_EDGE_SOFTNESS, shape);
 }
 
@@ -1060,10 +1075,16 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     // edges stay low and flat. That one coupling is most of why the result reads as a field of
     // individual clouds rather than as a single extruded slab.
     float heapCrown = lerp(CLOUD_CROWN_START_HEAP, 1.0,
-                           clamp(coverage * CLOUD_TOWER_COVERAGE_LIFT, 0.0, 1.0));
+                           smoothstep(CLOUD_TOWER_COVERAGE_LO, CLOUD_TOWER_COVERAGE_HI, coverage));
     float crownStart = lerp(heapCrown, CLOUD_CROWN_START_TOWER, w.convection);
     crownStart = lerp(crownStart, CLOUD_CROWN_START_SHEET, w.sheet);
-    float top = 1.0 - smoothstep(crownStart, crownStart + CLOUD_CROWN_ROUNDING, hf);
+    // The dome is clamped to close AT the slab top at the latest. Without the clamp a tall crown's fade
+    // would end above the slab and the deck would be sliced flat by its own ceiling — the single most
+    // obvious artefact of a slab-based deck, and exactly the "straight top that follows the thickness
+    // slider" look this model exists to avoid. With it, every genus rounds off on its own schedule and
+    // the slab top is only ever reached by towers, whose domes close exactly there.
+    float crownEnd = min(crownStart + CLOUD_CROWN_ROUNDING, 1.0);
+    float top = 1.0 - smoothstep(crownStart, crownEnd, hf);
 
     float profile = clamp(bottom * top, 0.0, 1.0);
     if (profile <= 0.0) {
@@ -1108,6 +1129,12 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
             erosionField = lerp(coarse, lerp(coarse, fine, CLOUD_DETAIL_FINE_WEIGHT), detailFade);
         }
     }
+    // Cellular shaping: push the billow toward its own extremes before it erodes anything, so erosion
+    // bites in defined scoops with crisp cell boundaries instead of a smooth wash. That ridge-and-cell
+    // character is what Worley (cellular) noise gives a cloud crown in the texture-based implementations;
+    // this gets most of the same bubbly-cauliflower read out of the value lattice for zero extra hashes.
+    erosionField = erosionField * erosionField * (3.0 - 2.0 * erosionField);
+
     // Where erosion bites: hardest where the field is thin (the fraying edge of a cloud) and at the slab
     // extremes (the crown breaking into lobes, the base dissolving into mist), leaving the interior
     // solid. Uniform erosion is what makes procedural cloud read as flat fluff.

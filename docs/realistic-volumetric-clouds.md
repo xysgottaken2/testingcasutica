@@ -65,6 +65,16 @@ is all that was done; where this document names it, that is provenance of an ide
 number below comes either from published literature or from a derivation in this repo (§5.6 calibrates
 the deck's brightness against the real sky rather than against another shader).
 
+**Unreal Engine 5's Volumetric Cloud** (and the public writeups of its shape stage) — consulted for the
+*calibration* of the height profile rather than for any technique: its shape textures are authored
+against per-type height gradients, and the published presets are the clearest statement anywhere of what
+"cumulus" and "congestus" mean numerically — a fair-weather cumulus closes its dome at roughly
+`(0.0, 0.2, 0.42, 0.6)` of the layer (base ramp over the first fifth, top fade from 0.42 to 0.6) while a
+developing tower runs `(0.0, 0.08, 0.75, 0.98)` (near-instant flat base, dome closing at the layer top).
+Also from that lineage: the weather map carrying per-region type and height, and the observation that
+inverting the detail noise at the cloud base is what produces wispy fractus. §4.3 tunes this model's
+genus profiles against those two gradients.
+
 **Horizon Zero Dawn's Nubis / Frostbite / Skybolt lineage** (Hillaare's *Physically Based Sky,
 Atmosphere and Cloud Rendering in Horizon Zero Dawn*, Wrenninge's multi-scattering writeups) — the
 bedrock technique: low-frequency shape eroded by high-frequency detail, height-gradient presets per
@@ -99,6 +109,11 @@ periodic value noise) at `CLOUD_SHAPE_DIV = 2.0`, which puts one cell at 48 bloc
 hundred blocks across, deliberately matched to the deck's depth because real cumulus are about as wide
 as they are tall.
 
+Before the threshold, the field is pushed toward its own extremes (one smoothstep of itself). A raw
+value-noise field is a Gaussian-ish wash around 0.5, so thresholding it directly gives every cloud the
+same soft wide skirt and no clean air between neighbours — a sky of connected blobs. The contrast pass
+is what separates individual clouds with real gaps and crisp edges.
+
 It is **one function with three callers** (visible density, cloud-shadow query, flat-sheet fallback).
 That is a fix, not a tidy-up: the shadow and the density used to merge the weather fill differently, so
 in rain the deck stayed at the slider's coverage while its shadow closed the sky completely.
@@ -117,9 +132,11 @@ deck can disagree about what the sky is doing:
 * `sheet` = `smoothstep(0.55, 0.92, coverage)` — a closed sky is a **sheet**; a scattered one is heaps.
   That is how the real sky behaves, so the coverage slider now changes cloud *genus* and not merely
   density.
-* `convection` = `max(4c(1−c) · (1−sheet), thunder)` — vertical development peaks on a sunny day
+* `convection` = `max(0.45 · 4c(1−c) · (1−sheet), thunder)` — vertical development peaks on a sunny day
   building cumulus, and in thunderstorms, where the tower *is* the storm. An overcast sheet suppresses
-  it: nothing is being heated from below.
+  it: nothing is being heated from below. The 0.45 is calibration, not taste: the raw parabola peaks at
+  1.0 for 50% coverage, which turns every scattered fair-weather sky into slab-filling congestus, while
+  the published cumulus height gradient (§3) closes its dome at about half the layer.
 * `absorbing` = `rain · 0.55 + thunder · 0.45` — precipitating cloud adds extinction (§5.1). Droplets
   that grew large enough to fall no longer scatter cleanly, which is why a storm's underside reads
   grey-green rather than merely shadowed.
@@ -134,12 +151,17 @@ are one reading of one state.
   air is unsaturated and there is no cloud at all, which is why every real deck has a flat bottom. A
   heap's base is sharp (one parcel that just reached saturation); a sheet's frays into mist (stratus
   forms by shallow cooling over a wide area, not by a rising parcel).
-* **Crown** (`HEAP = 0.70`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.30`): where the top starts to
-  round off. Heaps round at ~70% of the slab; convective towers fill it entirely; an inversion-capped
-  sheet flattens at half. **Dense cores tower** — the *local* coverage lifts the crown
-  (`CLOUD_TOWER_COVERAGE_LIFT`), so the thick middle of a bank billows up into towers while its wispy
-  edges stay low and flat. That one coupling is most of why the result reads as a field of individual
-  clouds instead of one extruded slab.
+* **Crown** (`HEAP = 0.55`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.26`, clamped to close at the
+  slab top at the latest): where the top starts to round off, tuned against UE5's published height
+  gradients (§3) — an ordinary cumulus domes at ~55–75% of the layer, a developing tower at the very top,
+  an inversion-capped sheet at half. **Dense cores tower**: the *local* coverage lifts the crown through
+  `smoothstep(0.35, 0.90, coverage)`, so the thick middle of a bank billows up into towers while its
+  wispy edges stay low and flat, and one sky holds low fringes, mid heaps and tall towers at once. That
+  coupling — nonlinear, so different clouds in one sky get different heights — is most of why the result
+  reads as a field of individual clouds instead of one extruded slab.
+  The clamp on the fade's end is load-bearing: without it a tall crown's fade would finish *above* the
+  slab and the deck would be sliced flat by its own ceiling, which is exactly the "straight top that
+  follows the thickness slider" artefact this model exists to avoid.
 * **Belly bulge** (`CLOUD_BULGE = 0.30` at `CLOUD_BELLY_HEIGHT = 0.42`, heaps only): a cumulus is widest
   around its lower-middle and pulls in toward both base and crown, so the coverage is relaxed there and
   the same cloud grows sideways in its belly. A sheet has no belly, so the term is scaled out by
@@ -171,7 +193,11 @@ camera-relative Y: the deck's internal structure is pinned to the world, so it d
 eye as the camera rises or falls. `RtCloudShaderRegressionTest` asserts the absence of `posRel.y` in the
 density function for exactly this reason.
 
-Erosion bites hardest where the field is thin (the fraying edge) and at the slab extremes — the crown
+Before eroding anything, the billow is pushed toward its own extremes (`x²(3−2x)`), which gives the
+erosion Worley-like ridge-and-cell character — defined scoops with crisp boundaries instead of a smooth
+wash — for zero extra hash lookups.
+
+Erosion then bites hardest where the field is thin (the fraying edge) and at the slab extremes — the crown
 breaking into lobes, the base dissolving into mist (`CLOUD_EROSION_EDGE = 0.75`, `CROWN = 0.55`,
 `BASE = 0.35`) — leaving the interior solid. Uniform erosion is what makes procedural cloud read as flat
 fluff. Finally `edge_sharpening`: an exponent interpolated from `1.55` at the base (thins → wispy,
@@ -343,6 +369,10 @@ half a full density each.
 | clouds too narrow / too wide | `CLOUD_SHAPE_DIV` (power of two only — see §7.1) |
 | edges too soft / too crisp | `CLOUD_EDGE_SHARPEN_BASE`, `CLOUD_EDGE_SHARPEN_CROWN` |
 | crowns not breaking up | `CLOUD_EROSION_CROWN`, `CLOUD_WARP_SHEAR` |
+| sky is one connected wash, no clean air between clouds | the contrast pass in `cloudVolumetricCoverage` |
+| tops sliced flat by the slab ceiling | `CLOUD_CROWN_ROUNDING` / the `crownEnd` clamp (§4.3) |
+| every cloud the same height | `CLOUD_TOWER_COVERAGE_LO/HI` (the lift must stay nonlinear) |
+| fair weather looks like a storm | `CLOUD_CONVECTION_PEAK` |
 | storm sky not different enough | `CLOUD_SHEET_COVERAGE_LO/HI`, `CLOUD_STORM_ABSORPTION` |
 | banding | dither (§6) — check both halves of the seed are still there |
 | horizon wall of white | `CLOUD_MAX_SLAB_CROSSINGS` |
