@@ -136,6 +136,58 @@ final class RtCloudShaderRegressionTest {
     }
 
     /**
+     * The fine octave of the erosion FBM must be CELLULAR (Worley F1), not a second billow.
+     *
+     * <p>Every texture-based cloud implementation erodes with the Perlin-Worley pair: value/billow
+     * noise carries the soft rounded lobes while cellular noise carves the crisp scoops between them.
+     * Billow-only erosion has smooth boundaries everywhere, which is precisely the "aerated cotton
+     * wool" read that separates a procedural deck from a cumulus crown — it is the one asset the
+     * technique's write-ups all name, and this module generates it at runtime (an exact 3x3x3 F1 over
+     * a jittered lattice, one hash per neighbour) so the mod still ships no 3D texture.
+     *
+     * <p>Three guards, because all three break silently:
+     * <ul>
+     *   <li>the fine octave calls it at the fine divisor — otherwise the crown stays billowy;</li>
+     *   <li>the jitter stays under one cell — above it the nearest feature point escapes the 3x3x3
+     *       neighbourhood and F1 quietly degrades into an approximation with cell-boundary seams;</li>
+     *   <li>the raw F1 goes through the fitted remap — the SHAPE tier substitutes this octave's
+     *       expected value (0.5) for it, and those two constants are what make 0.5 true. A hand-guessed
+     *       pair biases every light probe and drifts the deck's self-shadowing with no compile error.</li>
+     * </ul>
+     */
+    @Test
+    void detailErosionIsCellularWorleyWithAMeanMatchedRemap() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String density =
+                slice(source, "float cloudVolumeDensity(WorldPush push", "float cloudSunOpticalDepth(");
+        String worley = slice(source, "float cloudWorley3(float3 p) {",
+                "// One noise octave's sample coordinate");
+
+        assertTrue(source.contains("uint cloudHash3Bits(int3 cell)"),
+                "the Worley lattice needs three jitter components out of ONE hash per neighbour; three "
+                        + "hashes per neighbour would triple the most expensive octave in the density");
+        assertTrue(density.contains("cloudWorley3(cloudDetailCoord(warpedXZ, warpedHeight"),
+                "the fine erosion octave must be the cellular field sampled at the fine divisor, or the "
+                        + "crown keeps billow's soft boundaries and never reads as aerated cauliflower");
+        assertEquals(3, count(worley, "for (int"),
+                "F1 needs the full 3x3x3 neighbourhood, and no more than that");
+        assertTrue(worley.contains("+ 0.5 + j - f"),
+                "each feature point is its cell's centre plus the jitter, measured against the sample");
+
+        var jitter = java.util.regex.Pattern.compile("CLOUD_WORLEY_JITTER = ([\\d.]+);").matcher(source);
+        assertTrue(jitter.find(), "clouds.slang must declare CLOUD_WORLEY_JITTER");
+        assertTrue(Double.parseDouble(jitter.group(1)) < 1.0,
+                "jitter must stay under one cell per axis, or the nearest feature point escapes the "
+                        + "3x3x3 neighbourhood and F1 silently becomes an approximation with seams "
+                        + "along the cell boundaries");
+
+        assertTrue(density.contains("* CLOUD_WORLEY_REMAP_SCALE + CLOUD_WORLEY_REMAP_BIAS"),
+                "raw F1 averages ~0.51 on this lattice and must be remapped to average 0.5: the SHAPE "
+                        + "tier substitutes that octave's expected value for it, so an unfitted remap "
+                        + "biases every light probe");
+    }
+
+    /**
      * One sample is lit by THREE optical depths through a multi-scattering expansion.
      *
      * <p>Self-shadowing, ambient occlusion and ground bounce are three questions about three different

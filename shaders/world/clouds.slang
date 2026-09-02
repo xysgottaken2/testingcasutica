@@ -215,8 +215,8 @@ public static const float CLOUD_SKY_ANALYTIC_FILL = 0.5;
 // style only (classic samples unscaled, so it always wrapped cleanly). A power of two also makes the
 // multiply exact in binary floating point, so the identity holds bit-for-bit rather than approximately.
 public static const float CLOUD_VOLUMETRIC_SCALE = 0.5;
-// Octave divisors for the base shape, the warp and the two billow layers. ALL must be powers of two,
-// for the same reason CLOUD_VOLUMETRIC_SCALE must be: each is another space the periodic hash is
+// Octave divisors for the base shape, the warp, the billow octave and the Worley octave. ALL must be
+// powers of two, for the same reason CLOUD_VOLUMETRIC_SCALE must be: each is another space the hash is
 // sampled in, and the anchor wrap has to be a whole hash period in every one of them simultaneously.
 // The largest divisor is the binding constraint on CLOUD_FIELD_PERIOD_BLOCKS (Java):
 // period >= 512 * CELL * maxDiv / SCALE, so no divisor may EXCEED CLOUD_WARP_DIV without the Java
@@ -292,8 +292,21 @@ public static const float CLOUD_WARP_SHEAR = 2.2;
 // Fraction of the horizontal displacement also applied to the vertical coordinate, which is what leans
 // a tower over instead of merely smearing its footprint.
 public static const float CLOUD_WARP_VERTICAL = 0.55;
-// ---- Detail erosion. Two octaves of 3D billow noise, weighted, erode the shape field's edge.
+// ---- Detail erosion. A coarse 3D billow octave plus a fine 3D Worley (cellular) octave, weighted,
+// erode the shape field's edge: the Perlin-Worley FBM pair, generated procedurally instead of sampled.
 public static const float CLOUD_DETAIL_FINE_WEIGHT = 0.45;
+// Feature-point jitter for the Worley octave, as a fraction of a cell (+-0.4 at 0.8). Staying under 0.5
+// is what keeps the nearest feature point inside the 3x3x3 neighbourhood, i.e. what makes 27 taps an
+// exact F1 rather than an approximation.
+public static const float CLOUD_WORLEY_JITTER = 0.8;
+// Remap of the raw F1 into the erosion field's [0,1]. Chosen NUMERICALLY, by simulating this exact
+// lattice and jitter over 26^3 samples: raw F1 averages 0.511 there, and with these constants the
+// remapped field averages 0.500 — which is what keeps the SHAPE tier's expected-value substitution
+// unbiased — while ~25% of it lands on the clamps, and that clipping is precisely the crisp
+// scoop-and-ridge character cellular noise is used for. Touching these without re-running that
+// simulation silently re-biases every light probe.
+public static const float CLOUD_WORLEY_REMAP_SCALE = 2.55;
+public static const float CLOUD_WORLEY_REMAP_BIAS = -0.81;
 // How hard the erosion bites at the coverage edge and at the slab extremes, relative to the core. A
 // cloud's interior stays solid — real cumulus cores reach 1-2 g m^-3 of liquid water while the fraying
 // edge is a fraction of that — and uniform erosion is what makes procedural cloud read as flat fluff.
@@ -422,13 +435,17 @@ float cloudNoise(float2 p) {
 // The hash keeps the 2D field's exact periodicity on the two horizontal axes — same mask, same lattice,
 // so the anchor wrap that CLOUD_FIELD_PERIOD_BLOCKS (Java) guarantees stays seamless for the detail as
 // well as for the shape. The vertical axis has no anchor to wrap and uses its own larger mask.
-float cloudHash3(int3 cell) {
+uint cloudHash3Bits(int3 cell) {
     uint3 c = uint3(uint(cell.x & CLOUD_CELL_MASK), uint(cell.y & CLOUD_VERTICAL_MASK),
                     uint(cell.z & CLOUD_CELL_MASK));
     uint h = c.x * 374761393u + c.y * 668265263u + c.z * 2246822519u;
     h = (h ^ (h >> 13u)) * 1274126177u;
     h = h ^ (h >> 16u);
-    return float(h & 0x00ffffffu) * (1.0 / 16777216.0);
+    return h & 0x00ffffffu;
+}
+
+float cloudHash3(int3 cell) {
+    return float(cloudHash3Bits(cell)) * (1.0 / 16777216.0);
 }
 
 // Trilinear value noise on the 3D lattice: eight corner hashes, smoothstep-interpolated on each axis.
@@ -449,6 +466,43 @@ float cloudNoise3(float3 p) {
 // depth as well as width.
 float cloudBillow3(float3 p) {
     return 1.0 - abs(cloudNoise3(p) * 2.0 - 1.0);
+}
+
+/**
+ * 3D Worley (cellular) noise: F1, the distance to the nearest feature point of a jittered lattice.
+ *
+ * This is the other half of the Perlin-Worley pair that every texture-based cloud implementation erodes
+ * with (HZD, Frostbite, UE5, and the Minecraft shader packs that followed them), generated here instead
+ * of sampled from an atlas: value/billow noise gives rounded lobes with SOFT boundaries, while F1's
+ * ridge-and-cell structure is what carves the aerated, scooped silhouette — a crown that reads as a
+ * cluster of overlapping bubbles with crisp concavities between them rather than as a soft blur. Mixed
+ * as an FBM (coarse billow for the lobes, fine Worley for the cells) it is exactly the combination the
+ * technique is known for.
+ *
+ * Exactness: with feature points jittered by at most +-0.4 of a cell the nearest one is always inside
+ * the 3x3x3 neighbourhood, so 27 taps is an EXACT F1 rather than an approximation. Cost: one hash per
+ * tap, from which all three jitter components are unpacked as independent 8-bit slices — which is why
+ * this octave lives only at the FULL tier and behind the distance LOD.
+ *
+ * Periodicity is inherited from cloudHash3Bits: the lattice wraps on both horizontal axes and on the
+ * vertical mask, so the cellular field survives the anchor wrap like every other field in this module.
+ */
+float cloudWorley3(float3 p) {
+    int3 c = int3(floor(p));
+    float3 f = frac(p);
+    float best = 8.0; // strictly above the largest squared distance the 27 taps can produce (3 * 1.5^2)
+    for (int z = -1; z <= 1; z++) {
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                uint h = cloudHash3Bits(c + int3(x, y, z));
+                float3 j = (float3(float(h & 255u), float((h >> 8u) & 255u), float((h >> 16u) & 255u))
+                        * (1.0 / 255.0) - 0.5) * CLOUD_WORLEY_JITTER;
+                float3 d = float3(float(x), float(y), float(z)) + 0.5 + j - f;
+                best = min(best, dot(d, d));
+            }
+        }
+    }
+    return sqrt(best);
 }
 
 // One noise octave's sample coordinate: horizontal is the anchored deck space, vertical is BLOCKS ABOVE
@@ -1023,8 +1077,9 @@ float cloudDither(WorldPush push) {
  *   * HEIGHT PROFILE — the genus model deciding how deep the cloud develops at that spot: flat base at
  *     the condensation level, crown rounding off where convection runs out of steam, belly bulging
  *     outward. This is what makes a heap a heap and a sheet a sheet;
- *   * EROSION — two octaves of 3D billow noise subtracting from the profile. The third dimension lives
- *     HERE, and it is the difference between a cloud and a slab: because the noise varies with height,
+ *   * EROSION — a coarse 3D billow octave plus a fine 3D Worley (cellular) octave subtracting from
+ *     the profile. The third dimension lives HERE, and it is the difference between a cloud and a
+ *     slab: because the noise varies with height,
  *     the crown breaks into individual cauliflower heads instead of the lobes lining up vertically the
  *     way a 2D pattern extruded through a height profile always does.
  *
@@ -1116,24 +1171,24 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     float2 warpedXZ = samplePos + warp * warpAmp;
     float warpedHeight = height + (warp.x + warp.y) * warpAmp * CLOUD_WARP_VERTICAL;
 
-    // ---- Erosion: two octaves of 3D billow noise, weighted. The fine one fades out with distance
-    // (detailFade) and is skipped below the FULL tier. Both octaves average 0.5, which is why the cheap
-    // tier can drop one without changing how much sky the deck closes off on average.
+    // ---- Erosion: the Perlin-Worley FBM pair, weighted. The coarse octave is billow value noise (the
+    // soft rounded lobes); the fine one is Worley F1 (the crisp cellular scoops between them) — the same
+    // combination the texture-based implementations get from a precomputed Worley atlas, generated here.
+    // The fine octave fades out with distance (detailFade) and is skipped below the FULL tier, where its
+    // 27 taps per sample would be the most expensive thing in the density. Both octaves average 0.5 —
+    // the Worley's remap was fitted numerically to exactly that (CLOUD_WORLEY_REMAP_*) — which is why
+    // the cheap tier can drop it without changing how much sky the deck closes off on average.
     float erosionField = 0.5;
     if (detail >= CLOUD_DETAIL_COARSE) {
         float coarse = cloudBillow3(cloudDetailCoord(warpedXZ, warpedHeight, CLOUD_BILLOW_DIV_COARSE));
         erosionField = coarse;
         if (detail >= CLOUD_DETAIL_FULL && detailFade > 0.0) {
-            float fine = cloudBillow3(cloudDetailCoord(warpedXZ, warpedHeight, CLOUD_BILLOW_DIV_FINE)
-                    + float3(19.0, 7.0, 23.0));
+            float fine = saturate(cloudWorley3(cloudDetailCoord(warpedXZ, warpedHeight,
+                                        CLOUD_BILLOW_DIV_FINE) + float3(19.0, 7.0, 23.0))
+                    * CLOUD_WORLEY_REMAP_SCALE + CLOUD_WORLEY_REMAP_BIAS);
             erosionField = lerp(coarse, lerp(coarse, fine, CLOUD_DETAIL_FINE_WEIGHT), detailFade);
         }
     }
-    // Cellular shaping: push the billow toward its own extremes before it erodes anything, so erosion
-    // bites in defined scoops with crisp cell boundaries instead of a smooth wash. That ridge-and-cell
-    // character is what Worley (cellular) noise gives a cloud crown in the texture-based implementations;
-    // this gets most of the same bubbly-cauliflower read out of the value lattice for zero extra hashes.
-    erosionField = erosionField * erosionField * (3.0 - 2.0 * erosionField);
 
     // Where erosion bites: hardest where the field is thin (the fraying edge of a cloud) and at the slab
     // extremes (the crown breaking into lobes, the base dissolving into mist), leaving the interior

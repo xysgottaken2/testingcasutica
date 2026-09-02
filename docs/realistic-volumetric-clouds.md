@@ -59,7 +59,8 @@ function, expression, identifier, constant set or asset of its appears here, and
 could not be further apart mechanically — Photon is GLSL for Iris/OptiFine-style loaders, sampling
 precomputed 3D noise and coverage textures through uniforms, while this module is Slang in Caustica's
 ray-tracing pipeline, reading `WorldPush` lanes and generating every field it samples from a periodic
-integer hash written here (`cloudHash3`/`cloudNoise3`/`cloudBillow3`), with no texture or sampler of any
+integer hash written here (`cloudHash3Bits`/`cloudHash3`/`cloudNoise3`/`cloudBillow3`/`cloudWorley3`),
+with no texture or sampler of any
 kind in the file. Photon's own license explicitly permits examining and learning from its source, which
 is all that was done; where this document names it, that is provenance of an idea and not of code. Every
 number below comes either from published literature or from a derivation in this repo (§5.6 calibrates
@@ -184,18 +185,32 @@ the anchor wrap may only sample fields that are periodic with it (§7). Altitude
 
 ### 4.5 Erosion — the 3D part
 
-Two octaves of **3D** billow noise (`cloudBillow3` = `1 − |2·noise₃ − 1|`, which folds value noise into
-rounded cellular lobes rather than a cloudy blur) at `CLOUD_BILLOW_DIV_COARSE = 1.0` and
-`FINE = 0.25` — lobes 24 and 6 blocks across, a fraction of a cloud's width, which is the cumulus look.
+The erosion FBM is the **Perlin-Worley pair**, generated rather than sampled. A coarse **3D** billow
+octave (`cloudBillow3` = `1 − |2·noise₃ − 1|`, value noise folded into rounded lobes) at
+`CLOUD_BILLOW_DIV_COARSE = 1.0` — lobes 24 blocks across — carries the cauliflower, and a fine **Worley
+(cellular) F1** octave at `CLOUD_BILLOW_DIV_FINE = 0.25` — cells 6 blocks across — carves the crisp
+scoops between those lobes. Billow alone has soft boundaries everywhere, which is the "aerated cotton
+wool" read that separates a procedural deck from a real crown; cellular noise is what removes it. This
+is the one field in the module that every write-up of the technique describes as a precomputed texture,
+and here it is computed at runtime: `cloudWorley3` walks the 3×3×3 neighbourhood of the sample's cell
+and returns the distance to the nearest feature point, each feature being its cell's centre plus a
+jitter of ±0.4 cells (`CLOUD_WORLEY_JITTER = 0.8`). Because the jitter stays under half a cell per axis,
+the nearest feature point is provably inside that neighbourhood, so 27 taps is an **exact** F1 rather
+than an approximation. Each tap costs one hash, from which all three jitter components are unpacked as
+8-bit slices (`cloudHash3Bits`), so the octave is 27 hashes rather than 81 — still the most expensive
+thing in the density, which is why it lives only at `CLOUD_DETAIL_FULL` and behind the distance LOD.
+
+Raw F1 averages ≈0.511 on this lattice. `CLOUD_WORLEY_REMAP_SCALE = 2.55` with
+`CLOUD_WORLEY_REMAP_BIAS = −0.81` — both fitted numerically over 26³ samples of exactly this hash and
+this jitter — remap it to a mean of exactly 0.500, with ~25% of the range landing on the clamps, and
+that clipping *is* the crispness. The mean is not cosmetic: the SHAPE tier substitutes this octave's
+expected value for it (§5), so a hand-guessed remap would silently bias every light probe.
+
 The vertical axis is a real third dimension on its own lattice (`cloudHash3`, masked to
 `CLOUD_VERTICAL_CELLS = 256`), and it is sampled in **blocks above the deck's own base**, never in
 camera-relative Y: the deck's internal structure is pinned to the world, so it does not swim past the
 eye as the camera rises or falls. `RtCloudShaderRegressionTest` asserts the absence of `posRel.y` in the
 density function for exactly this reason.
-
-Before eroding anything, the billow is pushed toward its own extremes (`x²(3−2x)`), which gives the
-erosion Worley-like ridge-and-cell character — defined scoops with crisp boundaries instead of a smooth
-wash — for zero extra hash lookups.
 
 Erosion then bites hardest where the field is thin (the fraying edge) and at the slab extremes — the crown
 breaking into lobes, the base dissolving into mist (`CLOUD_EROSION_EDGE = 0.75`, `CROWN = 0.55`,
@@ -246,7 +261,8 @@ extinction coefficients.
 | **ground** | analytic from the sample's height and density | sunlight bounced off the lit surface back up into the cloud's base (`CLOUD_GROUND_ALBEDO = 0.22`, Earth's standard neutral value). Soft by nature; marching down for every sample is not affordable and the trend is all that matters. |
 
 Probes sample `CLOUD_DETAIL_SHAPE` — the coverage-times-profile field with erosion replaced by its
-**expected value** (a billow octave averages 0.5). That keeps a probe unbiased about how much cloud is
+**expected value** (a billow octave averages 0.5, and the Worley octave's remap is fitted to average
+0.5 — §4.5). That keeps a probe unbiased about how much cloud is
 between the sample and the light without paying for the octave, whereas skipping erosion entirely would
 make every probe read the deck as denser than it is.
 
@@ -366,6 +382,9 @@ half a full density each.
 | no silver lining on backlit edges | `CLOUD_HG_SILVER`, `CLOUD_PHASE_SILVER`, then `CLOUD_POWDER_SUN_RELAX` |
 | clouds too wispy / too solid | `CLOUD_EXTINCTION` (with `CLOUD_REFERENCE_THICKNESS` if the slider feels like opacity) |
 | lobes too small / too big | `CLOUD_BILLOW_DIV_COARSE`, `CLOUD_BILLOW_DIV_FINE` (power of two only!) |
+| crown reads as soft cotton wool, not aerated cauliflower | `CLOUD_DETAIL_FINE_WEIGHT`, `CLOUD_BILLOW_DIV_FINE` |
+| cellular scoops too soft / too jagged | `CLOUD_WORLEY_JITTER` (must stay < 1.0 — §4.5), then re-fit the remap mean |
+| detail missing up close | `CLOUD_DETAIL_LOD_NEAR`, `CLOUD_DETAIL_LOD_FAR` (the LOD, not the field) |
 | clouds too narrow / too wide | `CLOUD_SHAPE_DIV` (power of two only — see §7.1) |
 | edges too soft / too crisp | `CLOUD_EDGE_SHARPEN_BASE`, `CLOUD_EDGE_SHARPEN_CROWN` |
 | crowns not breaking up | `CLOUD_EROSION_CROWN`, `CLOUD_WARP_SHEAR` |
@@ -379,10 +398,11 @@ half a full density each.
 
 ## 10. Not done
 
-* **No 3D detail texture.** A Perlin-Worley shape atlas plus a Worley detail atlas (the industry
-  standard) would beat procedural hash noise on both quality and cost, but it
-  needs a texture binding this module deliberately does not have (§7.4) and an asset pipeline to produce
-  it.
+* **No 3D detail texture.** Both erosion octaves are generated procedurally — billow value noise and an
+  exact Worley F1 (§4.5) — where the industry standard samples a precomputed Perlin-Worley shape atlas
+  plus a Worley detail atlas. The atlases would still win on quality *and* on cost (one trilinear fetch
+  instead of 27 hashes per sample), but they need a texture binding this module deliberately does not
+  have (§7.4) and an asset pipeline to produce them.
 * **No curl noise** — approximated by shearing a scalar field (§4.4).
 * **One deck.** No second high-altitude layer, so no cirrus; the README's TODO still carries that.
 * **No temporal reprojection** of the march itself: the dither plus the existing denoiser chain carry it,
