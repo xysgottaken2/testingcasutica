@@ -76,7 +76,7 @@
 	"caustica.options.rt.clouds": "Nuvens de ray tracing",
 	"caustica.options.rt.clouds.tooltip": "Desenha um deck de nuvens no céu de ray tracing. O Caustica substitui o renderizador de mundo do vanilla, que é onde as nuvens do vanilla são desenhadas — e é isso que traz as nuvens de volta ao céu. O deck é visível em reflexos e pode sombrear o mundo abaixo.",
 	"caustica.options.rt.cloudStyle": "Estilo das nuvens",
-	"caustica.options.rt.cloudStyle.tooltip": "Como as nuvens são desenhadas. Clássico reproduz a camada de nuvens plana e quadrada do Minecraft. Volumétrico renderiza as nuvens com ray marching como formas 3D reais, com profundidade, auto-sombreamento e espalhamento de luz, como os shaderpacks pesados — muito mais bonito, mas bem mais pesado. Os dois usam as mesmas formas de nuvem, então trocar não move as nuvens.",
+	"caustica.options.rt.cloudStyle.tooltip": "Como as nuvens são desenhadas. Clássico reproduz a camada de nuvens plana e quadrada do Minecraft. Volumétrico faz ray marching de um deck de nuvens modelado: um campo de cobertura define onde a camada fica, a erosão 3D define o formato de cada nuvem, e a luz tem espalhamento múltiplo com profundidades ópticas separadas para o sol, o céu e o reflexo do chão — o visual dos shaderpacks pesados, a cerca do dobro do custo do modelo volumétrico anterior. Os dois leem o mesmo campo de cobertura, então trocar não move as nuvens; o volumétrico também lê o clima para escolher o tipo de nuvem, então a chuva muda o formato do céu e não apenas o brilho.",
 	"caustica.options.rt.cloudStyle.classic": "Clássico",
 	"caustica.options.rt.cloudStyle.volumetric": "Volumétrico",
 	"caustica.options.rt.skyStyle": "Estilo do céu",
@@ -86,7 +86,7 @@
 	"caustica.options.rt.cloudHeight": "Altura das nuvens",
 	"caustica.options.rt.cloudHeight.tooltip": "Altura do mundo onde fica a base das nuvens. As do vanilla ficam em Y 192; o padrão aqui é mais alto porque essas nuvens têm espessura real, o que faz um deck baixo parecer muito mais próximo do que a folha plana do vanilla. Aumente se as nuvens parecerem perto demais do chão. Mede a base das nuvens, então mudar a espessura não a desloca.",
 	"caustica.options.rt.cloudThickness": "Espessura das nuvens",
-	"caustica.options.rt.cloudThickness.tooltip": "Quão altas são as nuvens. 0% as torna uma folha plana; valores maiores dão profundidade 3D de verdade para voar para dentro. Nuvens clássicas viram caixas sólidas com o topo claro e laterais escuras como no vanilla, e volumétricas viram cúmulos altos e cheios. Muda só a forma, não a transparência — para isso use a opacidade das nuvens. Nuvens mais espessas custam mais performance.",
+	"caustica.options.rt.cloudThickness.tooltip": "Quanto volume o deck CLÁSSICO tem — quão profundas são as caixas, da base ao topo. 0% vira uma folha plana; valores maiores dão profundidade 3D real para voar dentro, e caixas mais grossas custam um pouco mais para desenhar. O deck Volumétrico tira a profundidade do próprio modelo de gênero (um cumulus de tempo bom fica raso, uma torre de tempestade enche o céu), então este slider fica desativado nesse estilo: onde o deck fica é a Altura das Nuvens, e quão transparente ele é é a Opacidade.",
 	"caustica.options.rt.cloudShadowStrength": "Sombras das nuvens",
 	"caustica.options.rt.cloudShadowStrength.tooltip": "Quanto o deck de nuvens escurece a luz do sol e da lua que chega ao chão embaixo. 0% desenha nuvens sem sombra nenhuma; 100% permite que uma nuvem sólida bloqueie o sol por completo. Não custa raios extras.",
 	"caustica.options.rt.cloudOpacity": "Opacidade das nuvens",
@@ -238,7 +238,7 @@
 	"caustica.options.rt.parallaxQuality": "Qualidade do POM",
 	"caustica.options.rt.parallaxQuality.tooltip": "Nível de amostragem do Parallax Occlusion Mapping: multiplica o orçamento de percorrida do campo de altura por acerto sobre a base derivada da profundidade. Maior mantém o relevo fino intacto em ângulos rasos em pacotes de alta resolução (e custa mais); menor economiza GPU. Independe da Profundidade do POM, que continua definindo a profundidade do relevo.",
 	"caustica.options.rt.cloudCoverage": "Cobertura de Nuvens",
-	"caustica.options.rt.cloudCoverage.tooltip": "Fração do céu que a camada de nuvens cobre em tempo limpo. Chuva e tempestades levam o céu ao nublado por cima disso; 0% deixa fios isolados, 100% um teto quase fechado.",
+	"caustica.options.rt.cloudCoverage.tooltip": "Fração do céu que a camada de nuvens cobre em tempo limpo. Chuva e tempestades levam o céu ao nublado por cima disso; 0% deixa fios isolados, 100% um teto quase fechado. No estilo volumétrico isso também escolhe o tipo de nuvem, como no céu real: um campo esparsado é cúmulo de tempo bom (montes separados com base plana), enquanto um céu fechado vira uma camada rasa de estratocúmulo que para de crescer para cima.",
 	"caustica.options.rt.cloudCoverage.classicUnavailable": "Cobertura de nuvens: desativada (deck Clássico)",
 	"caustica.options.rt.cloudCoverage.classicUnavailable.tooltip": "O deck clássico é uma textura plana única (como o clouds.png do vanilla): a cobertura já vem gravada na imagem, então este slider não consegue alterá-la. O deck volumétrico renderiza o campo de cobertura ao vivo com profundidade real — volte o estilo para usar o slider.",
 	"caustica.options.rt.fogHeader": "Névoa Volumétrica",
@@ -305,5 +305,7 @@
 	"caustica.options.rt.fgEngine": "Motor de FG",
 	"caustica.options.rt.fgEngine.tooltip": "Qual motor de geração de quadros sintetiza os quadros intermediários. Caustica Native interpola com os vetores de movimento exatos do path tracer em qualquer GPU e suporta multiplicadores até 4x; AMD FSR 3.1 é o runtime assinado da AMD, alternativa de referência travada em 2x.",
 	"caustica.options.rt.fgEngine.native": "Caustica Native",
-	"caustica.options.rt.fgEngine.fsr31": "AMD FSR 3.1 (2x)"
+	"caustica.options.rt.fgEngine.fsr31": "AMD FSR 3.1 (2x)",
+	"caustica.options.rt.cloudThickness.volumetricUnavailable": "Espessura das nuvens: desativada (deck Volumétrico)",
+	"caustica.options.rt.cloudThickness.volumetricUnavailable.tooltip": "A profundidade de uma nuvem volumétrica pertence à própria nuvem: um cumulus de tempo bom fica raso, uma torre em desenvolvimento enche o céu, uma camada fechada é uma tampa rasa. O deck deriva essa profundidade do modelo de gênero (cobertura e clima), então uma espessura global brigaria com a forma em qualquer valor — exatamente o visual de \"laje retangular\" que este estilo existe para evitar. Este slider molda apenas o deck Clássico."
 }

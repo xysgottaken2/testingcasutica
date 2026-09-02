@@ -197,10 +197,11 @@ public final class RtVideoOptions {
 
     /**
      * The clouds sub-screen rows. {@code styleChanged} reopens the screen when the deck style flips,
-     * and the classic deck's coverage slider is left out entirely: coverage is baked into the flat
-     * texture in that style, so showing the row would offer a knob that changes nothing — the
-     * sub-screen replaces it with {@link #cloudCoverageDisabledHint()}'s greyed-out explanation.
-     * Volumetric reads the live coverage field, so the slider stays.
+     * and each style leaves out the one slider it cannot use: the classic deck's coverage is baked
+     * into its flat texture, and the volumetric deck's depth comes from its genus model rather than
+     * from the thickness option — showing either row in the wrong style would offer a knob that
+     * changes nothing, so the sub-screen swaps them for greyed-out explanations
+     * ({@link #cloudCoverageDisabledHint()}, {@link #cloudThicknessDisabledHint()}).
      */
     public static OptionInstance<?>[] cloudOptions(Runnable styleChanged) {
         List<OptionInstance<?>> options = new ArrayList<>();
@@ -210,7 +211,9 @@ public final class RtVideoOptions {
             options.add(cloudCoverage());
         }
         options.add(cloudHeight());
-        options.add(cloudThickness());
+        if ("classic".equals(CausticaConfig.Rt.Composite.CLOUD_STYLE.get())) {
+            options.add(cloudThickness());
+        }
         options.add(cloudShadowStrength());
         options.add(cloudOpacity());
         return options.toArray(OptionInstance<?>[]::new);
@@ -841,6 +844,28 @@ public final class RtVideoOptions {
     }
 
     /**
+     * The thickness slider's volumetric-mode placeholder, the mirror image of
+     * {@link #cloudCoverageDisabledHint()}. How deep a volumetric cloud is belongs to the genus model
+     * — a fair-weather cumulus stays shallow, a storm tower fills the sky — so the deck derives its
+     * slab depth from coverage and weather instead of from this slider, and offering the knob in
+     * volumetric mode would promise a change the shader deliberately does not make. Returns
+     * {@code null} when the classic style is selected, i.e. "thickness is usable, no placeholder row".
+     */
+    public static Button cloudThicknessDisabledHint() {
+        if ("classic".equals(CausticaConfig.Rt.Composite.CLOUD_STYLE.get())) {
+            return null;
+        }
+        Button button = Button.builder(
+                Component.translatable("caustica.options.rt.cloudThickness.volumetricUnavailable"),
+                clicked -> {})
+            .width(310).build();
+        button.active = false;
+        button.setTooltip(Tooltip.create(Component.translatable(
+                "caustica.options.rt.cloudThickness.volumetricUnavailable.tooltip")));
+        return button;
+    }
+
+    /**
      * World Y the base of the cloud deck sits at, in blocks.
      *
      * <p>Stepped in 8-block increments: the slider spans nearly 900 blocks, and single-block precision
@@ -864,10 +889,12 @@ public final class RtVideoOptions {
     }
 
     /**
-     * Cloud thickness, as a percentage of the maximum deck depth. Applies to both styles: 0% is a flat
-     * sheet, 100% is a deep bank you can fly into. Classic clouds become real boxes with lit tops and
-     * darker sides, the way vanilla's cloud geometry looks; volumetric clouds gain the depth their
-     * shading needs. Thicker clouds cost more to march.
+     * Cloud thickness, as a percentage of the maximum deck depth: 0% is a flat sheet, 100% is a deep
+     * bank you can fly into. A CLASSIC knob — its boxes are extruded by exactly this amount — and
+     * hidden in volumetric mode, where the deck's depth is the genus model's instead
+     * ({@code cloudDeckDepth} in clouds.slang): a cloud's own shape deciding how far it develops is
+     * what makes volumetric clouds read as clouds, and a global thickness fought that at every
+     * setting. The row is offered only when it changes something.
      */
     private static OptionInstance<Integer> cloudThickness() {
         return percent("caustica.options.rt.cloudThickness",

@@ -31,8 +31,11 @@ changes while the renderer is being built.
   terrain streaming...), and every sub-screen starts with a "Reset to Defaults" button — plus a
   global one on the hub — so experimentation can never strand you on a botched configuration
 - Weather-driven lighting: rain and thunderstorms dim the sun/moon and darken the sky
-- Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal cumulus form,
-  with adjustable thickness, opacity and cloud shadows, visible in reflections
+- Volumetric 3D clouds in classic (vanilla-style boxes) or photoreal form — the volumetric deck is
+  ray-marched with multi-scattered light, three optical-depth probes (sun, sky, ground bounce) and
+  weather-driven cloud types (stratus sheet, cumulus heaps, storm towers), with adjustable thickness,
+  opacity and cloud shadows, visible in reflections.
+  See [docs/realistic-volumetric-clouds.md](docs/realistic-volumetric-clouds.md)
 - Dedicated Nether and End skyboxes
 - OMM (Opacity Micro-Map) + SER (Shader Execution Reordering) optimizations
 - Experimental NVIDIA SHaRC-style world-space radiance cache (Spatially Hashed Radiance Cache) to
