@@ -55,7 +55,7 @@ public static const float CLOUD_CELL_BLOCKS = 12.0; // vanilla's cloud cell size
 public static const int   CLOUD_PERIOD_CELLS = 512; // power of two, so the wrap below is a mask
 public static const int   CLOUD_CELL_MASK = CLOUD_PERIOD_CELLS - 1;
 // Width of the coverage ramp for the volumetric style. Classic quantises instead (see cloudCoverage).
-public static const float CLOUD_EDGE_SOFTNESS = 0.22;
+public static const float CLOUD_EDGE_SOFTNESS = 0.15;
 public static const float3 CLOUD_ALBEDO = float3(0.94, 0.95, 0.98);
 public static const float CLOUD_INV_PI = 0.31830988618;
 
@@ -104,12 +104,17 @@ public static const int   CLOUD_DETAIL_FULL = 2;
 // the eye and the deck has already washed the contrast out of it.
 public static const float CLOUD_DETAIL_LOD_NEAR = 320.0;
 public static const float CLOUD_DETAIL_LOD_FAR = 1400.0;
-public static const float CLOUD_EXTINCTION = 0.115; // per block, at density 1
+public static const float CLOUD_EXTINCTION = 0.42; // per block, at density 1
 // Measured water-cloud extinction is 0.005..0.1 per METRE and rises with liquid water content
 // (Kokhanovsky's review of terrestrial cloud optics puts a typical a_ef = 6 um / 0.4 g m^-3 layer at
-// about 0.1 m^-1). With one block to a metre this constant sits at the top of that range before the
-// slab normalisation below and comfortably inside it after, which is the point: the number is not a
-// look knob, it is the deck's optical depth per block of cloud.
+// about 0.1 m^-1) — and a real cumulus is OPAQUE because it is hundreds of metres deep: optical depth
+// 30-100 straight up through one. This deck is a compressed sky, a few tens of blocks deep, so it
+// cannot buy that opacity with depth; it buys it per block. At the physical per-metre value the core
+// of a cloud here reaches optical depth ~1-3, which renders as see-through cotton wool with no
+// shadowed underside — the measurable difference between this constant and a cloud that reads as a
+// cloud. 0.42 puts a developed core at optical depth ~7-15 (opaque body, dark base, silver lining at
+// the rim) while a fraying edge of a few blocks at low density still transmits, which is exactly the
+// split real clouds show between core and wisp.
 //
 // Single-scattering albedo of liquid cloud is ~0.9999 in the visible — droplets scatter essentially
 // everything and absorb nothing — so scattering follows extinction and the small deficit below is the
@@ -231,7 +236,7 @@ public static const float CLOUD_VOLUMETRIC_SCALE = 0.5;
 // so the coarsest shape the wrap period allows is also the physically right one.
 public static const float CLOUD_SHAPE_DIV = 2.0;
 public static const float CLOUD_WARP_DIV = 2.0;
-public static const float CLOUD_BILLOW_DIV_COARSE = 1.0;
+public static const float CLOUD_BILLOW_DIV_COARSE = 2.0;
 public static const float CLOUD_BILLOW_DIV_FINE = 0.25;
 // Vertical lattice period of the 3D detail hash, in cells. The horizontal axes wrap at
 // CLOUD_PERIOD_CELLS because the anchor wraps; the vertical axis has no anchor to wrap (it is measured
@@ -241,6 +246,9 @@ public static const float CLOUD_BILLOW_DIV_FINE = 0.25;
 // slab the model ever pushes.
 public static const int   CLOUD_VERTICAL_CELLS = 256;
 public static const int   CLOUD_VERTICAL_MASK = CLOUD_VERTICAL_CELLS - 1;
+// How far the clustering mask may shift the coverage threshold up or down (§4.1): the width of the
+// sky's size distribution — 0 gives every cloud the same skirt and the same size.
+public static const float CLOUD_COVERAGE_CLUSTER = 0.5;
 // ---- Genus model. The three shapes the real sky shows at this altitude, and the coverage/weather
 // that selects between them (WMO genera; base heights and depths are mid-latitude values):
 //   * SHEET — stratocumulus / stratus, and nimbostratus once it precipitates. Continuous, shallow
@@ -255,6 +263,16 @@ public static const int   CLOUD_VERTICAL_MASK = CLOUD_VERTICAL_CELLS - 1;
 // sun and its thickened air are one reading of one state.
 public static const float CLOUD_SHEET_COVERAGE_LO = 0.55;
 public static const float CLOUD_SHEET_COVERAGE_HI = 0.92;
+// How DEEP the deck is, in blocks, per genus — and note what is NOT here: no slider. A fair-weather
+// cumulus is a few hundred blocks wide and half that deep, an overcast sheet is a shallow lid and a
+// storm tower fills the sky; those depths are a property of the genus, so the volumetric deck derives
+// its slab from the same coverage/weather reading that picks the profile, and the thickness option
+// shapes only the classic boxes (the options screen says exactly that). Deriving it here instead of
+// pushing it from Java keeps the depth and the profile one reading of one state, which is the same
+// reason the genus model exists at all.
+public static const float CLOUD_DECK_DEPTH_HEAP = 165.0;
+public static const float CLOUD_DECK_DEPTH_SHEET = 64.0;
+public static const float CLOUD_DECK_DEPTH_TOWER = 210.0;
 // Height-profile endpoints per genus, as fractions of the slab. BASE_RAMP is how fast density comes in
 // above the condensation level (a cumulus base is sharp, a stratus base frays into mist); CROWN_START
 // is where the top begins to round off. Measured liquid-water profiles of shallow convective layers
@@ -265,7 +283,7 @@ public static const float CLOUD_BASE_RAMP_SHEET = 0.22;
 public static const float CLOUD_CROWN_START_HEAP = 0.55;
 public static const float CLOUD_CROWN_START_SHEET = 0.48;
 public static const float CLOUD_CROWN_START_TOWER = 0.94;
-public static const float CLOUD_CROWN_ROUNDING = 0.26;
+public static const float CLOUD_CROWN_ROUNDING = 0.30;
 // Dense cores tower. The crown's height is lifted by the LOCAL coverage through this smoothstep, so a
 // bank develops cauliflower towers out of its thick parts while its wispy edges stay low and flat — and
 // so one sky holds low fringes, mid-height heaps and tall towers at once, each where its own density
@@ -279,7 +297,7 @@ public static const float CLOUD_TOWER_COVERAGE_HI = 0.90;
 public static const float CLOUD_CONVECTION_PEAK = 0.45;
 // How much wider a cloud gets around its belly than at its base/crown, for the heaped genus. Turns a
 // straight-sided extrusion into a rounded, bulging mass; a sheet has no belly, so it is scaled out.
-public static const float CLOUD_BULGE = 0.30;
+public static const float CLOUD_BULGE = 0.42;
 public static const float CLOUD_BELLY_HEIGHT = 0.42;
 // ---- Turbulent displacement. Real decks are sheared: wind speed and direction change with altitude,
 // so updrafts lean downwind and the crown curls while the base stays flat. Displacing the sample
@@ -311,13 +329,13 @@ public static const float CLOUD_WORLEY_REMAP_BIAS = -0.81;
 // cloud's interior stays solid — real cumulus cores reach 1-2 g m^-3 of liquid water while the fraying
 // edge is a fraction of that — and uniform erosion is what makes procedural cloud read as flat fluff.
 public static const float CLOUD_EROSION_EDGE = 0.75;
-public static const float CLOUD_EROSION_CROWN = 0.55;
-public static const float CLOUD_EROSION_BASE = 0.35;
+public static const float CLOUD_EROSION_CROWN = 0.70;
+public static const float CLOUD_EROSION_BASE = 0.45;
 // Edge sharpening exponent, wispy at the base and hard at the crown — the standard shaping control of
 // real-time cloud models:
 // > 1 thins the field (a fraying, mist-like underside), < 1 fattens it (a hard, well-defined top).
-public static const float CLOUD_EDGE_SHARPEN_BASE = 1.55;
-public static const float CLOUD_EDGE_SHARPEN_CROWN = 0.90;
+public static const float CLOUD_EDGE_SHARPEN_BASE = 1.75;
+public static const float CLOUD_EDGE_SHARPEN_CROWN = 0.80;
 // ---- Phase and powder.
 // Mie scattering by ~10 um droplets is strongly forward-peaked, with a very tight diffractive spike
 // sitting inside a broad glow, plus a weak backward lobe from internal reflection. Three HG lobes in a
@@ -338,7 +356,7 @@ public static const float CLOUD_PHASE_BACK = 0.20;
 // single scattering does not predict and whose absence is why cheap volumetric clouds look like flat
 // grey cotton. It relaxes toward the light — at a backlit edge what reaches the eye is the forward peak,
 // not absorption — or it eats the silver lining it exists to frame.
-public static const float CLOUD_POWDER_STRENGTH = 0.7;
+public static const float CLOUD_POWDER_STRENGTH = 0.85;
 public static const float CLOUD_POWDER_SUN_RELAX = 0.8;
 // ---- Aerial perspective. The air between the eye and the deck dims the deck's own scatter and puts
 // sky radiance in its place, which is why distant clouds lose contrast and take on the horizon's
@@ -553,6 +571,17 @@ public CloudWeather cloudWeather(WorldPush push) {
 }
 
 /**
+ * How deep the volumetric slab is, in blocks, for the current genus: heaps get a deck as deep as a
+ * fair-weather cumulus is tall, sheets a shallow lid, towers the whole convective layer. This is the
+ * depth the march integrates and every probe measures against — the volumetric deck's answer to "how
+ * thick is a cloud", asked of the sky instead of of a slider.
+ */
+float cloudDeckDepth(CloudWeather w) {
+    return lerp(lerp(CLOUD_DECK_DEPTH_HEAP, CLOUD_DECK_DEPTH_SHEET, w.sheet),
+                CLOUD_DECK_DEPTH_TOWER, w.convection);
+}
+
+/**
  * Raw coverage field in [0,1], before either style interprets it. Three octaves at INTEGER scales with
  * whole-cell offsets, so every octave shares the base period and the sum stays exactly periodic — see
  * the note on CLOUD_CELL_BLOCKS.
@@ -598,6 +627,14 @@ float cloudVolumetricCoverage(float coverage, float2 samplePos) {
         return 1.0; // a full storm is a full sky: no residue of pinholes under the threshold
     }
     float threshold = 1.0 - clamp(coverage, 0.0, 1.0);
+    // Clustering: a second, independent reading of the SAME lattice shifts the threshold up and down
+    // across the sky, so in one region neighbours merge into one big mass and in the next they shrink
+    // to scattered fragments with genuine clear air between the groups. A single global threshold
+    // gives every cloud the same soft skirt and the same size — a sky of evenly spaced puffs, which
+    // is not a sky. Same lattice space as the field itself, so the wrap identity is untouched.
+    float mask = cloudCoverageField(samplePos * (CLOUD_VOLUMETRIC_SCALE / CLOUD_SHAPE_DIV)
+            + float2(137.0, 291.0));
+    threshold = clamp(threshold + (mask - 0.5) * CLOUD_COVERAGE_CLUSTER, 0.0, 1.0);
     float shape = cloudCoverageField(samplePos * (CLOUD_VOLUMETRIC_SCALE / CLOUD_SHAPE_DIV));
     // Contrast, applied to the field BEFORE the threshold. A raw value-noise field is a Gaussian-ish wash
     // around 0.5, so thresholding it directly gives every cloud the same soft wide skirt and leaves no
@@ -1114,6 +1151,19 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     float height = hf * slabDepth;
     float open = 1.0 - w.sheet;
 
+    // ---- Per-cloud VIGOR: how far THIS parcel develops vertically, as a stretch on the height
+    // coordinate before the profile reads it. One low-frequency reading of the shape lattice, at its
+    // own offset, so neighbouring clouds draw different numbers: stretched past 1 the profile closes
+    // its dome low (a shallow humilis puddle), compressed below 1 the same profile closes high (a
+    // towering mediocris/congestus). Without it every cloud in the sky develops to the same fraction
+    // of the slab and the deck reads as one population of identical puffs — the other half of the
+    // "monte de algodão" complaint, the first half being opacity. A sheet is a layer rather than a
+    // population of parcels, so the term is scaled out by `sheet`.
+    float vigor = cloudNoise(samplePos * (CLOUD_VOLUMETRIC_SCALE / CLOUD_SHAPE_DIV)
+            + float2(71.0, 13.0));
+    float stretch = lerp(1.30, 0.72, smoothstep(0.30, 0.70, vigor));
+    hf = hf * lerp(stretch, 1.0, w.sheet);
+
     // ---- Height profile.
     //
     // The base is the lifting condensation level: below it the air is unsaturated and there is no cloud
@@ -1209,7 +1259,7 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     // Dense core: a cumulus interior reaches 1-2 g m^-3 of liquid water while its fraying edge is a
     // fraction of that, so coverage is super-linear toward the core rather than left flat. A field that
     // peaks at ~0.5 reads as haze no matter how deep the slab is.
-    float core = coverage * (0.85 + 0.75 * coverage);
+    float core = min(coverage * (1.15 + 0.65 * coverage), 1.0);
     return pow(clamp(core - erosion, 0.0, 1.0), sharpen) * profile;
 }
 
@@ -1407,6 +1457,16 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     result.transmittance = 1.0;
 
     float thickness = max(push.cloudAnchor.z, 1.0);
+    // The volumetric deck carries its own depth — genus-driven, see cloudDeckDepth — because how deep
+    // a cloud is belongs to the sky, not to a slider: the thickness option shapes the CLASSIC boxes'
+    // extrusion, and the volumetric clouds sub-screen replaces that row with a greyed-out explanation.
+    // Overriding it HERE, before the slab bounds, the crossing fade and the sigma normalisation are
+    // derived, keeps every consumer of `thickness` inside this march reading one number.
+    bool classic = cloudStyle(push) == CLOUD_STYLE_CLASSIC;
+    CloudWeather weather = cloudWeather(push);
+    if (!classic) {
+        thickness = cloudDeckDepth(weather);
+    }
     // Crossing EXCLUSION. The flat path fades the deck out as the camera passes through its nominal
     // thickness (cloudTrace's crossFade) so the transition reads as dissolving cloud instead of a
     // one-pixel flip between lit top and dark underside. The march had no equivalent: with the camera
@@ -1473,7 +1533,6 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     int stepCap = highQuality ? CLOUD_MARCH_STEPS_MAX : CLOUD_MARCH_STEPS_CHEAP_MAX;
     marchSteps = clamp(int((t1 - t0) / CLOUD_TARGET_STEP_BLOCKS), marchSteps, stepCap);
     float stepLen = (t1 - t0) / float(marchSteps);
-    bool classic = cloudStyle(push) == CLOUD_STYLE_CLASSIC;
     // Classic clouds are opaque boxes, not haze: they need a much higher extinction so a box saturates
     // within its own thickness instead of reading as translucent haze. Vanilla's clouds you cannot see
     // through, and that is the property being reproduced.
@@ -1500,7 +1559,6 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     // deck can disagree about what the sky is doing. The dither is per pixel and per frame (see
     // cloudDither) and offsets the march start, which is what turns the truncation banding into noise
     // the denoiser resolves.
-    CloudWeather weather = cloudWeather(push);
     float dither = cloudDither(push);
 
     CloudLight light;
@@ -1656,7 +1714,9 @@ public CloudVolume cloudSegment(WorldPush push, float3 originRel, float3 dir, fl
     //   * a (near) zero thickness collapses to the flat sheet, which is what that slider setting asks
     //     for. It shades like the classic deck of whichever style is active.
     bool classic = cloudStyle(push) == CLOUD_STYLE_CLASSIC;
-    if (push.cloudAnchor.z > CLOUD_FLAT_EPSILON) {
+    // The flat sheet is what a (near) zero THICKNESS asks for, and thickness is a classic knob: the
+    // volumetric deck always marches, at its own genus-driven depth, whatever the slider says.
+    if (push.cloudAnchor.z > CLOUD_FLAT_EPSILON || !classic) {
         if (classic && push.cloudCellsAddr != 0u) {
             return cloudClassicBoxes(push, originRel, dir, maxDistance, ambient);
         }

@@ -19,6 +19,13 @@ technique and the thing being imitated. One specific requirement came with it:
 > since clouds are no longer a PNG, the height slider must not control the distance from the ground, it
 > must control the *thickness* (grossura) of the cloud.
 
+The final revision of this PR supersedes half of it: the height slider keeps the first half (where
+the deck sits), but the volumetric deck's *thickness* is no longer a slider at all — how deep a cloud
+is comes from the genus model (§4.2) and from each parcel's own vigour (§4.3), because a global
+thickness was precisely the knob that made the deck read as a rectangle whose look depends on a
+slider. The thickness option now shapes only the classic boxes, and the volumetric clouds screen
+replaces that row with a greyed-out explanation saying exactly that.
+
 That requirement is about a distinction a flat texture cannot express. `clouds.png` was one plane: a
 single number described both how far away it was and how big the clouds looked. A modelled deck has two
 independent properties — **where the layer sits** and **how much cloud is in it** — so they are two
@@ -115,6 +122,12 @@ value-noise field is a Gaussian-ish wash around 0.5, so thresholding it directly
 same soft wide skirt and no clean air between neighbours — a sky of connected blobs. The contrast pass
 is what separates individual clouds with real gaps and crisp edges.
 
+A second, independent reading of the same lattice then shifts the THRESHOLD up and down across the sky
+(`CLOUD_COVERAGE_CLUSTER = 0.5`): in one region neighbours merge into one big mass, in the next they
+shrink to scattered fragments with genuine clear air between the groups. A single global threshold
+gives every cloud the same skirt and the same size — a sky of evenly spaced puffs, which is not a
+sky.
+
 It is **one function with three callers** (visible density, cloud-shadow query, flat-sheet fallback).
 That is a fix, not a tidy-up: the shadow and the density used to merge the weather fill differently, so
 in rain the deck stayed at the slider's coverage while its shadow closed the sky completely.
@@ -146,13 +159,19 @@ There is deliberately **no slider for any of this**. It is the same weather stat
 darkens the sky and thickens the fog, so a storm's deep grey deck, its dimmed light and its heavy air
 are one reading of one state.
 
+The genus also sets how DEEP the deck is: `cloudDeckDepth` returns 64 blocks for a sheet, 165 for
+heaps and 210 for towers, and the volumetric march takes that as its slab instead of the pushed
+thickness — the same one-reading-of-one-state argument as above, applied to the slab itself. A cloud's
+depth belongs to the sky that made it; §4.3 then develops each individual parcel inside that slab to
+its own height.
+
 ### 4.3 Height profile — flat base, crown that knows the genus
 
-* **Base** (`CLOUD_BASE_RAMP_HEAP = 0.07`, `SHEET = 0.22`): the lifting condensation level. Below it the
+* **Base** (`CLOUD_BASE_RAMP_HEAP = 0.06`, `SHEET = 0.22`): the lifting condensation level. Below it the
   air is unsaturated and there is no cloud at all, which is why every real deck has a flat bottom. A
   heap's base is sharp (one parcel that just reached saturation); a sheet's frays into mist (stratus
   forms by shallow cooling over a wide area, not by a rising parcel).
-* **Crown** (`HEAP = 0.55`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.26`, clamped to close at the
+* **Crown** (`HEAP = 0.55`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.30`, clamped to close at the
   slab top at the latest): where the top starts to round off, tuned against UE5's published height
   gradients (§3) — an ordinary cumulus domes at ~55–75% of the layer, a developing tower at the very top,
   an inversion-capped sheet at half. **Dense cores tower**: the *local* coverage lifts the crown through
@@ -163,10 +182,16 @@ are one reading of one state.
   The clamp on the fade's end is load-bearing: without it a tall crown's fade would finish *above* the
   slab and the deck would be sliced flat by its own ceiling, which is exactly the "straight top that
   follows the thickness slider" artefact this model exists to avoid.
-* **Belly bulge** (`CLOUD_BULGE = 0.30` at `CLOUD_BELLY_HEIGHT = 0.42`, heaps only): a cumulus is widest
+* **Belly bulge** (`CLOUD_BULGE = 0.42` at `CLOUD_BELLY_HEIGHT = 0.42`, heaps only): a cumulus is widest
   around its lower-middle and pulls in toward both base and crown, so the coverage is relaxed there and
   the same cloud grows sideways in its belly. A sheet has no belly, so the term is scaled out by
   `1 − sheet`.
+* **Vigour** — a per-cloud stretch of the height coordinate, `lerp(1.30, 0.72, …)` of one low-frequency
+  reading of the shape lattice at its own offset, scaled out by `sheet`. Stretched past 1 the profile
+  closes its dome low (a shallow humilis puddle); compressed below 1 the same profile closes high (a
+  towering mediocris). Two clouds with identical local coverage draw different numbers, so one sky
+  holds shallow and deep parcels side by side — without it every cloud develops to the same fraction
+  of the slab and the deck reads as one population of identical puffs.
 
 The profile is asymmetric on purpose (measured LWC ramps up from base, decays near the top); a symmetric
 lens is what makes a procedural deck read as a slab.
@@ -187,7 +212,8 @@ the anchor wrap may only sample fields that are periodic with it (§7). Altitude
 
 The erosion FBM is the **Perlin-Worley pair**, generated rather than sampled. A coarse **3D** billow
 octave (`cloudBillow3` = `1 − |2·noise₃ − 1|`, value noise folded into rounded lobes) at
-`CLOUD_BILLOW_DIV_COARSE = 1.0` — lobes 24 blocks across — carries the cauliflower, and a fine **Worley
+`CLOUD_BILLOW_DIV_COARSE = 2.0` — lobes 48 blocks across, a fifth of a cloud's width, which is the
+scale real cumulus cauliflower shows — carries the lobes, and a fine **Worley
 (cellular) F1** octave at `CLOUD_BILLOW_DIV_FINE = 0.25` — cells 6 blocks across — carves the crisp
 scoops between those lobes. Billow alone has soft boundaries everywhere, which is the "aerated cotton
 wool" read that separates a procedural deck from a real crown; cellular noise is what removes it. This
@@ -222,11 +248,14 @@ mist-like underside) to `0.90` at the crown (fattens → hard, well-defined top)
 
 ### 5.1 Extinction and albedo
 
-`CLOUD_EXTINCTION = 0.115` per block at unit density. With one block to a metre this sits at the top of
-the measured 0.005–0.1 m⁻¹ range *before* normalisation and comfortably inside it after, which is the
-point: it is not a look knob, it is the deck's optical depth per block of cloud. Vertical optical depth
-through a full deck works out at ~2.8 at mean density, so dense regions are effectively opaque (T ≈ 6%)
-while a wisp at density 0.1 is ~63% transmissive — the right split.
+`CLOUD_EXTINCTION = 0.42` per block at unit density. Measured water cloud is 0.005–0.1 m⁻¹ and a real
+cumulus is opaque because it is hundreds of metres deep (τ 30–100 straight up); this deck is a
+compressed sky a few tens of blocks deep, so it cannot buy that opacity with depth and buys it per
+block instead. At the physical per-metre value a core here reached τ ≈ 1–3 — see-through cotton wool
+with no shadowed underside, the single most visible difference between this constant and a cloud that
+reads as a cloud. At 0.42 a developed core sits at τ ≈ 7–15 (opaque body, dark base, silver lining at
+the rim) while a few blocks of fringe at low density still transmit, which is the core/wisp split real
+clouds show.
 
 `CLOUD_SINGLE_SCATTER_ALBEDO = 0.9995` follows the measured ω₀: scattering is essentially everything, so
 cloud darkness is path length. The small deficit is the only absorption the deck has, and precipitating
@@ -380,7 +409,10 @@ half a full density each.
 | whole deck too bright/dim | `CLOUD_SCATTER_GAIN` (§5.6 — calibrated, move it last) |
 | interiors grey/black again | `CLOUD_MULTI_SCATTER_OCTAVES`, `CLOUD_MULTI_SCATTER_FALLOFF` |
 | no silver lining on backlit edges | `CLOUD_HG_SILVER`, `CLOUD_PHASE_SILVER`, then `CLOUD_POWDER_SUN_RELAX` |
-| clouds too wispy / too solid | `CLOUD_EXTINCTION` (with `CLOUD_REFERENCE_THICKNESS` if the slider feels like opacity) |
+| clouds see-through / cotton-wool | `CLOUD_EXTINCTION` (optical depth per block; `CLOUD_REFERENCE_THICKNESS` normalises it by slab depth) |
+| deck too shallow / too deep for the genus | `CLOUD_DECK_DEPTH_HEAP/SHEET/TOWER` (§4.2) |
+| every cloud the same size | `CLOUD_COVERAGE_CLUSTER` (§4.1) |
+| every cloud the same height | vigour stretch (§4.3), then `CLOUD_TOWER_COVERAGE_LO/HI` |
 | lobes too small / too big | `CLOUD_BILLOW_DIV_COARSE`, `CLOUD_BILLOW_DIV_FINE` (power of two only!) |
 | crown reads as soft cotton wool, not aerated cauliflower | `CLOUD_DETAIL_FINE_WEIGHT`, `CLOUD_BILLOW_DIV_FINE` |
 | cellular scoops too soft / too jagged | `CLOUD_WORLEY_JITTER` (must stay < 1.0 — §4.5), then re-fit the remap mean |

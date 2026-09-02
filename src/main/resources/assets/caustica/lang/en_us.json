@@ -86,7 +86,7 @@
 	"caustica.options.rt.cloudHeight": "Cloud Height",
 	"caustica.options.rt.cloudHeight.tooltip": "World height the bottom of the clouds sits at. Vanilla's clouds sit at Y 192; the default here is higher because these clouds have real thickness, which makes a low deck feel much closer than vanilla's flat sheet. Raise it if the clouds feel too close to the ground. Measures the cloud base, so changing thickness does not move it.",
 	"caustica.options.rt.cloudThickness": "Cloud Thickness",
-	"caustica.options.rt.cloudThickness.tooltip": "How much bulk the clouds have - how deep the layer is from its base to its top. This is the cloud's size, not its position: where the deck sits is Cloud Height, and the two are independent. 0% makes them a flat sheet; higher values give real 3D depth you can fly into. Thicker clouds do not get more opaque (the shader normalises extinction by depth), so this changes their shape only - use Cloud Opacity for see-through. Classic clouds become solid boxes with bright tops and darker sides like vanilla's; volumetric clouds become deep cumulus, and within whatever depth you set the weather picks the type: storm towers fill it, fair-weather heaps round off below the top, an overcast sheet hugs the bottom. Thicker clouds cost more performance.",
+	"caustica.options.rt.cloudThickness.tooltip": "How much bulk the CLASSIC deck has - how deep its boxes are from base to top. 0% makes them a flat sheet; higher values give real 3D depth you can fly into, and thicker boxes cost a little more to draw. The Volumetric deck takes its depth from its own genus model instead (a fair-weather cumulus stays shallow, a storm tower fills the sky), so this slider is disabled in that style: where the deck sits is Cloud Height, and how see-through it is Cloud Opacity.",
 	"caustica.options.rt.cloudShadowStrength": "Cloud Shadows",
 	"caustica.options.rt.cloudShadowStrength.tooltip": "How much the cloud deck dims the sunlight and moonlight reaching the ground under it. 0% draws clouds that cast no shadow at all; 100% lets a solid cloud block the sun completely. Costs no extra rays.",
 	"caustica.options.rt.cloudOpacity": "Cloud Opacity",
@@ -305,5 +305,7 @@
 	"caustica.options.rt.fgEngine": "FG Engine",
 	"caustica.options.rt.fgEngine.tooltip": "Which frame-generation engine synthesizes the intermediate frames. Caustica Native interpolates with the path tracer's exact motion vectors on any GPU and supports up to 4x multipliers; AMD FSR 3.1 is the signed AMD runtime, a reference alternative fixed at 2x.",
 	"caustica.options.rt.fgEngine.native": "Caustica Native",
-	"caustica.options.rt.fgEngine.fsr31": "AMD FSR 3.1 (2x)"
+	"caustica.options.rt.fgEngine.fsr31": "AMD FSR 3.1 (2x)",
+	"caustica.options.rt.cloudThickness.volumetricUnavailable": "Cloud Thickness: Disabled (Volumetric Deck)",
+	"caustica.options.rt.cloudThickness.volumetricUnavailable.tooltip": "How deep a volumetric cloud is belongs to the cloud: a fair-weather cumulus stays shallow, a developing tower fills the sky, an overcast sheet is a shallow lid. The deck derives that depth from its genus model (coverage and weather), so a global thickness would fight the shape at every setting - which is exactly the \"rectangular slab\" look this style exists to avoid. This slider shapes the Classic deck only."
 }

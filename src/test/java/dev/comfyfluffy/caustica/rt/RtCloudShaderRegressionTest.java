@@ -188,6 +188,62 @@ final class RtCloudShaderRegressionTest {
     }
 
     /**
+     * The volumetric deck's depth is the GENUS model's, and the thickness slider is a classic knob.
+     *
+     * <p>A cloud's own shape deciding how far it develops is most of what separates a cloud from a
+     * rectangular slab: a fair-weather cumulus is a few hundred blocks wide and half that deep, an
+     * overcast sheet is a shallow lid, a storm tower fills the convective layer. A global thickness
+     * fights that at every setting — it is the knob that made the deck read as "a rectangle whose
+     * look depends on the slider" — so the volumetric march derives its slab from the same
+     * coverage/weather reading that picks the profile, and the classic boxes keep the slider because
+     * their extrusion genuinely is it.
+     *
+     * <p>Four guards: the march overrides the pushed thickness with {@code cloudDeckDepth} before any
+     * consumer of it (slab bounds, crossing fade, sigma normalisation) runs; the segment gate can no
+     * longer collapse the volumetric deck into the flat sheet at zero thickness; the three genus
+     * depths exist and are ordered sheet &lt; heap &lt; tower; and the classic path still reads the
+     * pushed value, so the slider did not lose its one real consumer.
+     */
+    @Test
+    void volumetricDepthIsGenusDrivenAndClassicKeepsTheSlider() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String march = slice(source, "public CloudVolume cloudMarch(",
+                "// ---- Opacity as a genuine ceiling");
+        String boxes = slice(source, "CloudVolume cloudClassicBoxes(", "// Slab entry/exit along the ray");
+
+        assertTrue(march.contains("thickness = cloudDeckDepth(weather);"),
+                "the volumetric march must replace the pushed thickness with the genus depth BEFORE "
+                        + "the slab bounds, the crossing fade and the sigma normalisation derive from "
+                        + "it, or those four consumers disagree about how deep the deck is");
+        assertTrue(source.contains("float cloudDeckDepth(CloudWeather w)"),
+                "the deck depth must be one function of the genus state, shared by every consumer");
+        double sheet = slangConst(source, "CLOUD_DECK_DEPTH_SHEET");
+        double heap = slangConst(source, "CLOUD_DECK_DEPTH_HEAP");
+        double tower = slangConst(source, "CLOUD_DECK_DEPTH_TOWER");
+        assertTrue(sheet < heap && heap < tower,
+                "genus depths must order sheet < heap < tower (got " + sheet + ", " + heap + ", "
+                        + tower + "): inverting them makes a storm shallower than fair weather");
+        assertTrue(source.contains("if (push.cloudAnchor.z > CLOUD_FLAT_EPSILON || !classic)"),
+                "a zero thickness must not collapse the volumetric deck into the flat sheet: the "
+                        + "sheet is what the classic slider's zero asks for, and only that");
+        assertTrue(boxes.contains("float thickness = max(push.cloudAnchor.z, 1.0);"),
+                "the classic boxes are extruded by exactly the pushed thickness — the slider keeps "
+                        + "its one real consumer");
+
+        String density =
+                slice(source, "float cloudVolumeDensity(WorldPush push", "float cloudSunOpticalDepth(");
+        assertTrue(density.contains("hf = hf * lerp(stretch, 1.0, w.sheet);"),
+                "each cloud must draw its own vertical development from a low-frequency field, or "
+                        + "every cloud in the sky closes its dome at the same fraction of the slab and "
+                        + "the deck reads as one population of identical puffs");
+        String coverage = slice(source, "float cloudVolumetricCoverage(", "/**\n * Coverage resolved");
+        assertTrue(coverage.contains("(mask - 0.5) * CLOUD_COVERAGE_CLUSTER"),
+                "the coverage threshold must wander across the sky, so neighbours merge into big "
+                        + "masses in one region and shrink to fragments in the next: a single global "
+                        + "threshold gives every cloud the same size");
+    }
+
+    /**
      * One sample is lit by THREE optical depths through a multi-scattering expansion.
      *
      * <p>Self-shadowing, ambient occlusion and ground bounce are three questions about three different
@@ -342,6 +398,14 @@ final class RtCloudShaderRegressionTest {
         int end = source.indexOf(endNeedle, start);
         assertTrue(end > start, "missing shader snippet end: " + endNeedle);
         return source.substring(start, end);
+    }
+
+    /** Parses a {@code public static const float NAME = ...;} out of clouds.slang. */
+    private static double slangConst(String source, String name) {
+        var m = java.util.regex.Pattern.compile("static const float " + name + " = ([\\d.]+);")
+                .matcher(source);
+        assertTrue(m.find(), "clouds.slang must define float " + name);
+        return Double.parseDouble(m.group(1));
     }
 
     private static int count(String source, String needle) {
