@@ -146,11 +146,12 @@ deck can disagree about what the sky is doing:
 * `sheet` = `smoothstep(0.55, 0.92, coverage)` — a closed sky is a **sheet**; a scattered one is heaps.
   That is how the real sky behaves, so the coverage slider now changes cloud *genus* and not merely
   density.
-* `convection` = `max(0.45 · 4c(1−c) · (1−sheet), thunder)` — vertical development peaks on a sunny day
+* `convection` = `max(0.30 · 4c(1−c) · (1−sheet), thunder)` — vertical development peaks on a sunny day
   building cumulus, and in thunderstorms, where the tower *is* the storm. An overcast sheet suppresses
-  it: nothing is being heated from below. The 0.45 is calibration, not taste: the raw parabola peaks at
-  1.0 for 50% coverage, which turns every scattered fair-weather sky into slab-filling congestus, while
-  the published cumulus height gradient (§3) closes its dome at about half the layer.
+  it: nothing is being heated from below. The 0.30 is calibration, not taste: the raw parabola peaks at
+  1.0 for 50% coverage, which turns every scattered fair-weather sky into slab-filling congestus — a
+  sky of COLUMNS — while the published cumulus height gradient (§3) closes its dome at about half the
+  layer.
 * `absorbing` = `rain · 0.55 + thunder · 0.45` — precipitating cloud adds extinction (§5.1). Droplets
   that grew large enough to fall no longer scatter cleanly, which is why a storm's underside reads
   grey-green rather than merely shadowed.
@@ -159,8 +160,8 @@ There is deliberately **no slider for any of this**. It is the same weather stat
 darkens the sky and thickens the fog, so a storm's deep grey deck, its dimmed light and its heavy air
 are one reading of one state.
 
-The genus also sets how DEEP the deck is: `cloudDeckDepth` returns 64 blocks for a sheet, 165 for
-heaps and 210 for towers, and the volumetric march takes that as its slab instead of the pushed
+The genus also sets how DEEP the deck is: `cloudDeckDepth` returns 64 blocks for a sheet, 128 for
+heaps and 192 for towers, and the volumetric march takes that as its slab instead of the pushed
 thickness — the same one-reading-of-one-state argument as above, applied to the slab itself. A cloud's
 depth belongs to the sky that made it; §4.3 then develops each individual parcel inside that slab to
 its own height.
@@ -171,14 +172,17 @@ its own height.
   air is unsaturated and there is no cloud at all, which is why every real deck has a flat bottom. A
   heap's base is sharp (one parcel that just reached saturation); a sheet's frays into mist (stratus
   forms by shallow cooling over a wide area, not by a rising parcel).
-* **Crown** (`HEAP = 0.55`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.30`, clamped to close at the
+* **Crown** (`HEAP = 0.48`, `TOWER = 0.94`, `SHEET = 0.48`, rounding `0.30`, clamped to close at the
   slab top at the latest): where the top starts to round off, tuned against UE5's published height
-  gradients (§3) — an ordinary cumulus domes at ~55–75% of the layer, a developing tower at the very top,
-  an inversion-capped sheet at half. **Dense cores tower**: the *local* coverage lifts the crown through
-  `smoothstep(0.35, 0.90, coverage)`, so the thick middle of a bank billows up into towers while its
-  wispy edges stay low and flat, and one sky holds low fringes, mid heaps and tall towers at once. That
-  coupling — nonlinear, so different clouds in one sky get different heights — is most of why the result
-  reads as a field of individual clouds instead of one extruded slab.
+  gradients (§3) — an ordinary cumulus domes at ~half the layer, a developing tower at the very top, an
+  inversion-capped sheet at half. **Dense cores tower, but with a ceiling**: the *local* coverage lifts
+  the crown through `smoothstep(0.45, 0.95, coverage)`, CAPPED at `CLOUD_CROWN_LIFT_MAX = 0.78` —
+  without the cap the lift runs to 1.0 and every dense core (which is all of them, cores being dense by
+  nature) closes its dome at the slab top, filling the sky with 150-block columns instead of clouds.
+  With it, one sky holds low fringes, mid heaps and tall cores at once, and only convection — storm, or
+  a sunny day building — carries a crown past 0.78 toward the tropopause. That coupling — nonlinear, so
+  different clouds in one sky get different heights — is most of why the result reads as a field of
+  individual clouds instead of one extruded slab.
   The clamp on the fade's end is load-bearing: without it a tall crown's fade would finish *above* the
   slab and the deck would be sliced flat by its own ceiling, which is exactly the "straight top that
   follows the thickness slider" artefact this model exists to avoid.
@@ -186,7 +190,7 @@ its own height.
   around its lower-middle and pulls in toward both base and crown, so the coverage is relaxed there and
   the same cloud grows sideways in its belly. A sheet has no belly, so the term is scaled out by
   `1 − sheet`.
-* **Vigour** — a per-cloud stretch of the height coordinate, `lerp(1.30, 0.72, …)` of one low-frequency
+* **Vigour** — a per-cloud stretch of the height coordinate, `lerp(1.25, 0.85, …)` of one low-frequency
   reading of the shape lattice at its own offset, scaled out by `sheet`. Stretched past 1 the profile
   closes its dome low (a shallow humilis puddle); compressed below 1 the same profile closes high (a
   towering mediocris). Two clouds with identical local coverage draw different numbers, so one sky

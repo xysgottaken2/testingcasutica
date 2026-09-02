@@ -270,9 +270,9 @@ public static const float CLOUD_SHEET_COVERAGE_HI = 0.92;
 // shapes only the classic boxes (the options screen says exactly that). Deriving it here instead of
 // pushing it from Java keeps the depth and the profile one reading of one state, which is the same
 // reason the genus model exists at all.
-public static const float CLOUD_DECK_DEPTH_HEAP = 165.0;
+public static const float CLOUD_DECK_DEPTH_HEAP = 128.0;
 public static const float CLOUD_DECK_DEPTH_SHEET = 64.0;
-public static const float CLOUD_DECK_DEPTH_TOWER = 210.0;
+public static const float CLOUD_DECK_DEPTH_TOWER = 192.0;
 // Height-profile endpoints per genus, as fractions of the slab. BASE_RAMP is how fast density comes in
 // above the condensation level (a cumulus base is sharp, a stratus base frays into mist); CROWN_START
 // is where the top begins to round off. Measured liquid-water profiles of shallow convective layers
@@ -280,7 +280,7 @@ public static const float CLOUD_DECK_DEPTH_TOWER = 210.0;
 // profile is asymmetric on purpose — a symmetric lens is what makes a procedural deck read as a slab.
 public static const float CLOUD_BASE_RAMP_HEAP = 0.06;
 public static const float CLOUD_BASE_RAMP_SHEET = 0.22;
-public static const float CLOUD_CROWN_START_HEAP = 0.55;
+public static const float CLOUD_CROWN_START_HEAP = 0.48;
 public static const float CLOUD_CROWN_START_SHEET = 0.48;
 public static const float CLOUD_CROWN_START_TOWER = 0.94;
 public static const float CLOUD_CROWN_ROUNDING = 0.30;
@@ -288,13 +288,19 @@ public static const float CLOUD_CROWN_ROUNDING = 0.30;
 // bank develops cauliflower towers out of its thick parts while its wispy edges stay low and flat — and
 // so one sky holds low fringes, mid-height heaps and tall towers at once, each where its own density
 // says it belongs. A linear lift cannot do that: it makes every cloud in the sky the same height.
-public static const float CLOUD_TOWER_COVERAGE_LO = 0.35;
-public static const float CLOUD_TOWER_COVERAGE_HI = 0.90;
+public static const float CLOUD_TOWER_COVERAGE_LO = 0.45;
+public static const float CLOUD_TOWER_COVERAGE_HI = 0.95;
+// Ceiling of the coverage-driven crown lift. Without a cap the lift runs to 1.0, and then almost every
+// dense core closes its dome at the slab top: the sky fills with 150-block COLUMNS instead of clouds,
+// because a cumulus core is dense by nature and the lift read that density as "tower". Real fair-weather
+// cores dome at 0.6-0.8 of a deck this deep; only convection (storm, or a sunny day building) takes the
+// crown past that, up to CLOUD_CROWN_START_TOWER.
+public static const float CLOUD_CROWN_LIFT_MAX = 0.78;
 // Clear-sky peak of the convection parabola. The raw parabola 4c(1-c) peaks at 1.0 for 50% coverage,
 // which would make every scattered fair-weather sky a slab-filling congestus; the published cumulus
 // height gradient closes its dome at about half the layer instead, so the clear-sky peak is scaled down
 // and thunderstorms (w.convection's other input) carry the full range on their own.
-public static const float CLOUD_CONVECTION_PEAK = 0.45;
+public static const float CLOUD_CONVECTION_PEAK = 0.30;
 // How much wider a cloud gets around its belly than at its base/crown, for the heaped genus. Turns a
 // straight-sided extrusion into a rounded, bulging mass; a sheet has no belly, so it is scaled out.
 public static const float CLOUD_BULGE = 0.42;
@@ -1161,7 +1167,7 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     // population of parcels, so the term is scaled out by `sheet`.
     float vigor = cloudNoise(samplePos * (CLOUD_VOLUMETRIC_SCALE / CLOUD_SHAPE_DIV)
             + float2(71.0, 13.0));
-    float stretch = lerp(1.30, 0.72, smoothstep(0.30, 0.70, vigor));
+    float stretch = lerp(1.25, 0.85, smoothstep(0.30, 0.70, vigor));
     hf = hf * lerp(stretch, 1.0, w.sheet);
 
     // ---- Height profile.
@@ -1173,13 +1179,13 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     float baseRamp = lerp(CLOUD_BASE_RAMP_HEAP, CLOUD_BASE_RAMP_SHEET, w.sheet);
     float bottom = smoothstep(0.0, baseRamp, hf);
 
-    // The crown is where the top starts rounding off. Heaps round at ~0.7 of the slab; towers fill it
-    // completely, because convection has no cap until it hits the tropopause; a sheet flattens at half,
-    // because the inversion that made it stops all vertical development. Dense cores tower — the LOCAL
-    // coverage lifts the crown, so the thick middle of a bank billows up into towers while its wispy
-    // edges stay low and flat. That one coupling is most of why the result reads as a field of
+    // The crown is where the top starts rounding off. Heaps round at ~0.5-0.8 of the slab (the cap on
+    // the lift is what keeps a dense core a CLOUD and not a column); towers fill it completely, because
+    // convection has no cap until it hits the tropopause; a sheet flattens at half, because the
+    // inversion that made it stops all vertical development. Dense cores tower — the LOCAL coverage
+    // lifts the crown, so the thick middle of a bank billows up above its wispy edges. That one coupling is most of why the result reads as a field of
     // individual clouds rather than as a single extruded slab.
-    float heapCrown = lerp(CLOUD_CROWN_START_HEAP, 1.0,
+    float heapCrown = lerp(CLOUD_CROWN_START_HEAP, CLOUD_CROWN_LIFT_MAX,
                            smoothstep(CLOUD_TOWER_COVERAGE_LO, CLOUD_TOWER_COVERAGE_HI, coverage));
     float crownStart = lerp(heapCrown, CLOUD_CROWN_START_TOWER, w.convection);
     crownStart = lerp(crownStart, CLOUD_CROWN_START_SHEET, w.sheet);
