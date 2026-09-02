@@ -44,15 +44,26 @@ rain made it darker but never made it a *different kind of cloud*.
 
 ## 3. Reference material
 
-**Photon** (`cumulus.glsl`, `coverage_map.glsl`, `common.glsl`, `parameters.glsl`, `settings.glsl`) — read
-as source. Taken from it: the density pipeline order (coverage → altitude shaping → detail erosion →
-edge sharpening → final height ramp); `edge_sharpening` as an exponent that thins or fattens the field;
-the optical-depth march with exponentially growing strides and a dithered start; the multi-octave
-scattering loop with `scatter *= falloff * powder`, `extinct *= 0.4`, `phase_g *= 0.8`,
-`powder = mix(powder, sqrt(powder), 0.5)`; three separate light probes (toward the sun/moon, toward the
-sky, and a ground term guessed from altitude fraction); the `min_transmittance` early exit; the
-two-scale coverage field; and per-cloud-type parameter sets rather than one global shape. Its phase
-function is a weighted sum of HG lobes, which is what this file uses too.
+**Photon** ([sixthsurge/photon](https://github.com/sixthsurge/photon)) — read as a working example of a
+shipping real-time cloud pass, which is the fastest way to see how the published techniques are actually
+assembled and what they cost. What was learned from looking at it, as *technique*: the order of the
+density pipeline (coverage → altitude shaping → detail erosion → edge sharpening → final height ramp);
+an edge-sharpening exponent that thins or fattens the field; the optical-depth march on exponentially
+growing strides with a dithered start; a per-bounce-order scattering loop that relaxes scattering,
+extinction, phase anisotropy and the powder term together; separate light probes for the celestial, the
+sky and the ground rather than one shadow march; an early exit once the medium saturates; a two-scale
+coverage field; and per-cloud-type parameter sets instead of one global shape.
+
+**No code was taken from it.** Nothing in this repository is derived from Photon's source: no file,
+function, expression, identifier, constant set or asset of its appears here, and the two implementations
+could not be further apart mechanically — Photon is GLSL for Iris/OptiFine-style loaders, sampling
+precomputed 3D noise and coverage textures through uniforms, while this module is Slang in Caustica's
+ray-tracing pipeline, reading `WorldPush` lanes and generating every field it samples from a periodic
+integer hash written here (`cloudHash3`/`cloudNoise3`/`cloudBillow3`), with no texture or sampler of any
+kind in the file. Photon's own license explicitly permits examining and learning from its source, which
+is all that was done; where this document names it, that is provenance of an idea and not of code. Every
+number below comes either from published literature or from a derivation in this repo (§5.6 calibrates
+the deck's brightness against the real sky rather than against another shader).
 
 **Horizon Zero Dawn's Nubis / Frostbite / Skybolt lineage** (Hillaare's *Physically Based Sky,
 Atmosphere and Cloud Rendering in Horizon Zero Dawn*, Wrenninge's multi-scattering writeups) — the
@@ -193,7 +204,7 @@ scattering by ~10 µm droplets is dominated by a very tight forward peak inside 
 backward lobe from diffraction and internal reflection. The tight peak *is* the silver lining on a
 backlit edge; the broad glow is the general sun-side brightening; the back lobe is what stops the shadow
 side collapsing into a silhouette. Weights sum to 1, so the mixture stays 4π-normalised and the expansion
-cannot invent energy. (Photon uses the same shape: `0.65·HG(g) + 0.10·HG(g2) + 0.25·HG(−g3)`.)
+cannot invent energy. A weighted sum of HG lobes is the usual cheap stand-in for a Mie table.
 
 ### 5.3 Three optical-depth probes
 
@@ -224,7 +235,7 @@ direction a little more). The geometric series converges, costs no extra march, 
 soft interior, a lit crown and a dark-but-not-black base into the deck.
 
 Per order: `scatterAmt *= 0.5`, `extinctAmt *= 0.4`, `phaseG *= 0.8`, `powder = lerp(powder, √powder, 0.5)`
-— the same relaxation schedule Photon uses.
+— the relaxation schedule the octave model was published with.
 
 ### 5.5 Powder
 
@@ -271,8 +282,7 @@ dissolving *into* the sky rather than by cloud being deleted at a line.
   dither bands across the screen — both halves are needed. The probe strides are jittered from the same
   value.
 * **Early exit** at `CLOUD_MIN_TRANSMITTANCE = 0.02`: past that the deck is opaque, nothing behind it can
-  show through, and every remaining sample is the most expensive thing in the loop. (Photon exits at
-  0.075.)
+  show through, and every remaining sample is the most expensive thing in the loop.
 * **Distance LOD.** The fine erosion octave fades out between `CLOUD_DETAIL_LOD_NEAR = 320` and
   `FAR = 1400` blocks. A 6-block lobe is sub-pixel past that, and the atmosphere has already washed the
   contrast out of it, so the hashes buy nothing.
@@ -312,8 +322,9 @@ dissolving *into* the sky rather than by cloud being deleted at a line.
 A full-quality step is one density evaluation (~40 hash lookups: 12 for the coverage octaves, 12 for the
 shear displacement, 8 per 3D erosion octave) plus a 6-stride sun probe plus two sky-probe steps, each
 probe sample being a shape-level density (~32 lookups). That is roughly **twice the previous model per
-pixel**, and it is the price of the look — Photon's own cloud pass is heavier still, because it samples a
-3D detail texture this module cannot have.
+pixel**, and it is the price of the look — texture-based cloud passes are heavier still, and they buy
+that budget back by sampling precomputed 3D noise instead of hashing it, which this module cannot do
+(§7.4).
 
 What keeps it affordable, in order of how much they save: the cheap tier on every diffuse bounce; the
 `density <= 0` skip, which avoids all three probes in empty air (most of a scattered deck); the
@@ -339,7 +350,7 @@ half a full density each.
 ## 10. Not done
 
 * **No 3D detail texture.** A Perlin-Worley shape atlas plus a Worley detail atlas (the industry
-  standard, and what Photon samples) would beat procedural hash noise on both quality and cost, but it
+  standard) would beat procedural hash noise on both quality and cost, but it
   needs a texture binding this module deliberately does not have (§7.4) and an asset pipeline to produce
   it.
 * **No curl noise** — approximated by shearing a scalar field (§4.4).

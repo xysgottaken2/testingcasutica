@@ -137,19 +137,22 @@ public static const float CLOUD_MAX_SLAB_CROSSINGS = 3.5;
 public static const int   CLOUD_MULTI_SCATTER_OCTAVES = 6;
 public static const int   CLOUD_MULTI_SCATTER_OCTAVES_CHEAP = 3;
 public static const float CLOUD_MULTI_SCATTER_FALLOFF = 0.5;
-// Per-octave relaxation of the EXTINCTION seen by each successive bounce (Photon's `extinct *= 0.4`)
-// and of the phase anisotropy (`phase_g *= 0.8`). Both express the same physics from two sides: after
-// several bounces a photon has travelled far inside the bank and its direction has been randomised, so
-// the remaining cloud in front of it matters less and its scattering is less directional.
+// Per-octave relaxation of the EXTINCTION seen by each successive bounce, and of the phase anisotropy.
+// These are the ratios the approximation was published with (Wrenninge's multi-scattering octave model;
+// the same schedule the Frostbite and Horizon Zero Dawn cloud implementations ship). Both express one
+// physics from two sides: after several bounces a photon has travelled far inside the bank and its
+// direction has been randomised, so the remaining cloud in front of it matters less and its scattering
+// is less directional.
 public static const float CLOUD_MULTI_SCATTER_EXTINCT_FALLOFF = 0.4;
 public static const float CLOUD_MULTI_SCATTER_PHASE_FALLOFF = 0.8;
-// How far each octave's powder term relaxes toward 1 (Photon's `powder = mix(powder, sqrt(powder), .5)`):
-// deep inside a bank, where several bounce orders have already contributed, the thin-edge darkening of
-// the single-scattering model no longer applies.
+// How far each octave's powder term relaxes toward 1: halfway to its own square root per order, which is
+// the relaxation the published octave model uses. Deep inside a bank, where several bounce orders have
+// already contributed, the thin-edge darkening of the single-scattering model no longer applies.
 public static const float CLOUD_POWDER_OCTAVE_RELAX = 0.5;
 // Stop marching once this little light is left to carry. Past it the remaining steps can add at most a
 // few percent of the deck's own brightness, and the samples are the expensive part (each one is a light
-// probe). Photon uses the same early exit at 0.075.
+// probe). Every real-time cloud march ships some form of this exit; the threshold trades the last few
+// percent of an already-saturated deck against the cost of its most expensive samples.
 public static const float CLOUD_MIN_TRANSMITTANCE = 0.02;
 // Overall in-scatter gain — and the one number here that was CALIBRATED rather than chosen, so it is
 // worth being precise about what it is calibrated against.
@@ -289,7 +292,8 @@ public static const float CLOUD_DETAIL_FINE_WEIGHT = 0.45;
 public static const float CLOUD_EROSION_EDGE = 0.75;
 public static const float CLOUD_EROSION_CROWN = 0.55;
 public static const float CLOUD_EROSION_BASE = 0.35;
-// Edge sharpening exponent, wispy at the base and hard at the crown (Photon's l0_edge_sharpening):
+// Edge sharpening exponent, wispy at the base and hard at the crown — the standard shaping control of
+// real-time cloud models:
 // > 1 thins the field (a fraying, mist-like underside), < 1 fattens it (a hard, well-defined top).
 public static const float CLOUD_EDGE_SHARPEN_BASE = 1.55;
 public static const float CLOUD_EDGE_SHARPEN_CROWN = 0.90;
@@ -301,7 +305,8 @@ public static const float CLOUD_EDGE_SHARPEN_CROWN = 0.90;
 //   * BROAD  — the general sun-side brightening of a lit cloud;
 //   * SILVER — the tight peak, which IS the silver lining on a backlit cloud edge;
 //   * BACK   — what stops the shadow side collapsing into a silhouette.
-// Photon uses the same three-lobe shape (0.65·HG(g) + 0.10·HG(g2) + 0.25·HG(−g3)).
+// A weighted sum of HG lobes is the usual cheap stand-in for a Mie table; three lobes is the minimum
+// that carries a forward peak, a broad glow and a back lobe at the same time.
 public static const float CLOUD_HG_G = 0.60;
 public static const float CLOUD_HG_SILVER = 0.88;
 public static const float CLOUD_HG_BACK = -0.22;
@@ -1115,7 +1120,7 @@ float cloudVolumeDensity(WorldPush push, CloudWeather w, float3 posRel, float he
     float erosion = erosionWeight * (detail >= CLOUD_DETAIL_COARSE ? erosionField : 0.5);
 
     // Edge sharpening: an exponent > 1 thins the field (a wispy, mist-like underside), < 1 fattens it (a
-    // hard, well-defined crown). This is Photon's l0_edge_sharpening, and it is what separates "soft
+    // hard, well-defined crown). This is the standard edge-sharpening exponent, and it is what separates "soft
     // grey blob" from "cloud with a crisp top and a fraying base".
     float sharpen = lerp(CLOUD_EDGE_SHARPEN_BASE, CLOUD_EDGE_SHARPEN_CROWN, hf);
 
@@ -1458,7 +1463,7 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
         if (result.transmittance < CLOUD_MIN_TRANSMITTANCE) {
             result.transmittance = 0.0;
             // The deck has gone opaque: nothing behind it can show through, and the remaining samples
-            // are the most expensive thing in this loop (each is a light probe). Photon exits at 0.075.
+            // are the most expensive thing in this loop (each is a light probe).
             break;
         }
         float3 p = originRel + dir * (marchStart + stepLen * float(i));
@@ -1502,8 +1507,8 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     // place, which is why distant clouds lose contrast and take on the horizon's colour instead of
     // simply vanishing. Blended over the same range as the density fade above, so the view-limit cutoff
     // is hidden by cloud dissolving INTO the sky rather than by cloud being deleted at a line. The target
-    // is the sky radiance behind the deck weighted by how much of it the deck blocked — the same
-    // transmittance-ratio blend Photon uses.
+    // is the sky radiance behind the deck weighted by how much of it the deck blocked — the ordinary
+    // transmittance-ratio blend for aerial perspective through any participating medium.
     if (!classic) {
         float aerial = CLOUD_AERIAL_STRENGTH
                 * smoothstep(CLOUD_DETAIL_LOD_NEAR, push.cloudAnchor.w, t0);
