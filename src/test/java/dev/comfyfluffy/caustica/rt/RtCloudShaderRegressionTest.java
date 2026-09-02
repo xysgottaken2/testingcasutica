@@ -81,12 +81,223 @@ final class RtCloudShaderRegressionTest {
                 "if (!cloudShadowReady) {");
     }
 
+    // ---- Volumetric deck model (docs/realistic-volumetric-clouds.md).
+    //
+    // These guard the parts of the light-transport model that are cheap to lose in a tuning pass and
+    // expensive to notice: each one names the artefact that comes back if the assertion fails.
+
+    /**
+     * The visible deck and the shadow it casts must read ONE coverage function.
+     *
+     * <p>They used to be evaluated twice with different inputs — the shadow merged the weather fill in,
+     * the density did not — so in rain the deck stayed at the slider's coverage while its shadow closed
+     * the sky completely. Nothing but this test stops that from being reintroduced by a "small" edit to
+     * either side.
+     */
+    @Test
+    void volumetricDensityAndCloudShadowReadOneCoverageField() throws IOException {
+        String source = Files.readString(CLOUDS);
+        assertEquals(1, count(source, "float cloudVolumetricCoverage("),
+                "the volumetric coverage ramp must be defined exactly once, so the deck and its shadow "
+                        + "cannot drift apart");
+        assertTrue(slice(source, "float cloudVolumeDensity(WorldPush push", "float cloudSunOpticalDepth(")
+                        .contains("cloudVolumetricCoverage(w.coverage, samplePos)"),
+                "the visible density must read the shared coverage ramp");
+        assertTrue(slice(source, "public float cloudCoverage(WorldPush push", "/** Where a ray meets the deck")
+                        .contains("return cloudVolumetricCoverage(retain + (1.0 - retain) * fill, samplePos);"),
+                "the shadow query must read the same ramp, weather fill included");
+    }
+
+    /**
+     * Erosion is sampled from a 3D lattice, and its vertical coordinate is measured from the DECK'S base.
+     *
+     * <p>Two separate regressions in one test. A 2D pattern times a height profile extrudes one flat
+     * picture through the whole depth, so the lobes line up vertically and the crown never breaks into
+     * individual heads — the single biggest tell of a procedural deck. And sampling the vertical axis
+     * from {@code posRel.y} (camera-relative) instead of from the slab base pins the cloud's internal
+     * structure to the EYE, so the deck swims as the camera rises or falls.
+     */
+    @Test
+    void erosionIsThreeDimensionalAndAnchoredToTheDeckBase() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String density = slice(source, "float cloudVolumeDensity(WorldPush push", "float cloudSunOpticalDepth(");
+
+        assertTrue(source.contains("float cloudHash3(int3 cell)"),
+                "the module needs its own 3D lattice hash (math.slang is not imported: it pulls in "
+                        + "world_core's bindings)");
+        assertTrue(density.contains("cloudBillow3(cloudDetailCoord(warpedXZ, warpedHeight"),
+                "erosion must be sampled from the 3D lattice at the displaced position, or the crown "
+                        + "stops breaking into cauliflower heads");
+        assertTrue(density.contains("float height = hf * slabDepth;"),
+                "the vertical noise coordinate must be height above the deck's own base");
+        assertFalse(density.contains("posRel.y"),
+                "the vertical noise coordinate must never be camera-relative, or the cloud's internal "
+                        + "structure swims past the eye as the camera changes altitude");
+    }
+
+    /**
+     * One sample is lit by THREE optical depths through a multi-scattering expansion.
+     *
+     * <p>Self-shadowing, ambient occlusion and ground bounce are three questions about three different
+     * directions; dropping any of them leaves the deck looking like lit cotton wool with a black
+     * underside. And without the octave expansion (each bounce order re-evaluating the same light terms
+     * with scattering, extinction and phase all relaxed toward isotropic) an optically thick medium
+     * renders as a flat grey silhouette — measured cloud optical depth is 12..92, so a photon really does
+     * scatter tens of times before it escapes.
+     */
+    @Test
+    void sampleLightingIntegratesThreeOpticalDepthsThroughTheOctaveExpansion() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String scatter = slice(source, "float3 cloudSampleScatter(WorldPush push",
+                "/** Result of a volumetric march");
+
+        assertInOrder(scatter,
+                "float sunOD = cloudSunOpticalDepth(",
+                "float skyOD = cloudSkyOpticalDepth(",
+                "float groundOD = cloudGroundOpticalDepth(",
+                "for (int order = 0; order < light.octaves; order++)",
+                "CLOUD_MULTI_SCATTER_FALLOFF",
+                "CLOUD_MULTI_SCATTER_EXTINCT_FALLOFF",
+                "CLOUD_MULTI_SCATTER_PHASE_FALLOFF");
+        for (String probe : new String[] {"float cloudSunOpticalDepth(", "float cloudSkyOpticalDepth(",
+                "float cloudGroundOpticalDepth("}) {
+            assertEquals(1, count(source, probe), probe + " must be defined exactly once");
+        }
+    }
+
+    /**
+     * The thickness slider adds BULK, not opacity.
+     *
+     * <p>Extinction is per unit length, so without the slab-depth normalisation the total optical depth
+     * grows with the deck's depth and the thickness control silently doubles as a second opacity slider
+     * — a deep deck goes solid white at the horizon while the opacity slider still says 20%. This is the
+     * shader half of the "thickness means grossura, not distance from the ground" requirement.
+     */
+    @Test
+    void thicknessControlsBulkRatherThanOpacity() throws IOException {
+        String march = slice(Files.readString(CLOUDS), "public CloudVolume cloudMarch(",
+                "// ---- Unified entry point");
+        assertTrue(march.contains("* (CLOUD_REFERENCE_THICKNESS / max(thickness, 1.0)) *"),
+                "extinction must be normalised by the slab depth, so raising the thickness slider adds "
+                        + "volume without making the deck more opaque");
+    }
+
+    /**
+     * The march start is dithered per pixel AND per frame.
+     *
+     * <p>A fixed sample pattern puts the truncation error at a fixed place: bands across the deck, rings
+     * at its edge, a step in every shadow terminator. Offsetting the start by a hash of the pixel index
+     * and the frame counter moves that error somewhere different every frame, which is what lets the
+     * temporal denoiser resolve it. Dropping either half of the seed is the usual mistake — pixel-only
+     * dither freezes the pattern into static, frame-only dither bands across the screen.
+     */
+    @Test
+    void marchIsDitheredPerPixelAndPerFrame() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String dither = slice(source, "float cloudDither(WorldPush push)", "float cloudVolumeDensity(");
+        assertTrue(dither.contains("DispatchRaysIndex().xy"),
+                "the dither must vary per pixel");
+        assertTrue(dither.contains("push.frameIndex"),
+                "the dither must rotate per frame, or it freezes into visible static");
+        assertTrue(slice(source, "public CloudVolume cloudMarch(", "// ---- Unified entry point")
+                        .contains("float marchStart = t0 + stepLen * dither;"),
+                "the march must actually start at the dithered offset");
+    }
+
+    /**
+     * Each step deposits the single-scattering albedo times the light the step ABSORBED.
+     *
+     * <p>For a homogeneous stride the exact integral is {@code S * (sigma_s/sigma_t) * (1 - e^-tau)},
+     * which is independent of the stride length. Accumulating {@code S * (1 - T)} without the albedo
+     * ratio instead makes the deck's brightness a property of the march resolution, so raising the step
+     * count brightens the clouds and a coarse step through thin cloud disagrees with a fine one through
+     * thick cloud — the fixed-count version banded for exactly this reason.
+     */
+    @Test
+    void stepIntegralIsEnergyConserving() throws IOException {
+        assertInOrder(slice(Files.readString(CLOUDS), "public CloudVolume cloudMarch(",
+                        "// ---- Unified entry point"),
+                "float sampleTransmittance = exp(-sigmaStep * stepLen);",
+                "(sigmaS / max(light.sigmaT, 1.0e-6))",
+                "* (1.0 - sampleTransmittance);");
+    }
+
+    /**
+     * Distant cloud fades INTO the sky rather than being deleted at the view limit.
+     *
+     * <p>The air between the eye and the deck dims the deck's own scatter and puts sky radiance in its
+     * place, which is why real distant clouds lose contrast and take on the horizon's colour. Without
+     * this the deck's cutoff is a visible line where cloud stops existing.
+     */
+    @Test
+    void distantDeckFadesIntoTheSkyInsteadOfBeingDeleted() throws IOException {
+        assertInOrder(slice(Files.readString(CLOUDS), "public CloudVolume cloudMarch(",
+                        "// ---- Unified entry point"),
+                "float aerial = CLOUD_AERIAL_STRENGTH",
+                "skyBehind * (1.0 - result.transmittance)");
+    }
+
+    /**
+     * The genus comes from lanes the frame ALREADY pushes, and only when weather lighting is on.
+     *
+     * <p>A storm's deep grey tower cloud, its dimmed sun and its thickened air must be one reading of one
+     * state. Reading the rain lanes unconditionally would make the deck change shape in dimensions and
+     * configurations where the rest of the renderer ignores weather, and hand-rolling a separate
+     * "storminess" would guarantee the two disagree.
+     */
+    @Test
+    void weatherPicksTheGenusFromTheLanesTheFrameAlreadyPushes() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String weather = slice(source, "public CloudWeather cloudWeather(WorldPush push)",
+                "public float cloudCoverageField(");
+        assertInOrder(weather,
+                "push.clouds.x",
+                "push.cloudColor.w",
+                "FEATURE_WEATHER_LIGHTING",
+                "push.weather.x",
+                "push.weather.y");
+        String density = slice(source, "float cloudVolumeDensity(WorldPush push", "float cloudSunOpticalDepth(");
+        assertTrue(density.contains("w.sheet") && density.contains("w.convection"),
+                "the height profile must be chosen by the genus, or every sky gets the same cloud shape");
+    }
+
+    /**
+     * The classic style keeps vanilla's flat face shading, and keeps the storm absorption out of it.
+     *
+     * <p>Classic clouds are meant to look like Minecraft's boxes, not like clouds, so the rework must not
+     * leak the volumetric light model into them. The absorption guard is the subtle half: classic already
+     * greys in rain through {@code push.cloudColor} (vanilla's own CLOUD_COLOR), so applying the
+     * volumetric storm extinction as well would darken the boxes twice for the same weather.
+     */
+    @Test
+    void classicStyleKeepsItsFlatVanillaShading() throws IOException {
+        String source = Files.readString(CLOUDS);
+        String march = slice(source, "public CloudVolume cloudMarch(", "// ---- Unified entry point");
+        assertInOrder(march,
+                "float classicFace = 1.0;",
+                "inScatter = push.cloudColor.xyz * CLOUD_INV_PI",
+                "(sunRadiance * classicFace * shade * 3.0 + skyBehind * 1.4);");
+        assertTrue(march.contains(
+                        "light.sigmaT = sigma * (classic ? 1.0 : 1.0 + weather.absorbing * CLOUD_STORM_ABSORPTION);"),
+                "storm absorption must stay volumetric-only or classic boxes darken twice in rain");
+        assertTrue(source.contains("cloudClassicBoxes(push, originRel, dir, maxDistance, ambient)"),
+                "the analytic classic box path must still be the one classic clouds take");
+    }
+
     private static String slice(String source, String startNeedle, String endNeedle) {
         int start = source.indexOf(startNeedle);
         assertTrue(start >= 0, "missing shader snippet start: " + startNeedle);
         int end = source.indexOf(endNeedle, start);
         assertTrue(end > start, "missing shader snippet end: " + endNeedle);
         return source.substring(start, end);
+    }
+
+    private static int count(String source, String needle) {
+        int occurrences = 0;
+        for (int at = source.indexOf(needle); at >= 0; at = source.indexOf(needle, at + 1)) {
+            occurrences++;
+        }
+        return occurrences;
     }
 
     private static void assertInOrder(String source, String... needles) {

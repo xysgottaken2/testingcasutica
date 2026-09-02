@@ -771,21 +771,42 @@ public final class CausticaConfig {
              *
              * <p>{@code classic} reproduces vanilla's flat, blocky deck: coverage is quantised to the
              * 12-block cell grid so the silhouette is genuinely square-edged, and the slab is shaded
-             * with vanilla's distinct top/side/bottom faces. {@code volumetric} extrudes the same
-             * coverage map into a ray-marched slab with self-shadowing and forward scattering — the
-             * look heavy shaderpacks produce, at a real GPU cost.
+             * with vanilla's distinct top/side/bottom faces. {@code volumetric} ray-marches a modelled
+             * water-cloud deck instead — a coverage field for where the layer is, a 3D-eroded height
+             * profile for the shape of each cloud, and a multi-scattering light model with separate sun,
+             * sky and ground-bounce optical depths. It is the look heavy shaderpacks produce, at a real
+             * GPU cost (roughly twice the previous volumetric model per pixel; see
+             * {@code docs/realistic-volumetric-clouds.md} for the budget and the physics).
              *
              * <p>Both styles read one shared coverage field, so switching does not move the clouds and
-             * the cloud shadows stay identical between them.
+             * the cloud shadows stay identical between them. The volumetric style additionally reads the
+             * weather to pick the cloud GENUS — a closed sheet when overcast, scattered heaps in fair
+             * weather, convective towers in a thunderstorm — so rain changes the shape of the sky and
+             * not merely its brightness.
              */
             public static final StringSetting CLOUD_STYLE =
                     string("caustica.rt.cloudStyle", "composite.cloud-style", "classic",
                             Composite::sanitizeCloudStyle);
             /**
-             * Cloud thickness, 0..1, as a fraction of {@link #CLOUD_MAX_THICKNESS_BLOCKS}.
+             * Cloud thickness — how much BULK the deck has, 0..1, as a fraction of
+             * {@link #CLOUD_MAX_THICKNESS_BLOCKS}.
+             *
+             * <p>This is the cloud's size, not its position: it sets how deep the layer is from its base
+             * to its crown. How far off the ground that base sits is {@link #CLOUD_HEIGHT}, and the two
+             * are deliberately independent — a deck can be thin and low, or a kilometre of storm cloud
+             * overhead, without either slider moving the other. That separation matters because clouds
+             * are no longer a flat texture stretched across the sky (the old PNG plane had exactly one
+             * number for both concepts): a modelled deck has real depth, and depth is what the light
+             * transport integrates over.
              *
              * <p>Volumetric: 0 is a flat sheet (the deck collapses to a plane and takes the cheap
-             * non-marched path); 1 is a deep bank. Classic: the slider scales the HEIGHT of vanilla's
+             * non-marched path); 1 is a deep bank. Raising it adds VOLUME without making the clouds more
+             * opaque — the shader normalises extinction by the slab depth ({@code
+             * CLOUD_REFERENCE_THICKNESS}), so a 110-block bank and a 20-block sheet reach the same
+             * optical depth straight down and the slider controls shape alone, with see-through left to
+             * {@link #CLOUD_OPACITY}. Within whatever depth is set here, the weather picks the genus: a
+             * storm's towers fill the whole slab, fair-weather heaps round off at about 70% of it, and an
+             * overcast sheet hugs the lower half. Classic: the slider scales the HEIGHT of vanilla's
              * authored cell boxes, floored at vanilla's own 4-block extrusion — classic clouds are
              * always real boxes with lit tops and shaded sides, never thinner than the game draws them.
              */
@@ -813,6 +834,10 @@ public final class CausticaConfig {
              * higher because Caustica's clouds have real thickness and a deck whose base is at vanilla
              * height reads as much closer to the ground than vanilla's flat sheet does.
              *
+             * <p>Position only: this is where the deck is, never how big it is — that is
+             * {@link #CLOUD_THICKNESS}. The deck grows UPWARD from this Y (RtComposite pushes the slab's
+             * centre, so raising the thickness does not sink the base the player is looking at).
+             *
              * <p>Exposed as a slider: with volumetric clouds the deck's distance is a strong part of the
              * look, and the right value depends on the world's terrain height and the player's taste.
              * The range comfortably spans from just above build height to far overhead.
@@ -822,6 +847,14 @@ public final class CausticaConfig {
             /**
              * Fraction of the sky the deck covers in clear weather. Rain drives this toward fully
              * overcast on top of whatever is set here (see {@code RtComposite.cloudState}).
+             *
+             * <p>In the volumetric style this also picks the cloud GENUS, because that is what coverage
+             * means in the real sky: a scattered field (low values) is fair-weather cumulus — individual
+             * heaps with clear air between them and a flat base at the condensation level — while a
+             * closed sky (above roughly 55%, fully by 92%) is stratocumulus or stratus, a shallow
+             * continuous sheet that stops developing vertically. So the slider changes the SHAPE of the
+             * clouds and not merely their density; the classic style quantises the same value against
+             * vanilla's authored cell map instead.
              */
             public static final FloatSetting CLOUD_COVERAGE =
                     clampedFloat("caustica.rt.cloudCoverage", "composite.cloud-coverage", 0.55f, 0.0f, 1.0f);

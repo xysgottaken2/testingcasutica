@@ -443,25 +443,33 @@ public final class RtComposite {
     // snapped the entire cloudscape to a different pattern — clouds visibly changing shape while
     // walking, in the volumetric style only.
     //
-    // The wrap must therefore be a whole period in EVERY space the field is sampled in: the base
-    // octaves, the domain warp, and both billow layers. The binding constraint is the largest octave
-    // divisor (CLOUD_WARP_DIV = 2.0 in clouds.slang):
+    // The wrap must therefore be a whole period in EVERY space the field is sampled in: the coverage
+    // octaves, the turbulent displacement, and both 3D erosion octaves. The binding constraint is the
+    // largest octave divisor — CLOUD_SHAPE_DIV and CLOUD_WARP_DIV, both 2.0 in clouds.slang:
     //
     //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) / scale(0.5) = 24576 blocks
     //
     // Every divisor there is a power of two, so all of these multiplies are exact in binary floating
-    // point and the wrap identity holds bit-for-bit rather than approximately. Verified: the full
-    // density function (base octaves + warp + billow) is now identical across a wrap to 0.0.
+    // point and the wrap identity holds bit-for-bit rather than approximately, and 24576 is an integer
+    // multiple of every smaller octave's own period (the erosion layers at 12288 and 3072). Verified: the
+    // full density function (coverage + displacement + 3D erosion) is identical across a wrap to 0.0.
+    // RtCloudPeriodMirrorTest re-derives this from the shader's constants so the two cannot drift.
     private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0 / 0.5;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
-    // Deck thickness at the slider's 100%. Both styles march a real slab now, so this is the depth the
-    // clouds actually have in the world: at full thickness a bank is tall enough to fly into, while the
-    // slider at 0 collapses the deck to the old flat plane.
+    // Deck thickness at the slider's 100%: the BULK of the cloud layer, i.e. how deep the slab the
+    // shader marches is. This is the cloud's size, never its altitude (that is CLOUD_HEIGHT, which sets
+    // the base) — a distinction that only exists because the deck stopped being a flat texture.
+    // At full thickness a bank is deep enough to fly into; at 0 it collapses to the old flat plane.
     // Real cumulus is as tall as it is wide, often taller — a bank whose base sits at cloud height can
     // easily tower 100+ blocks. 40 was too shallow for the deck to ever read as heaped rather than
-    // layered, and since extinction is now normalised by the slab depth (CLOUD_REFERENCE_THICKNESS in
+    // layered, and since extinction is normalised by the slab depth (CLOUD_REFERENCE_THICKNESS in
     // clouds.slang) raising this adds VOLUME without making the clouds more opaque.
+    //
+    // The weather does not change this number: the player's slider stays the size budget, and the genus
+    // model in clouds.slang decides how much of the budget a given sky actually uses — storm towers fill
+    // the slab, fair-weather heaps round off at ~70% of it, an overcast sheet hugs the lower half. So a
+    // storm reads as deeper cloud without ever overriding the setting.
     private static final float CLOUD_MAX_THICKNESS_BLOCKS = 110.0f;
     // Classic boxes never get thinner than vanilla's own 4-block extrusion (CloudRenderer's
     // putVec3(12, 4, 12)): the thickness slider scales the box HEIGHT from that baseline up, per the
