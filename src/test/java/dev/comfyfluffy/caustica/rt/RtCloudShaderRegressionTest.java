@@ -198,11 +198,13 @@ final class RtCloudShaderRegressionTest {
      * coverage/weather reading that picks the profile, and the classic boxes keep the slider because
      * their extrusion genuinely is it.
      *
-     * <p>Four guards: the march overrides the pushed thickness with {@code cloudDeckDepth} before any
-     * consumer of it (slab bounds, crossing fade, sigma normalisation) runs; the segment gate can no
-     * longer collapse the volumetric deck into the flat sheet at zero thickness; the three genus
-     * depths exist and are ordered sheet &lt; heap &lt; tower; and the classic path still reads the
-     * pushed value, so the slider did not lose its one real consumer.
+     * <p>Five guards: the march picks the genus depth instead of the pushed one before any consumer of
+     * it (slab bounds, crossing fade, sigma normalisation) runs; the slab BASE is recovered from the
+     * pushed centre and the PUSHED depth, so the floor stays at the altitude the height option
+     * promises instead of drifting with a slider the volumetric style no longer reads; the segment
+     * gate can no longer collapse the volumetric deck into the flat sheet at zero thickness; the three
+     * genus depths exist and are ordered sheet &lt; heap &lt; tower; and the classic path still reads
+     * the pushed value, so the slider did not lose its one real consumer.
      */
     @Test
     void volumetricDepthIsGenusDrivenAndClassicKeepsTheSlider() throws IOException {
@@ -211,10 +213,15 @@ final class RtCloudShaderRegressionTest {
                 "// ---- Opacity as a genuine ceiling");
         String boxes = slice(source, "CloudVolume cloudClassicBoxes(", "// Slab entry/exit along the ray");
 
-        assertTrue(march.contains("thickness = cloudDeckDepth(weather);"),
-                "the volumetric march must replace the pushed thickness with the genus depth BEFORE "
-                        + "the slab bounds, the crossing fade and the sigma normalisation derive from "
-                        + "it, or those four consumers disagree about how deep the deck is");
+        assertTrue(march.contains("float thickness = classic ? pushedDepth : cloudDeckDepth(weather);"),
+                "the volumetric march must take the genus depth instead of the pushed thickness "
+                        + "BEFORE the slab bounds, the crossing fade and the sigma normalisation derive "
+                        + "from it, or those consumers disagree about how deep the deck is");
+        assertTrue(march.contains("float slabBottom = push.clouds.w - pushedDepth * 0.5 - originRel.y;"),
+                "the deck's base must be recovered from the pushed centre and the PUSHED depth, never "
+                        + "from the genus depth: centring the genus slab on the pushed centre let the "
+                        + "floor float tens of blocks above the configured height, drifting with a "
+                        + "slider the volumetric style does not even read");
         assertTrue(source.contains("float cloudDeckDepth(CloudWeather w)"),
                 "the deck depth must be one function of the genus state, shared by every consumer");
         double sheet = slangConst(source, "CLOUD_DECK_DEPTH_SHEET");

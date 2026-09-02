@@ -1456,17 +1456,21 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     result.scatter = float3(0.0, 0.0, 0.0);
     result.transmittance = 1.0;
 
-    float thickness = max(push.cloudAnchor.z, 1.0);
+    float pushedDepth = max(push.cloudAnchor.z, 1.0);
     // The volumetric deck carries its own depth — genus-driven, see cloudDeckDepth — because how deep
     // a cloud is belongs to the sky, not to a slider: the thickness option shapes the CLASSIC boxes'
     // extrusion, and the volumetric clouds sub-screen replaces that row with a greyed-out explanation.
-    // Overriding it HERE, before the slab bounds, the crossing fade and the sigma normalisation are
-    // derived, keeps every consumer of `thickness` inside this march reading one number.
     bool classic = cloudStyle(push) == CLOUD_STYLE_CLASSIC;
     CloudWeather weather = cloudWeather(push);
-    if (!classic) {
-        thickness = cloudDeckDepth(weather);
-    }
+    float thickness = classic ? pushedDepth : cloudDeckDepth(weather);
+    // The BASE is what the height option promises. Java centres the pushed slab on push.clouds.w
+    // (centre = configured base + pushedDepth/2), so the base is recovered from the PUSHED pair —
+    // never from the genus depth — and the deck's floor stays exactly at the altitude the player
+    // chose. Centring the genus slab on the pushed centre instead let the base drift with a slider
+    // the volumetric style no longer even reads: with a saved high thickness the floor floated tens
+    // of blocks above the configured height, which is the "clouds too high" report this line fixes.
+    float slabBottom = push.clouds.w - pushedDepth * 0.5 - originRel.y;
+    float slabTop = slabBottom + thickness;
     // Crossing EXCLUSION. The flat path fades the deck out as the camera passes through its nominal
     // thickness (cloudTrace's crossFade) so the transition reads as dissolving cloud instead of a
     // one-pixel flip between lit top and dark underside. The march had no equivalent: with the camera
@@ -1477,15 +1481,12 @@ public CloudVolume cloudMarch(WorldPush push, float3 originRel, float3 dir, floa
     // slab itself is optically excluded inside the crossing region: sigma scales by the same crossFade
     // curve the flat path uses, so both extinction AND the in-scatter it feeds collapse together, and
     // at the mid-plane the deck contributes exactly nothing while the camera crosses it.
-    float deckRel = push.clouds.w - originRel.y;
+    float deckRel = slabBottom + thickness * 0.5; // this slab's own mid-plane, origin-relative
     float halfThickness = max(thickness, 0.5) * 0.5;
     float crossFade = smoothstep(halfThickness * 0.5, halfThickness * 1.5, abs(deckRel));
     if (crossFade <= 0.0) {
         return result;
     }
-    float slabBottom = push.clouds.w - thickness * 0.5 - originRel.y;
-    float slabTop = push.clouds.w + thickness * 0.5 - originRel.y;
-
     // Slab entry/exit along the ray. A near-horizontal ray inside the slab would march forever, so it
     // is bounded by the view limit like every other ray.
     float t0, t1;

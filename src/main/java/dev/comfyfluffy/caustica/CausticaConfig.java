@@ -799,16 +799,14 @@ public final class CausticaConfig {
              * number for both concepts): a modelled deck has real depth, and depth is what the light
              * transport integrates over.
              *
-             * <p>Volumetric: 0 is a flat sheet (the deck collapses to a plane and takes the cheap
-             * non-marched path); 1 is a deep bank. Raising it adds VOLUME without making the clouds more
-             * opaque — the shader normalises extinction by the slab depth ({@code
-             * CLOUD_REFERENCE_THICKNESS}), so a 110-block bank and a 20-block sheet reach the same
-             * optical depth straight down and the slider controls shape alone, with see-through left to
-             * {@link #CLOUD_OPACITY}. Within whatever depth is set here, the weather picks the genus: a
-             * storm's towers fill the whole slab, fair-weather heaps round off at about 70% of it, and an
-             * overcast sheet hugs the lower half. Classic: the slider scales the HEIGHT of vanilla's
+             * <p>Volumetric: this slider does NOT apply — how deep a volumetric cloud is belongs to the
+             * genus model ({@code cloudDeckDepth} in clouds.slang: 64 blocks of sheet, 165 of heap, 210
+             * of tower), because a global thickness was precisely the knob that made the deck read as a
+             * rectangle whose look depends on a slider, and the clouds sub-screen replaces the row with
+             * a greyed-out explanation in that style. Classic: the slider scales the HEIGHT of vanilla's
              * authored cell boxes, floored at vanilla's own 4-block extrusion — classic clouds are
-             * always real boxes with lit tops and shaded sides, never thinner than the game draws them.
+             * always real boxes with lit tops and shaded sides, never thinner than the game draws them,
+             * and 0 collapses them to the flat sheet.
              */
             public static final FloatSetting CLOUD_THICKNESS =
                     clampedFloat("caustica.rt.cloudThickness", "composite.cloud-thickness", 0.5f, 0.0f, 1.0f);
@@ -830,20 +828,22 @@ public final class CausticaConfig {
             public static final FloatSetting CLOUD_OPACITY =
                     clampedFloat("caustica.rt.cloudOpacity", "composite.cloud-opacity", 0.9f, 0.0f, 1.0f);
             /**
-             * World Y the BASE of the cloud deck sits at. Vanilla's clouds sit at 192; the default is
-             * higher because Caustica's clouds have real thickness and a deck whose base is at vanilla
-             * height reads as much closer to the ground than vanilla's flat sheet does.
+             * World Y the BASE of the cloud deck sits at. Vanilla's clouds sit at 192; the default sits
+             * a little above that because a modelled deck has real depth overhead and a base at exactly
+             * vanilla height reads as looming over tall terrain.
              *
-             * <p>Position only: this is where the deck is, never how big it is — that is
-             * {@link #CLOUD_THICKNESS}. The deck grows UPWARD from this Y (RtComposite pushes the slab's
-             * centre, so raising the thickness does not sink the base the player is looking at).
+             * <p>Position only: this is where the deck's FLOOR is, never how big it is. The volumetric
+             * march recovers exactly this Y as its slab base (Java pushes the slab's centre, and the
+             * shader subtracts half the pushed depth), so the floor does not drift with anything else —
+             * not with the genus depth, not with the classic-only thickness. The deck grows UPWARD from
+             * it, by as much as its genus says.
              *
              * <p>Exposed as a slider: with volumetric clouds the deck's distance is a strong part of the
              * look, and the right value depends on the world's terrain height and the player's taste.
              * The range comfortably spans from just above build height to far overhead.
              */
             public static final FloatSetting CLOUD_HEIGHT =
-                    clampedFloat("caustica.rt.cloudHeight", "composite.cloud-height", 320.0f, 128.0f, 1024.0f);
+                    clampedFloat("caustica.rt.cloudHeight", "composite.cloud-height", 224.0f, 128.0f, 1024.0f);
             /**
              * Fraction of the sky the deck covers in clear weather. Rain drives this toward fully
              * overcast on top of whatever is set here (see {@code RtComposite.cloudState}).
