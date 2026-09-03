@@ -125,17 +125,22 @@ public final class RtSubScreens {
     }
 
     /**
-     * The cloud deck: style, coverage, altitude, thickness, shadow and opacity. Flipping the style
-     * reopens the screen: the coverage slider only drives the volumetric deck, so in classic mode it
-     * swaps to {@link RtVideoOptions#cloudCoverageDisabledHint()}'s disabled placeholder (null in
-     * volumetric mode — the row simply vanishes).
+     * The cloud deck: style, coverage, altitude, thickness/genus, shadow and opacity. Flipping the style
+     * reopens the screen, because two of the rows belong to one style each and swap to a disabled
+     * placeholder in the other: the coverage slider only drives the volumetric deck
+     * ({@link RtVideoOptions#cloudCoverageDisabledHint()} explains why in classic mode), and the
+     * thickness slider only drives the classic deck — the volumetric deck's depth is derived from the
+     * weather and the sun, so {@link RtVideoOptions#cloudThicknessDisabledHint()} takes its place there
+     * and Cloud Development is offered instead. Each hint returns null in the mode where its slider is
+     * live, so exactly one of the two rows is ever greyed out.
      */
     public static RtSettingsSubScreen clouds(Screen parent) {
         return new RtSettingsSubScreen(parent, options(),
                 Component.translatable("caustica.options.rt.cloudsHeader"),
                 cloudsSettings(), RtSubScreens::clouds,
                 reopen -> List.of(RtSettingsSubScreen.Section.of(null, RtVideoOptions.cloudOptions(reopen),
-                        RtVideoOptions.cloudCoverageDisabledHint())));
+                        RtVideoOptions.cloudCoverageDisabledHint(),
+                        RtVideoOptions.cloudThicknessDisabledHint())));
     }
 
     /**
@@ -295,6 +300,7 @@ public final class RtSubScreens {
                 CausticaConfig.Rt.Composite.CLOUD_COVERAGE,
                 CausticaConfig.Rt.Composite.CLOUD_HEIGHT,
                 CausticaConfig.Rt.Composite.CLOUD_THICKNESS,
+                CausticaConfig.Rt.Composite.CLOUD_GENUS,
                 CausticaConfig.Rt.Composite.CLOUD_SHADOW_STRENGTH,
                 CausticaConfig.Rt.Composite.CLOUD_OPACITY);
     }

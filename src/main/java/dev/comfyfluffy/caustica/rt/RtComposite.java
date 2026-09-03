@@ -437,36 +437,45 @@ public final class RtComposite {
     private static final float NRD_DENOISING_RANGE = 500000.0f;
     // ---- Cloud deck. These mirror clouds.slang and must stay in lock-step with it.
     //
-    // The classic field repeats every CLOUD_CELL_BLOCKS * CLOUD_PERIOD_CELLS = 12 * 512 = 6144 blocks,
-    // but the VOLUMETRIC field samples the same hash at CLOUD_VOLUMETRIC_SCALE (0.5), so in its own
-    // sampled space 6144 blocks is only half a period. Wrapping the anchor there landed mid-period and
-    // snapped the entire cloudscape to a different pattern — clouds visibly changing shape while
-    // walking, in the volumetric style only.
+    // THE PERIODICITY CONTRACT. Every hash in clouds.slang wraps its lattice index to
+    // CLOUD_PERIOD_CELLS (512), which makes each noise octave exactly periodic over
+    // 512 * (its lattice size in blocks). The anchor pushed below is reduced modulo this constant, both
+    // to fold in the wind scroll (which grows without bound with world time) and to keep the anchor a
+    // small float far from a world border's 30M-block coordinates. That wrap is only seamless if the
+    // wrap distance is a WHOLE NUMBER of every period the deck is sampled in at once:
     //
-    // The wrap must therefore be a whole period in EVERY space the field is sampled in: the base
-    // octaves, the domain warp, and both billow layers. The binding constraint is the largest octave
-    // divisor (CLOUD_WARP_DIV = 2.0 in clouds.slang):
+    //     volumetric field   512 cells * CLOUD_LATTICE_MAX_BLOCKS(512) = 262144 blocks
+    //     classic cell map   CLOUD_CELL_MAP_CELLS(256) * CLOUD_CELL_BLOCKS(12) = 3072 blocks
+    //     classic fallback   CLOUD_PERIOD_CELLS(512) * CLOUD_CELL_BLOCKS(12) = 6144 blocks
     //
-    //     period = 512 cells * 12 blocks/cell * maxDivisor(2.0) / scale(0.5) = 24576 blocks
+    //     wrap = lcm(262144, 3072) = lcm(2^18, 2^10 * 3) = 2^18 * 3 = 786432 blocks
     //
-    // Every divisor there is a power of two, so all of these multiplies are exact in binary floating
-    // point and the wrap identity holds bit-for-bit rather than approximately. Verified: the full
-    // density function (base octaves + warp + billow) is now identical across a wrap to 0.0.
-    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 512.0 * 12.0 * 2.0 / 0.5;
+    // 6144 divides that too, so all three are satisfied by one number. Every lattice size in the shader
+    // is a power of two that divides CLOUD_LATTICE_MAX_BLOCKS, which is what makes the first line hold
+    // for every octave simultaneously and every multiply exact in binary floating point — the identity
+    // holds bit-for-bit rather than approximately. Wrapping an aperiodic field, or one whose period does
+    // not divide the wrap, teleports the whole sky the moment the anchor rolls over: the historical bug
+    // was clouds visibly changing shape while walking, and it came from a non-power-of-two octave scale
+    // landing the wrap mid-period.
+    //
+    // 786432 blocks is 256 times the deck's view limit, so the repeat is never visible in one frame. It
+    // is also 32 times the previous 24576-block wrap, and that is not incidental: the old number was
+    // chosen to satisfy a field whose coarsest octave was 24 blocks, which is a cloud the size of a
+    // house. Enlarging the wrap is what let the volumetric field's coarsest octave become a 512-block
+    // airmass lattice — the difference between a tiled heightmap and a sky with individual clouds in it.
+    // RtCloudShaderRegressionTest parses both sides of this contract and fails the build on a drift.
+    private static final double CLOUD_FIELD_PERIOD_BLOCKS = 3.0 * 512.0 * 512.0;
     // Vanilla's clouds drift at 0.03 blocks/tick; matched so the sky moves at a familiar speed.
     private static final double CLOUD_WIND_BLOCKS_PER_TICK = 0.03;
-    // Deck thickness at the slider's 100%. Both styles march a real slab now, so this is the depth the
-    // clouds actually have in the world: at full thickness a bank is tall enough to fly into, while the
-    // slider at 0 collapses the deck to the old flat plane.
-    // Real cumulus is as tall as it is wide, often taller — a bank whose base sits at cloud height can
-    // easily tower 100+ blocks. 40 was too shallow for the deck to ever read as heaped rather than
-    // layered, and since extinction is now normalised by the slab depth (CLOUD_REFERENCE_THICKNESS in
-    // clouds.slang) raising this adds VOLUME without making the clouds more opaque.
-    private static final float CLOUD_MAX_THICKNESS_BLOCKS = 110.0f;
+    // Deck thickness at the CLASSIC slider's 100%. This is now the classic deck's alone: the volumetric
+    // deck's depth comes from RtCloudGenesis and the slider has no effect on it at all (see below), so
+    // this is simply how tall vanilla's authored boxes get when the player asks for the tallest boxes.
+    // Real cumulus is as tall as it is wide, often taller, so 110 is a sane ceiling for a hand-scaled
+    // deck; the genesis model reaches 206.8 blocks of slab on its own, without a slider involved.
+    private static final float CLOUD_CLASSIC_MAX_THICKNESS_BLOCKS = 110.0f;
     // Classic boxes never get thinner than vanilla's own 4-block extrusion (CloudRenderer's
     // putVec3(12, 4, 12)): the thickness slider scales the box HEIGHT from that baseline up, per the
-    // classic rework's "vanilla shapes, slider-driven depth" decision. Volumetric keeps the full
-    // 0..110 range, including the flat-sheet collapse at zero.
+    // classic rework's "vanilla shapes, slider-driven depth" decision.
     private static final float CLOUD_CLASSIC_MIN_THICKNESS = 4.0f;
     // Vanilla offsets the deck half a cell minus a sliver in Z (CloudRenderer.render: cameraZ + 3.96),
     // so the camera sits asymmetrically inside the cell grid. Matched for shape-parity with vanilla;
@@ -1676,7 +1685,7 @@ public final class RtComposite {
                     Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false));
             SkyPush sky = skyPush(dimension, weather);
             // Two lanes, resolved together from the same weather + camera state the sky above used.
-            CloudPush clouds = cloudState(dimension, weather, camY);
+            CloudPush clouds = cloudState(dimension, weather, sky, camY);
             // Analytic held-item light: position + intensity lane and the item's RGB tint; w == 0
             // disables the shader term (toggle off, no luminous item, or no player).
             HandLightState hand = handLightState(terrain);
@@ -1758,7 +1767,11 @@ public final class RtComposite {
                     fogParams(),
                     // Biome/weather tint for the fog's scatter (WorldPush.fogTint): the game's
                     // own FOG_COLOR attribute, blended by the slider — see fogTint() above.
-                    fogTint()
+                    fogTint(),
+                    // Cloud genesis (WorldPush.cloudGenus): the volumetric deck's depth, tower scale,
+                    // turbulence and genus blend, resolved from the weather and the sun — see
+                    // RtCloudGenesis. Trailing lane; the generated WorldPushData appends it.
+                    clouds.genus()
             ).write(push);
             int flushBytes = Math.max(WORLD_PUSH_SIZE, READY_MASK_OFFSET + readyMaskBytes);
             if (cloudCellsAddress != 0L) {
@@ -2191,15 +2204,19 @@ public final class RtComposite {
      * cannot push a deck's parameters with a mismatched anchor or a mismatched weather fill.
      *
      * @param clouds x player coverage (the slider — the shader folds the weather in itself), y opacity,
-     *               z shadow strength, w camera-relative deck height
+     *               z shadow strength, w camera-relative deck CENTRE height
      * @param anchor xy wrapped sample anchor, z slab thickness, w view limit
      * @param color  xyz vanilla CLOUD_COLOR in linear space, w weather overcast fill 0..1
+     * @param genus  xyzw = {@link RtCloudGenesis}: deck depth, tower scale, turbulence, genus blend.
+     *               Volumetric only — classic reads none of it and keeps the thickness slider.
+     *               {@code anchor.z} is {@code genus.x * genus.y} whenever the deck is volumetric, an
+     *               identity the shader relies on and RtCloudShaderRegressionTest pins.
      */
-    private record CloudPush(Float4 clouds, Float4 anchor, Float4 color) {
+    private record CloudPush(Float4 clouds, Float4 anchor, Float4 color, Float4 genus) {
         /** No deck at all: a zeroed coverage/opacity pair short-circuits every cloud path in the shader. */
         static final CloudPush NONE =
                 new CloudPush(new Float4(0f, 0f, 0f, 0f), new Float4(0f, 0f, 0f, 0f),
-                        new Float4(1f, 1f, 1f, 0f));
+                        new Float4(1f, 1f, 1f, 0f), new Float4(0f, 1f, 0f, 0f));
     }
 
     /**
@@ -2417,9 +2434,10 @@ public final class RtComposite {
     }
 
     /**
-     * Resolve this frame's cloud deck into the two {@link WorldPushData} lanes {@code clouds.slang}
-     * reads: {@code clouds} (coverage, opacity, shadow strength, camera-relative deck height) and
-     * {@code cloudAnchor} (wind-scrolled sample anchor, slab thickness, view limit).
+     * Resolve this frame's cloud deck into the three {@link WorldPushData} lanes {@code clouds.slang}
+     * reads: {@code clouds} (coverage, opacity, shadow strength, camera-relative deck centre height),
+     * {@code cloudAnchor} (wind-scrolled sample anchor, slab thickness, view limit) and
+     * {@code cloudGenus} (the volumetric deck's genesis — see {@link RtCloudGenesis}).
      *
      * <p><b>Coverage and weather.</b> Rain pushes coverage toward fully overcast on top of the
      * configured clear-sky value, and thunder finishes closing it. That is the same rain/thunder pair
@@ -2429,6 +2447,20 @@ public final class RtComposite {
      * thing the sky shader always claimed but could never show: it hides the sun "behind the cloud
      * deck" during rain, and now there is an actual deck there to hide it.
      *
+     * <p><b>Depth, per style.</b> The two styles answer "how deep is the deck" from different places,
+     * deliberately. Classic takes it from the Cloud Thickness slider and floors it at vanilla's own
+     * 4-block box: its shape is authored data and the player is choosing a size. Volumetric takes it
+     * from {@link RtCloudGenesis} and ignores the slider entirely: its depth is a physical quantity the
+     * weather and the hour decide, and a slider that scaled it would be a slider that changed which
+     * genus of cloud the sky is producing. The slider stays in the UI for classic and is replaced by an
+     * explanatory dead row for volumetric (see {@code RtVideoOptions.cloudThicknessDisabledHint}).
+     *
+     * <p><b>Insolation.</b> The genesis model needs to know how hard the sun is heating the surface, so
+     * it reads the sun's height out of the very {@link SkyPush} this frame's sky is lit by rather than
+     * consulting a clock: normalised by {@link #sunNoonY()} it is 0 below the horizon and 1 at local
+     * noon, whatever the noon-tilt setting, and it follows the game's own celestial cycle instead of a
+     * hardcoded 24000 ticks — so a datapack with a long day gets a long convective cycle for free.
+     *
      * <p><b>The anchor.</b> Clouds drift with world time, so the sample offset grows without bound; the
      * camera can also stand 30M blocks out at the world border. Either alone would destroy float
      * precision in the shader's noise lookup (visible as the pattern coarsening into stripes and then
@@ -2436,10 +2468,14 @@ public final class RtComposite {
      * seamless precisely because {@code clouds.slang} wraps its cell hash to that same period, so the
      * wrapped anchor selects the identical pattern the unwrapped one would have.
      *
-     * <p><b>Height.</b> Pushed camera-relative, matching every other position in the push (the terrain
-     * rebase means absolute world coordinates are not meaningful in the shader).
+     * <p><b>Height.</b> The Cloud Height slider sets the deck's BASE, and the shader's slab is centred
+     * on the pushed height, so the half-thickness is added back here. Pushing the base directly would
+     * make the clouds appear to sink as the deck deepened (the slab would grow downward as well as
+     * upward) — the base is the edge the player actually sees and judges the height by, and it must stay
+     * put when the sky develops. Pushed camera-relative, matching every other position in the push (the
+     * terrain rebase means absolute world coordinates are not meaningful in the shader).
      */
-    private CloudPush cloudState(int dimension, WeatherState weather, double cameraY) {
+    private CloudPush cloudState(int dimension, WeatherState weather, SkyPush sky, double cameraY) {
         float coverage = CausticaConfig.Rt.Composite.CLOUD_COVERAGE.value();
         float opacity = CausticaConfig.Rt.Composite.CLOUD_OPACITY.value();
         float shadow = CausticaConfig.Rt.Composite.CLOUD_SHADOW_STRENGTH.value();
@@ -2469,28 +2505,45 @@ public final class RtComposite {
         // offset matches vanilla's own (cameraZ + 3.96 in CloudRenderer.render).
         double anchorX = camX + drift;
         double anchorZ = camZ + CLOUD_Z_OFFSET_BLOCKS;
-        // Player-controlled thickness. At 0 the shader takes its flat-plane path (see
-        // CLOUD_FLAT_EPSILON in clouds.slang), so the slider bottoming out is genuinely a flat deck
-        // rather than a degenerate zero-length march — that stays true for the volumetric style. The
-        // classic style floors at vanilla's own 4-block box height instead: its shapes come from the
-        // authored clouds.png cells, and the slider scales box HEIGHT from the vanilla baseline up.
-        float thickness = Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
-                * CLOUD_MAX_THICKNESS_BLOCKS;
-        if (CausticaConfig.Rt.Composite.cloudStyleIndex() != CLOUD_STYLE_VOLUMETRIC) {
-            thickness = Math.max(CLOUD_CLASSIC_MIN_THICKNESS, thickness);
+        // Deck depth. Classic: the player's slider, floored at vanilla's own 4-block box height — its
+        // shapes come from the authored clouds.png cells and the slider scales box HEIGHT from that
+        // baseline up, with 0 collapsing to the flat-plane path (CLOUD_FLAT_EPSILON in clouds.slang).
+        // Volumetric: the genesis model, and the slider is not consulted at all.
+        float thickness;
+        RtCloudGenesis genesis;
+        if (CausticaConfig.Rt.Composite.cloudStyleIndex() == CLOUD_STYLE_VOLUMETRIC) {
+            // sunDir.y is the sun's height above the horizon in the sky frame (sunNoonY() * cos of the
+            // probe's sun angle), so dividing by its own noon value normalises it to 0..1 regardless of
+            // the noon-tilt setting. Below the horizon the moon has taken over and it goes negative,
+            // which clamps to a night sky: no insolation, no convective development, a flat deck.
+            float noon = Math.max(sunNoonY(), 0.05f);
+            float insolation = Math.clamp(sky.sunDir().y() / noon, 0f, 1f);
+            genesis = RtCloudGenesis.resolve(CausticaConfig.Rt.Composite.CLOUD_GENUS.get(),
+                    weather.rain(), weather.thunder(), insolation);
+            // The slab is deckDepth * towerScale, so towers have room to grow above the layer a typical
+            // cloud occupies. Both go to the shader: the profile normalises against the slab while the
+            // crown heights grade against the deck, and clouds.slang relies on the two agreeing.
+            thickness = genesis.slabDepth();
+        } else {
+            genesis = RtCloudGenesis.fromDevelopment(RtCloudGenesis.GENUS_HUMILIS);
+            thickness = Math.max(CLOUD_CLASSIC_MIN_THICKNESS,
+                    Math.clamp(CausticaConfig.Rt.Composite.CLOUD_THICKNESS.value(), 0f, 1f)
+                            * CLOUD_CLASSIC_MAX_THICKNESS_BLOCKS);
         }
-        // The slider sets the deck's BASE, but the shader's slab is centred on the pushed height, so the
-        // half-thickness is added back here. Pushing the base directly would make the clouds appear to
-        // sink as the thickness slider is raised (the slab would grow downward as well as upward), which
-        // would make the two sliders fight each other — the base is the edge the player actually sees
-        // and judges the height by.
+        // Cloud Height sets the deck's BASE; the shader's slab is centred on the pushed height, so the
+        // half-depth is added back here. Pushing the base directly would make the deck grow DOWNWARD as
+        // well as upward — the classic thickness slider would move the clouds it is only meant to fatten,
+        // and a convecting sky would visibly sink as the afternoon built. The base is the edge the player
+        // actually sees and judges altitude by, so it is the thing that stays put.
         float deckCentre = height + thickness * 0.5f;
         return new CloudPush(
                 new Float4(Math.clamp(coverage, 0f, 1f), Math.clamp(opacity, 0f, 1f),
                         Math.clamp(shadow, 0f, 1f), (float) (deckCentre - cameraY)),
                 new Float4(wrapCloudAnchor(anchorX), wrapCloudAnchor(anchorZ),
                         thickness, cloudViewLimit(deckCentre - (float) cameraY)),
-                cloudColorState(fill));
+                cloudColorState(fill),
+                new Float4(genesis.deckDepth(), genesis.towerScale(), genesis.turbulence(),
+                        genesis.genus()));
     }
 
     /**

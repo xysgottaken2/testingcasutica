@@ -131,3 +131,65 @@ conflict in `cloudState` and `clouds.slang`.
 - **Volumetric style untouched** per the scope decision: same field, same shape, same constants. Its
   performance ideas from this plan (precomputed light march, cheaper diffuse bounces) are pending user
   sign-off before any change.
+
+---
+
+## Status (2026-09-02) — volumetric deck rewritten on arena/01a0648d-testingcasutica
+
+The 2026-08-07 entry ends with "volumetric style untouched per the scope decision". That decision is
+now reversed: the volumetric deck is rebuilt from scratch as a fully procedural cumulus model, and the
+two styles no longer share a shape source at all.
+
+**Scope decisions taken with the user before starting**
+
+- Classic *keeps* vanilla's authored `clouds.png` cell map and the Cloud Thickness slider, untouched.
+  Only the volumetric style becomes procedural.
+- Volumetric depth is automatic from the weather/sun (*genesis*), **plus** one advanced setting that can
+  pin the genus by hand.
+- Quality first: the full model ships with cheap optimisations (per-ray blue-noise jitter, zero-density
+  early-out, a short cached light march) but nothing is gated behind quality tiers yet.
+
+**What changed**
+
+- **100% procedural shape.** No texture of any kind feeds the volumetric field. `clouds.slang` gains a
+  hash → gradient-Perlin → cellular-Worley noise library (`cloudHashBits`, `cloudPerlin2/3`,
+  `cloudWorley2/3`, `cloudRand`) and composes Schneider's *Real-Time Volumetric Cloudscapes* mask
+  arithmetically: a low-frequency Perlin-Worley base eroded by a high-frequency Worley fBm, instead of
+  reading the two offline 3D textures Photon ships. Same erosion, computed per sample.
+- **Lattice, not scale.** Coverage is sampled on power-of-two block lattices (coarsest 512 blocks), so a
+  cloud is an airmass-sized feature rather than a tiled heightmap. Every lattice is a power of two that
+  divides 512 cells, which is what makes the anchor wrap exact (below).
+- **Genesis model** (`RtCloudGenesis`, new): `development = clamp(0.55*insolation + 0.60*rain +
+  0.40*thunder, 0, 1)` maps onto deck depth 26→88 blocks, tower scale 1.30→2.35, turbulence 0.30→1.00,
+  and publishes the blend itself as `WorldPush.cloudGenus.w`. The weather term carries full weight so a
+  night thunderstorm still towers — a purely diurnal model gets that conspicuously wrong. Insolation is
+  read from the same `SkyPush.sunDir` the sky is lit by, normalised by `sunNoonY()`, so a datapack with a
+  long day gets a long convective cycle for free.
+- **Thickness slider is classic-only.** Volumetric ignores it completely; the sub-screen swaps the row
+  for a greyed-out explanation (mirroring what it already does for Cloud Coverage in classic) and offers
+  **Cloud Development** (`auto` / `humilis` / `mediocris` / `congestus`) instead. Cloud Height still sets
+  the volumetric base.
+- **Lighting.** Beer-Lambert on the light path, a reduced-extinction octave
+  (`CLOUD_LIGHT_EXTINCTION_SCALE = 0.30`) as the multiple-scattering stand-in, and a powder/dark-edge
+  term that reads local *density* rather than the step's optical depth. Deliberately **not** the usual
+  `2·exp(-τ)·(1-exp(-2τ))` "beer's powder" bell: that function tends to **zero** at τ→0, and a sample on
+  the sunlit crown exits the slab on its first light-march sample, so it would paint a dark band ~20
+  blocks tall across the top of every deck.
+- **Anchor-wrap contract.** `CLOUD_FIELD_PERIOD_BLOCKS = 3·512·512 = 786432 = lcm(262144, 3072, 6144)`,
+  a whole number of periods in every space the deck is sampled in (volumetric lattice, classic cell map,
+  classic noise fallback) and 256× the view limit. The old 24576-block wrap was chosen for a field whose
+  coarsest octave was 24 blocks; enlarging it is what allowed the 512-block airmass lattice.
+- **Slab identity.** `cloudAnchor.z == cloudGenus.x * cloudGenus.y` by construction — the profile
+  normalises against the slab while crown heights grade against the deck, and a mismatch would clip every
+  tower at the top of its own slab. Pinned by both new test classes.
+
+**Tests**
+
+- `RtCloudGenesisTest` (new, 10 tests): ranges, monotonicity, storm-at-night reaching congestus, the
+  slab budget, override parsing.
+- `RtCloudShaderRegressionTest` (+5 tests): procedural-only density, genesis-driven depth, the trailing
+  `cloudGenus` lane and its Java mirror, anchor-wrap divisibility across all 10 lattices, and the
+  Beer-Lambert/density-powder split.
+
+The coordination note above is now moot: this branch supersedes PR #25's cloud work, since `cloudState`
+and `clouds.slang` are rewritten rather than patched.
