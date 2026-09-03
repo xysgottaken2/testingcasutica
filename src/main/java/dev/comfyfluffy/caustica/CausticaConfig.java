@@ -769,25 +769,53 @@ public final class CausticaConfig {
             /**
              * Cloud rendering style.
              *
-             * <p>{@code classic} reproduces vanilla's flat, blocky deck: coverage is quantised to the
-             * 12-block cell grid so the silhouette is genuinely square-edged, and the slab is shaded
-             * with vanilla's distinct top/side/bottom faces. {@code volumetric} extrudes the same
-             * coverage map into a ray-marched slab with self-shadowing and forward scattering — the
-             * look heavy shaderpacks produce, at a real GPU cost.
+             * <p>{@code classic} reproduces vanilla's flat, blocky deck: its shape is vanilla's own
+             * authored {@code clouds.png} cell map extruded into boxes, shaded with vanilla's distinct
+             * top/side/bottom faces and intersected analytically. {@code volumetric} ray-marches a
+             * fully procedural cumulus deck — gradient-noise shape, cellular-noise erosion,
+             * self-shadowing and forward scattering — the look heavy shaderpacks produce, at a real GPU
+             * cost.
              *
-             * <p>Both styles read one shared coverage field, so switching does not move the clouds and
-             * the cloud shadows stay identical between them.
+             * <p>The two no longer share a shape source, and that is the point: classic is vanilla's
+             * authored data, volumetric is generated per-frame from hashes with a 786432-block repeat, so
+             * every cloud in it is unique. Switching style therefore changes the sky. Both read the same
+             * coverage, opacity, height and weather lanes, so a storm still closes either one.
              */
             public static final StringSetting CLOUD_STYLE =
                     string("caustica.rt.cloudStyle", "composite.cloud-style", "classic",
                             Composite::sanitizeCloudStyle);
             /**
-             * Cloud thickness, 0..1, as a fraction of {@link #CLOUD_MAX_THICKNESS_BLOCKS}.
+             * Which genus of cumulus the volumetric deck builds, overriding the automatic model.
              *
-             * <p>Volumetric: 0 is a flat sheet (the deck collapses to a plane and takes the cheap
-             * non-marched path); 1 is a deep bank. Classic: the slider scales the HEIGHT of vanilla's
-             * authored cell boxes, floored at vanilla's own 4-block extrusion — classic clouds are
-             * always real boxes with lit tops and shaded sides, never thinner than the game draws them.
+             * <p>{@code auto} — the default — derives the genus from the weather and the hour, exactly
+             * the way {@code RtCloudGenesis} documents: shallow flat-based humilis at night and in the
+             * early morning, mediocris by midday, congestus towers under rain and thunderstorms. The
+             * three explicit values pin the sky to one genus regardless of weather, which is what you
+             * want for a screenshot, for reproducing a bug report, or for keeping the deck cheap on a
+             * machine that cannot afford a 200-block slab: {@code humilis} is the shallowest and by far
+             * the fastest thing this renderer draws in the volumetric style.
+             *
+             * <p>Has no effect on the classic deck, whose depth is {@link #CLOUD_THICKNESS}.
+             */
+            public static final StringSetting CLOUD_GENUS =
+                    string("caustica.rt.cloudGenus", "composite.cloud-genus", "auto",
+                            Composite::sanitizeCloudGenus);
+            /**
+             * Cloud thickness, 0..1, as a fraction of RtComposite's CLOUD_CLASSIC_MAX_THICKNESS_BLOCKS.
+             *
+             * <p>CLASSIC ONLY. The slider scales the HEIGHT of vanilla's authored cell boxes, floored at
+             * vanilla's own 4-block extrusion — classic clouds are always real boxes with lit tops and
+             * shaded sides, never thinner than the game draws them. At 0 the deck collapses to a plane
+             * and takes the cheap non-marched path.
+             *
+             * <p>The volumetric deck deliberately ignores it. A cloud's depth is not a preference, it is
+             * a consequence of what the atmosphere is doing, so {@code RtCloudGenesis} derives it from
+             * the weather and the sun and pushes it as {@code WorldPush.cloudGenus}; leaving the slider
+             * wired in would make one value control two unrelated things and put the deck's shape back
+             * in competition with its own lighting model. The clouds sub-screen swaps this row for a
+             * greyed-out explanation when the volumetric style is selected, the same way it already does
+             * for Cloud Coverage in the classic style. Cloud Height still sets the volumetric base, and
+             * {@link #CLOUD_GENUS} is the override for anyone who wants to choose the genus by hand.
              */
             public static final FloatSetting CLOUD_THICKNESS =
                     clampedFloat("caustica.rt.cloudThickness", "composite.cloud-thickness", 0.5f, 0.0f, 1.0f);
@@ -912,6 +940,25 @@ public final class CausticaConfig {
                 return switch (value.toLowerCase(java.util.Locale.ROOT).replace('-', '_')) {
                     case "volumetric", "volumetrics", "realistic", "3d" -> "volumetric";
                     default -> "classic";
+                };
+            }
+
+            /**
+             * Normalise the cloud-genus override. Unrecognised values fall back to {@code auto} rather
+             * than to a pinned genus: a hand-edited config with a typo must not silently freeze the sky
+             * at one shape, and "derive it" is the behaviour the rest of the renderer assumes. The
+             * accepted spellings mirror {@code RtCloudGenesis.pinnedDevelopment}, which is what maps the
+             * surviving value onto a development blend.
+             */
+            private static String sanitizeCloudGenus(String value) {
+                if (value == null) {
+                    return "auto";
+                }
+                return switch (value.toLowerCase(java.util.Locale.ROOT).replace('-', '_')) {
+                    case "humilis", "flat", "shallow" -> "humilis";
+                    case "mediocris", "medium" -> "mediocris";
+                    case "congestus", "towering", "tall", "storm" -> "congestus";
+                    default -> "auto";
                 };
             }
         }

@@ -100,8 +100,12 @@ public struct WorldPush {
     // side (RtComposite.cloudState), so the shader reads one resolved state rather than re-deriving the
     // storm ramp the sky darkening also depends on. The two slider lanes (shadow strength, opacity) are
     // pushed raw so a mid-frame change takes effect on the next frame like every other RT option.
-    public float4   clouds;           // x coverage 0..1, y opacity 0..1, z shadow strength 0..1, w deck height (camera-relative blocks)
-    public float4   cloudAnchor;      // xy wind-scrolled sample anchor (blocks, wrapped), z slab thickness, w view limit
+    public float4   clouds;           // x coverage 0..1, y opacity 0..1, z shadow strength 0..1, w deck CENTRE height (camera-relative blocks)
+    // xy wind-scrolled sample anchor (blocks, wrapped), z slab thickness, w view limit. The thickness
+    // lane means something different per style, and that is deliberate: the classic deck takes it from
+    // the Cloud Thickness slider, the volumetric deck takes it from the cloud-genesis model below, so
+    // the slider has no volumetric effect at all (see clouds.slang / RtCloudGenesis).
+    public float4   cloudAnchor;
     // Classic-style authored shape + colour. cloudColor.xyz is vanilla's own EnvironmentAttributes
     // CLOUD_COLOR in linear space — the value the game already resolves per dimension AND per weather,
     // so the deck greys in a storm with no hand-tuned ramp. cloudColor.w is the weather overcast fill
@@ -171,6 +175,22 @@ public struct WorldPush {
     // emitter scatter terms can never tint differently. Trailing lane after fogParams — the
     // generated WorldPushData appends it; RtFogShaderRegressionTest pins the pairing.
     public float4   fogTint;
+    // Cloud GENESIS for the volumetric deck (clouds.slang), resolved on the CPU by RtCloudGenesis from
+    // the weather and the diurnal convective cycle. The volumetric deck's depth is deliberately NOT a
+    // player setting: a cloud's thickness is a consequence of what kind of cloud it is, so the model
+    // decides it and the player only decides where the BASE sits (cloudHeight) and how much sky is
+    // covered (cloudCoverage). Classic ignores this lane entirely and keeps the thickness slider.
+    //   x = deck depth in blocks: base to the crown a TYPICAL cloud of this genus reaches;
+    //   y = tower scale >= 1: how much taller a dense, fully developed core grows than that, so
+    //       congestus cores punch towers up through an otherwise shallow deck. cloudAnchor.z is
+    //       x * y — the slab the march integrates — so the two can never disagree;
+    //   z = turbulence 0..1: erosion, warp and billow amplitude. Fair-weather humilis is smooth and
+    //       rounded; a storm's congestus is torn and cauliflower-covered;
+    //   w = genus blend 0 = cumulus humilis .. 1 = cumulus congestus, continuous so the deck grows
+    //       through the afternoon instead of snapping between shapes.
+    // Trailing lane after fogTint — the generated WorldPushData appends it, and
+    // RtCloudShaderRegressionTest pins the pairing plus the slab-depth identity x * y == cloudAnchor.z.
+    public float4   cloudGenus;
 };
 
 // worldPush.dimension: the sky/lighting model this frame renders with. The Overworld runs the full

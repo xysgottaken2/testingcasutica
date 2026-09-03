@@ -196,21 +196,34 @@ public final class RtVideoOptions {
     }
 
     /**
-     * The clouds sub-screen rows. {@code styleChanged} reopens the screen when the deck style flips,
-     * and the classic deck's coverage slider is left out entirely: coverage is baked into the flat
-     * texture in that style, so showing the row would offer a knob that changes nothing — the
-     * sub-screen replaces it with {@link #cloudCoverageDisabledHint()}'s greyed-out explanation.
-     * Volumetric reads the live coverage field, so the slider stays.
+     * The clouds sub-screen rows. {@code styleChanged} reopens the screen when the deck style flips.
+     *
+     * <p>Two rows are style-dependent, and each is dropped rather than shown-then-ignored, because a
+     * knob that changes nothing is worse than no knob — the sub-screen substitutes a greyed-out
+     * explanation in its place ({@link #cloudCoverageDisabledHint()},
+     * {@link #cloudThicknessDisabledHint()}):
+     * <ul>
+     *   <li>Cloud Coverage is the volumetric deck's: the classic deck's coverage is baked into vanilla's
+     *       authored cell map, so only the volumetric style gets the slider;</li>
+     *   <li>Cloud Thickness is the mirror image — it belongs to classic alone. The volumetric deck's
+     *       depth is derived from the weather and the sun by {@code RtCloudGenesis}, so it gets Cloud
+     *       Development ({@link #cloudGenus()}) in the slider's place instead.</li>
+     * </ul>
      */
     public static OptionInstance<?>[] cloudOptions(Runnable styleChanged) {
         List<OptionInstance<?>> options = new ArrayList<>();
         options.add(clouds());
         options.add(cloudStyle(styleChanged));
-        if (!"classic".equals(CausticaConfig.Rt.Composite.CLOUD_STYLE.get())) {
+        boolean volumetric = !"classic".equals(CausticaConfig.Rt.Composite.CLOUD_STYLE.get());
+        if (volumetric) {
             options.add(cloudCoverage());
         }
         options.add(cloudHeight());
-        options.add(cloudThickness());
+        if (volumetric) {
+            options.add(cloudGenus());
+        } else {
+            options.add(cloudThickness());
+        }
         options.add(cloudShadowStrength());
         options.add(cloudOpacity());
         return options.toArray(OptionInstance<?>[]::new);
@@ -864,14 +877,57 @@ public final class RtVideoOptions {
     }
 
     /**
-     * Cloud thickness, as a percentage of the maximum deck depth. Applies to both styles: 0% is a flat
-     * sheet, 100% is a deep bank you can fly into. Classic clouds become real boxes with lit tops and
-     * darker sides, the way vanilla's cloud geometry looks; volumetric clouds gain the depth their
-     * shading needs. Thicker clouds cost more to march.
+     * Cloud thickness, as a percentage of the maximum deck depth. CLASSIC ONLY: 0% is a flat sheet,
+     * 100% is a deep bank of vanilla's boxes with lit tops and darker sides. Thicker clouds cost more
+     * to march. The volumetric deck ignores this value — see {@link #cloudGenus()}.
      */
     private static OptionInstance<Integer> cloudThickness() {
         return percent("caustica.options.rt.cloudThickness",
                 CausticaConfig.Rt.Composite.CLOUD_THICKNESS);
+    }
+
+    private static final List<String> CLOUD_GENERA = List.of("auto", "humilis", "mediocris", "congestus");
+
+    /**
+     * Which genus of cumulus the volumetric deck builds. {@code auto} derives it from the weather and
+     * the hour (shallow humilis at night, mediocris by midday, congestus towers in a storm); the three
+     * named genera pin the sky to one shape, which is both a look choice and a performance one — humilis
+     * is the shallowest slab this renderer marches and by far the cheapest.
+     */
+    private static OptionInstance<String> cloudGenus() {
+        StringSetting setting = CausticaConfig.Rt.Composite.CLOUD_GENUS;
+        return new OptionInstance<>(
+                "caustica.options.rt.cloudGenus",
+                OptionInstance.cachedConstantTooltip(
+                        Component.translatable("caustica.options.rt.cloudGenus.tooltip")),
+                // CycleButton already prepends "caption: ", so this returns only the value's text — the
+                // same convention cloudStyle() follows.
+                (caption, value) -> Component.translatable("caustica.options.rt.cloudGenus." + value),
+                new OptionInstance.Enum<>(CLOUD_GENERA, Codec.STRING),
+                CLOUD_GENERA.contains(setting.get()) ? setting.get() : "auto",
+                value -> setting.set(value));
+    }
+
+    /**
+     * The thickness slider's volumetric-mode placeholder: the mirror image of
+     * {@link #cloudCoverageDisabledHint()}. The volumetric deck's depth is derived from the weather and
+     * the sun rather than set by the player, so the slider has nothing to act on and the sub-screen
+     * swaps it for this greyed-out row, which says so and points at the setting that does apply.
+     * Returns {@code null} when the classic style is selected — i.e. "thickness is usable, no
+     * placeholder row".
+     */
+    public static Button cloudThicknessDisabledHint() {
+        if ("classic".equals(CausticaConfig.Rt.Composite.CLOUD_STYLE.get())) {
+            return null;
+        }
+        Button button = Button.builder(
+                Component.translatable("caustica.options.rt.cloudThickness.volumetricAutomatic"),
+                clicked -> {})
+            .width(310).build();
+        button.active = false;
+        button.setTooltip(Tooltip.create(Component.translatable(
+                "caustica.options.rt.cloudThickness.volumetricAutomatic.tooltip")));
+        return button;
     }
 
     /**
