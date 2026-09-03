@@ -169,13 +169,18 @@ final class RtCloudShaderRegressionTest {
     @Test
     void cloudGenusIsTheTrailingWorldPushLane() throws IOException {
         String common = Files.readString(WORLD_COMMON);
+        String genusField = "public float4   cloudGenus;";
         int fogTint = common.indexOf("public float4   fogTint;");
-        int genus = common.indexOf("public float4   cloudGenus;");
-        int endOfStruct = common.indexOf("};", genus);
+        int genus = common.indexOf(genusField);
         assertTrue(fogTint >= 0, "world_common must still declare the fogTint lane");
+        assertTrue(genus >= 0, "world_common must declare the cloudGenus lane");
         assertTrue(genus > fogTint, "cloudGenus must be declared after fogTint");
-        assertTrue(endOfStruct > genus, "cloudGenus must be declared inside the WorldPush struct");
-        assertFalse(common.substring(genus, endOfStruct).contains("public "),
+        // The "nothing after it" scan starts at the END of the declaration. Starting at its first
+        // character finds the "public " of cloudGenus itself and reports the lane as never last.
+        int afterGenus = genus + genusField.length();
+        int endOfStruct = common.indexOf("};", afterGenus);
+        assertTrue(endOfStruct > afterGenus, "cloudGenus must be declared inside the WorldPush struct");
+        assertFalse(common.substring(afterGenus, endOfStruct).contains("public "),
                 "cloudGenus must be the LAST field of WorldPush — the generated serializer is reflected "
                         + "from field order, so anything after it shifts the whole tail of the ABI");
 
