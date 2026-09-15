@@ -2,10 +2,6 @@ import javax.inject.Inject
 import org.gradle.process.ExecOperations
 import dev.comfyfluffy.caustica.build.GenerateShaderRecords
 
-plugins {
-	id "maven-publish"
-}
-
 buildscript {
 	repositories {
 		maven {
@@ -18,6 +14,10 @@ buildscript {
 	dependencies {
 		classpath "net.fabricmc:fabric-loom:${loom_version}"
 	}
+}
+
+plugins {
+	id "maven-publish"
 }
 
 apply plugin: "net.fabricmc.fabric-loom"
