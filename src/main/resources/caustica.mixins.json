@@ -10,7 +10,6 @@
 		"DistantHorizonsLodBufferMixin",
 		"GameRendererMixin",
 		"GpuDeviceAccessor",
-		"GlxMixin",
 		"GuiRendererMixin",
 		"LevelRendererMixin",
 		"LevelExtractorMixin",

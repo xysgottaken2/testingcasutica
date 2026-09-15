@@ -1,5 +1,10 @@
 name: CI
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 on:
   push:
     branches:
@@ -307,11 +312,61 @@ jobs:
       - name: Build bundled jar
         env:
           DLSS_SDK: ${{ github.workspace }}/${{ env.DLSS_SDK_PATH }}
-        run: >
-          bash ./gradlew build
-          -PngxPlatforms=windows-x64,linux-x64
-          -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }}
-          -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }}
+        run: |
+          set -o pipefail
+          bash ./gradlew build \
+            -PngxPlatforms=windows-x64,linux-x64 \
+            -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }} \
+            -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }} \
+            --stacktrace --info 2>&1 | tee build.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            build.log
+            build/**/*.log
+            **/hs_err*.log
+          if-no-files-found: warn
+
+      - name: Comment PR with build log tail
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try { log = fs.readFileSync('build.log', 'utf8'); } catch(e) { log = 'no build.log found: ' + e; }
+            // Find relevant error sections
+            const lines = log.split('\n');
+            // Get lines containing FAILURE, Caused by, Could not, error, FAILED
+            const relevant = lines.filter(l => /FAILURE|Caused by|Could not|Could not find|error:|FAILED|Exception/.test(l)).slice(-200).join('\n');
+            const tail = log.slice(-20000);
+            const head = log.slice(0, 20000);
+            await core.summary
+              .addHeading('❌ Build failed for 26.3 - relevant errors')
+              .addCodeBlock(relevant, 'log')
+              .addHeading('Build log head (first 20k)')
+              .addCodeBlock(head, 'log')
+              .addHeading('Build log tail (last 20k)')
+              .addCodeBlock(tail, 'log')
+              .write();
+            // also try to comment if possible (may fail due to permissions)
+            try {
+              if (context.issue.number) {
+                const body = `❌ Build failed for 26.3 - relevant errors:\n\n\`\`\`\n${relevant}\n\`\`\`\n\n<details><summary>tail</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n</details>`;
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: body
+                });
+              }
+            } catch(e) {
+              console.log('Failed to comment: ' + e);
+            }
 
       - name: Upload bundled jar
         uses: actions/upload-artifact@v4
