@@ -307,11 +307,24 @@ jobs:
       - name: Build bundled jar
         env:
           DLSS_SDK: ${{ github.workspace }}/${{ env.DLSS_SDK_PATH }}
-        run: >
-          bash ./gradlew build
-          -PngxPlatforms=windows-x64,linux-x64
-          -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }}
-          -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }}
+        run: |
+          set -o pipefail
+          bash ./gradlew build \
+            -PngxPlatforms=windows-x64,linux-x64 \
+            -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }} \
+            -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }} \
+            --stacktrace --info 2>&1 | tee build.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            build.log
+            build/**/*.log
+            **/hs_err*.log
+          if-no-files-found: warn
 
       - name: Upload bundled jar
         uses: actions/upload-artifact@v4
