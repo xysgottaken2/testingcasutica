@@ -3,9 +3,24 @@ import org.gradle.process.ExecOperations
 import dev.comfyfluffy.caustica.build.GenerateShaderRecords
 
 plugins {
-	id "net.fabricmc.fabric-loom" version "${loom_version}"
 	id "maven-publish"
 }
+
+buildscript {
+	repositories {
+		maven {
+			name = "Fabric"
+			url = "https://maven.fabricmc.net/"
+		}
+		gradlePluginPortal()
+		mavenCentral()
+	}
+	dependencies {
+		classpath "net.fabricmc:fabric-loom:${loom_version}"
+	}
+}
+
+apply plugin: "net.fabricmc.fabric-loom"
 
 version = project.mod_version
 group = project.maven_group
