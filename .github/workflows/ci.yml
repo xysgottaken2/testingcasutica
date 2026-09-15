@@ -339,15 +339,24 @@ jobs:
             const fs = require('fs');
             let log = '';
             try { log = fs.readFileSync('build.log', 'utf8'); } catch(e) { log = 'no build.log found: ' + e; }
+            // Find relevant error sections
+            const lines = log.split('\n');
+            // Get lines containing FAILURE, Caused by, Could not, error, FAILED
+            const relevant = lines.filter(l => /FAILURE|Caused by|Could not|Could not find|error:|FAILED|Exception/.test(l)).slice(-200).join('\n');
             const tail = log.slice(-20000);
+            const head = log.slice(0, 20000);
             await core.summary
-              .addHeading('❌ Build failed for 26.3 - log tail')
+              .addHeading('❌ Build failed for 26.3 - relevant errors')
+              .addCodeBlock(relevant, 'log')
+              .addHeading('Build log head (first 20k)')
+              .addCodeBlock(head, 'log')
+              .addHeading('Build log tail (last 20k)')
               .addCodeBlock(tail, 'log')
               .write();
             // also try to comment if possible (may fail due to permissions)
             try {
               if (context.issue.number) {
-                const body = `❌ Build failed for 26.3 - log tail:\n\n\`\`\`\n${tail}\n\`\`\``;
+                const body = `❌ Build failed for 26.3 - relevant errors:\n\n\`\`\`\n${relevant}\n\`\`\`\n\n<details><summary>tail</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n</details>`;
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
