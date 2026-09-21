@@ -76,6 +76,7 @@ public final class RtParticleCapture implements VertexConsumer {
     // Unused VertexConsumer surface (buildLayer only calls addVertex/setUv/setColor/setLight).
     @Override public VertexConsumer setUv1(int u1, int v1) { return this; }
     @Override public VertexConsumer setUv2(int u2, int v2) { return this; }
+    @Override public VertexConsumer setUv3(float u, float v) { return this; }
     @Override public VertexConsumer setNormal(float nx, float ny, float nz) { return this; }
     @Override public VertexConsumer setLineWidth(float width) { return this; }
 }

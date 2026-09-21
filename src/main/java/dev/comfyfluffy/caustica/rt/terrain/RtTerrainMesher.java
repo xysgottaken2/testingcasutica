@@ -111,14 +111,14 @@ final class RtTerrainMesher {
     static CpuSection buildCpuSection(BlockAndTintGetter region, BlockStateModelSet modelSet,
                                               QuadEmitter blockEmitter, RandomSource blockRandom,
                                               QuadCapture capture,
-                                              FluidRenderer fluidRenderer, FluidCapture fluidCapture,
+                                              FluidStateModelSet fluidModels, FluidCapture fluidCapture,
                                               SectionMesh mesh, BlockPos.MutableBlockPos m,
                                               RtMaterialRegistry.Snapshot materials,
                                               int scx, int scy, int scz) {
         capture.materials = materials;
         fluidCapture.materials = materials;
         tessellate(region, modelSet, blockEmitter, blockRandom, capture,
-                fluidRenderer, fluidCapture, mesh, m, scx, scy, scz);
+                fluidModels, fluidCapture, mesh, m, scx, scy, scz);
         if (mesh.isEmpty()) {
             return new CpuSection(null, null);
         }
@@ -202,7 +202,7 @@ final class RtTerrainMesher {
 
     private static void tessellate(BlockAndTintGetter region, BlockStateModelSet modelSet,
                                    QuadEmitter blockEmitter, RandomSource blockRandom, QuadCapture capture,
-                                   FluidRenderer fluidRenderer, FluidCapture fluidCapture,
+                                   FluidStateModelSet fluidModels, FluidCapture fluidCapture,
                                    SectionMesh mesh, BlockPos.MutableBlockPos m, int scx, int scy, int scz) {
         int sox = scx << 4, soy = scy << 4, soz = scz << 4;
         capture.cur = mesh;
@@ -227,7 +227,7 @@ final class RtTerrainMesher {
                         // Water is the dielectric fluid; lava stays an opaque emitter. Tagged per-prim
                         // so the path tracer can branch (see emitQuad).
                         fluidCapture.water = fluid.is(FluidTags.WATER);
-                        RtFluidMesher.tesselate(region, m, fluidCapture, fluidRenderer.fluidModels, state, fluid);
+                        RtFluidMesher.tesselate(region, m, fluidCapture, fluidModels, state, fluid);
                     }
                     if (state.getRenderShape() != RenderShape.MODEL) {
                         // The end portal block has no render model in vanilla (the starfield is a
@@ -904,6 +904,7 @@ final class RtTerrainMesher {
         @Override public VertexConsumer setUv(float u, float v) { return this; }
         @Override public VertexConsumer setUv1(int u, int v) { return this; }
         @Override public VertexConsumer setUv2(int u, int v) { return this; }
+        @Override public VertexConsumer setUv3(float u, float v) { return this; }
         @Override public VertexConsumer setNormal(float x, float y, float z) { return this; }
         @Override public VertexConsumer setLineWidth(float width) { return this; }
     }

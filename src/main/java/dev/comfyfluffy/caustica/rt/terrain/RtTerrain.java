@@ -28,6 +28,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.fabricmc.fabric.api.client.renderer.v1.sprite.SpriteFinder;
+import net.fabricmc.fabric.api.client.renderer.v1.sprite.FabricTextureAtlas;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.color.block.BlockTintSource;
@@ -36,7 +37,6 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.client.renderer.block.BlockQuadOutput;
 import net.minecraft.client.renderer.block.BlockStateModelSet;
-import net.minecraft.client.renderer.block.FluidRenderer;
 import net.minecraft.client.renderer.block.FluidStateModelSet;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
@@ -986,7 +986,8 @@ public final class RtTerrain {
         Minecraft mc = Minecraft.getInstance();
         return new DispatchContext(ctx, level,
                 mc.getModelManager().getBlockStateModelSet(), mc.getModelManager().getFluidStateModelSet(),
-                mc.getBlockColors(), mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS).spriteFinder());
+                mc.getBlockColors(), ((FabricTextureAtlas) mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS))
+                        .spriteFinder());
     }
 
     /**
@@ -1189,10 +1190,9 @@ public final class RtTerrain {
                     }
                     WorkerTessState ws = WORKER_TESS.get(); // thread-confined; reset per task, arrays amortized
                     ws.reset(dispatch.blockColors(), dispatch.blockSpriteFinder());
-                    FluidRenderer fluidRenderer = new FluidRenderer(dispatch.fluidModelSet());
                     CpuSection cpu = buildCpuSection(region, dispatch.modelSet(), ws.blockEmitter, ws.blockRandom,
                             ws.capture,
-                            fluidRenderer, ws.fluidCapture, ws.mesh, ws.pos, materialSnapshot, sx, sy, sz);
+                            dispatch.fluidModelSet(), ws.fluidCapture, ws.mesh, ws.pos, materialSnapshot, sx, sy, sz);
                     if (!isTaskCurrent(task)) {
                         completeTask(task, null, null, null);
                         return;

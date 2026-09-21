@@ -2,11 +2,11 @@ package dev.comfyfluffy.caustica.rt.overlay;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.frontend.FrontendCommandEncoder;
 import dev.comfyfluffy.caustica.CausticaMod;
-import dev.comfyfluffy.caustica.mixin.CommandEncoderAccessor;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.KHRDynamicRendering;
 import org.lwjgl.vulkan.VK10;
@@ -133,7 +133,7 @@ public final class RtWorldOverlay {
     }
 
     private void record(RtContext ctx, List<RtOverlayFeature> ready, long targetView, int width, int height) {
-        var encoder = (VulkanCommandEncoder) ((CommandEncoderAccessor) RenderSystem.getDevice().createCommandEncoder()).caustica$getBackend();
+        var encoder = (VulkanCommandEncoder) ((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend();
         VkCommandBuffer cmd = encoder.allocateAndBeginTransientCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanCommandEncoder.memoryBarrier(cmd, stack); // host vertex writes visible

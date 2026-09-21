@@ -2,15 +2,15 @@ package dev.comfyfluffy.caustica.rt;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
-import com.mojang.blaze3d.vulkan.VulkanGpuTexture;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.frontend.FrontendCommandEncoder;
 import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import dev.comfyfluffy.caustica.client.CausticaJitter;
-import dev.comfyfluffy.caustica.mixin.CommandEncoderAccessor;
 import dev.comfyfluffy.caustica.rt.gen.RestirReservoirData;
 import dev.comfyfluffy.caustica.rt.gen.WorldPushConstantsData;
 import dev.comfyfluffy.caustica.rt.terrain.RtDistantHorizonsTerrain;
@@ -31,7 +31,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
-import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.item.BlockItem;
@@ -42,6 +41,8 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
+import org.joml.Vector4fc;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.KHRSynchronization2;
@@ -212,11 +213,11 @@ public final class RtComposite {
             Minecraft mc = Minecraft.getInstance();
             if (mc != null && mc.gameRenderer != null) {
                 float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
-                int argb = mc.gameRenderer.mainCamera().attributeProbe()
+                Vector3fc fog = mc.gameRenderer.mainCamera().attributeProbe()
                         .getValue(EnvironmentAttributes.FOG_COLOR, partial);
-                r = srgb8ToLinear(ARGB.red(argb));
-                g = srgb8ToLinear(ARGB.green(argb));
-                b = srgb8ToLinear(ARGB.blue(argb));
+                r = srgbToLinear(fog.x());
+                g = srgbToLinear(fog.y());
+                b = srgbToLinear(fog.z());
             }
         } catch (Throwable ignored) {
             // Probe unavailable (early boot / unsupported context): strength 0 keeps the neutral tint.
@@ -893,8 +894,8 @@ public final class RtComposite {
         if (ctx == null) {
             throw new IllegalStateException("RT context disappeared before graphics use completed");
         }
-        var encoder = (VulkanCommandEncoder) ((CommandEncoderAccessor) RenderSystem.getDevice()
-                .createCommandEncoder()).caustica$getBackend();
+        var encoder = (VulkanCommandEncoder) ((FrontendCommandEncoder) RenderSystem.getDevice()
+                .createCommandEncoder()).backend();
         ctx.gpuExecutor().endGraphicsUse(encoder, graphicsUse);
         pendingGraphicsUse = null;
     }
@@ -1505,7 +1506,7 @@ public final class RtComposite {
 
     private void recordFrame(RtContext ctx, RtPipeline active, GpuTexture nativeColor) {
         long dstImage = vkImage(nativeColor);
-        var encoder = (VulkanCommandEncoder) ((CommandEncoderAccessor) RenderSystem.getDevice().createCommandEncoder()).caustica$getBackend();
+        var encoder = (VulkanCommandEncoder) ((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend();
         RtGpuExecutor gpuExecutor = ctx.gpuExecutor();
         // Reserve the graphics-use value that guards this frame's reusable TLAS and entity resources.
         RtGpuExecutor.GraphicsUse graphicsUse = gpuExecutor.beginGraphicsUse(encoder);
@@ -2509,11 +2510,11 @@ public final class RtComposite {
             Minecraft mc = Minecraft.getInstance();
             if (mc != null && mc.gameRenderer != null) {
                 float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
-                int argb = mc.gameRenderer.mainCamera().attributeProbe()
+                Vector4fc cloud = mc.gameRenderer.mainCamera().attributeProbe()
                         .getValue(EnvironmentAttributes.CLOUD_COLOR, partial);
-                r = srgb8ToLinear(ARGB.red(argb));
-                g = srgb8ToLinear(ARGB.green(argb));
-                b = srgb8ToLinear(ARGB.blue(argb));
+                r = srgbToLinear(cloud.x());
+                g = srgbToLinear(cloud.y());
+                b = srgbToLinear(cloud.z());
             }
         } catch (Throwable ignored) {
             // Probe unavailable (early boot / unsupported context): white is the correct default.
@@ -2522,12 +2523,12 @@ public final class RtComposite {
     }
 
     /**
-     * Standard sRGB-to-linear decode for an 8-bit channel — the same curve the material compiler uses
+     * Standard sRGB-to-linear decode — the same curve the material compiler uses
      * (RtMaterialTextureData keeps it package-private, so the one duplicate lives here rather than
-     * widening that class's visibility for a single caller).
+     * widening that class's visibility for a single caller). The 26.3 environment color attributes
+     * carry sRGB-encoded 0..1 vectors (raw /255 of the same hex colors), so decoding still applies.
      */
-    private static float srgb8ToLinear(int value8) {
-        float v = (value8 & 0xFF) / 255.0f;
+    private static float srgbToLinear(float v) {
         return v <= 0.04045f ? v / 12.92f : (float) Math.pow((v + 0.055f) / 1.055f, 2.4f);
     }
 
@@ -3207,7 +3208,7 @@ public final class RtComposite {
             fgHudlessImage = ctx.createStorageImage(main.width, main.height, VK10.VK_FORMAT_R8G8B8A8_UNORM,
                     "FG hudless capture " + main.width + "x" + main.height);
         }
-        var encoder = (VulkanCommandEncoder) ((CommandEncoderAccessor) RenderSystem.getDevice().createCommandEncoder()).caustica$getBackend();
+        var encoder = (VulkanCommandEncoder) ((FrontendCommandEncoder) RenderSystem.getDevice().createCommandEncoder()).backend();
         VkCommandBuffer cmd = encoder.allocateAndBeginTransientCommandBuffer();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             // Make writes into `main` visible to the copy (the combined UI has not touched `main` yet this

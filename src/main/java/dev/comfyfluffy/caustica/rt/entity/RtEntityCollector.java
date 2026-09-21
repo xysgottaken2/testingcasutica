@@ -1,8 +1,7 @@
 package dev.comfyfluffy.caustica.rt.entity;
 
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.comfyfluffy.caustica.CausticaConfig;
@@ -18,6 +17,7 @@ import net.fabricmc.fabric.api.client.renderer.v1.mesh.MeshView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
+import net.fabricmc.fabric.api.client.renderer.v1.sprite.FabricTextureAtlas;
 import net.fabricmc.fabric.api.client.rendering.v1.SubmitRenderPhase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -46,7 +46,9 @@ import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.UvMapping;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.client.resources.model.geometry.ItemQuads;
 import net.minecraft.core.Direction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -213,8 +215,8 @@ public final class RtEntityCollector implements SubmitNodeCollector {
 
     @Override
     public <S> void submitModel(Model<? super S> model, S state, PoseStack poseStack, RenderType renderType,
-                                int lightCoords, int overlayCoords, int tintedColor, TextureAtlasSprite sprite,
-                                int outlineColor, ModelFeatureRenderer.CrumblingOverlay crumblingOverlay) {
+                                int lightCoords, int overlayCoords, int tintedColor, UvMapping uvMapping,
+                                int outlineColor) {
         if (capture == null) {
             return;
         }
@@ -253,6 +255,9 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         // Resolve this submission's texture to a bindless slot; the capture stamps it on every prim.
         // Block-entity models (chests/signs/beds) texture from an atlas SPRITE: use that atlas + remap
         // the ModelPart 0..1 UVs into the sprite's region. Mobs use a full texture (sprite == null).
+        // 26.3 passes the sprite's UV mapping instead of the sprite itself; the mapping still IS the
+        // atlas sprite for block-entity models (TextureAtlasSprite implements UvMapping).
+        TextureAtlasSprite sprite = uvMapping instanceof TextureAtlasSprite tas ? tas : null;
         try {
             capture.currentMaterialId = RtMaterialRegistry.INSTANCE.entityFallbackId(stochasticAlpha);
             if (sprite != null) {
@@ -410,6 +415,14 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         return this;
     }
 
+    @Override
+    public <S> void submitCrumblingOverlay(Model<? super S> model, S state, PoseStack poseStack,
+                                           RenderType renderType, int lightCoords, int overlayCoords,
+                                           int tintedColor, ModelFeatureRenderer.CrumblingOverlay crumblingOverlay) {
+        // Block-breaking stages over entity models are transient raster effects with no RT equivalent;
+        // the model itself is captured through the normal submitModel path. Mirrors submitShadow.
+    }
+
     /** Capture a list of baked quads (items / block models), each textured from its sprite's atlas. */
     private void addQuads(Matrix4f pose, List<BakedQuad> quads, int[] tintLayers) {
         int idxStart = capture.idx.size();
@@ -486,15 +499,7 @@ public final class RtEntityCollector implements SubmitNodeCollector {
     /** Whether a render type is alpha-blended (translucent) — its pipeline's color target has a blend
      *  function. Cutout/solid have none. Drives stochastic entity transparency in world.rahit. */
     private static boolean isTranslucent(RenderType renderType) {
-        if (renderType == null) {
-            return false;
-        }
-        // RenderSetup is final, so the accessor cast goes through Object (the interface is mixed in at
-        // runtime), mirroring RtEntityTextures#textureLocation.
-        Object setup = ((RenderTypeAccessor) renderType).caustica$state();
-        RenderPipeline pipeline = ((RenderSetupAccessor) setup).caustica$pipeline();
-        ColorTargetState cts = pipeline.getColorTargetState();
-        return cts != null && cts.blendFunction().isPresent();
+        return renderType != null && renderType.hasBlending();
     }
 
     /** Classify one vanilla submission for the entity BLAS geometry split. */
@@ -502,12 +507,11 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         if (renderType == null) {
             return RtAccel.ENTITY_BUCKET_ANY_HIT;
         }
-        Object setup = ((RenderTypeAccessor) renderType).caustica$state();
-        RenderPipeline pipeline = ((RenderSetupAccessor) setup).caustica$pipeline();
-        ColorTargetState cts = pipeline.getColorTargetState();
-        if (cts != null && cts.blendFunction().isPresent()) {
+        if (renderType.hasBlending()) {
             return RtAccel.ENTITY_BUCKET_ANY_HIT;
         }
+        Object setup = ((RenderTypeAccessor) renderType).caustica$state();
+        RenderPipeline pipeline = ((RenderSetupAccessor) setup).caustica$pipeline();
         // Vanilla's cutout pipelines carry the exact ALPHA_CUTOUT shader define. This is more robust
         // than matching pipeline names and also works for mod-provided RenderPipelines.
         if (pipeline.getShaderDefines().values().containsKey("ALPHA_CUTOUT")
@@ -841,6 +845,13 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         }
     }
 
+    @Override
+    public void submitTextBackground(PoseStack poseStack, float x0, float y0, float x1, float y1, int color,
+                                     Font.DisplayMode displayMode, int lightCoords) {
+        // 26.3 submits the text background quad separately; the RT text path bakes the background
+        // color into the glyph quads via prepareText, so there is nothing to capture here.
+    }
+
     /** Resolves each glyph's render type to a bindless slot and renders it into {@link #textVertexConsumer}. */
     private final class TextGlyphVisitor implements Font.GlyphVisitor {
         Matrix4f pose;
@@ -922,6 +933,11 @@ public final class RtEntityCollector implements SubmitNodeCollector {
             int light = (lightU & 0xFFFF) | (lightV << 16);
             capture.addVertex(vx, vy, vz, vColor, vu, vv, 0, light, 0f, 0f, 0f);
             return this;
+        }
+
+        @Override
+        public VertexConsumer setUv3(float u, float v) {
+            return this; // entity text has no third UV layer
         }
 
         @Override
@@ -1212,12 +1228,12 @@ public final class RtEntityCollector implements SubmitNodeCollector {
      *  default drops it the same way the block-model overload does. */
     @Override
     public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int lightCoords,
-                           int overlayCoords, int outlineColor, int[] tintLayers, List<BakedQuad> quads,
+                           int overlayCoords, int outlineColor, int[] tintLayers, ItemQuads quads,
                            MeshView mesh, ItemStackRenderState.FoilType foilType) {
         if (capture == null) {
             return;
         }
-        addQuads(poseStack.last().pose(), quads, tintLayers);
+        addQuads(poseStack.last().pose(), quads.all(), tintLayers);
         addMeshQuads(poseStack, mesh, tintLayers, true);
     }
 
@@ -1242,8 +1258,8 @@ public final class RtEntityCollector implements SubmitNodeCollector {
     private void addMeshQuad(Matrix4f pose, QuadView quad, int[] tintLayers, boolean itemMesh,
                              BlockAndTintGetter view, BlockPos pos, BlockState state,
                              float offsetX, float offsetY, float offsetZ) {
-        TextureAtlasSprite sprite = Minecraft.getInstance().getAtlasManager()
-                .getAtlasOrThrow(quad.atlas().getId()).spriteFinder().find(quad);
+        TextureAtlasSprite sprite = ((FabricTextureAtlas) Minecraft.getInstance().getAtlasManager()
+                .getAtlasOrThrow(quad.atlas().getId())).spriteFinder().find(quad);
         capture.currentTexSlot = RtEntityTextures.INSTANCE.slotForAtlas(quad.atlas().getTextureLocation());
         // Chunk-layer translucency denotes a block-derived dielectric; a blended item render type denotes
         // ordinary stochastic alpha when the quad did not come from such a layer.
@@ -1333,7 +1349,8 @@ public final class RtEntityCollector implements SubmitNodeCollector {
     }
 
     @Override
-    public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress) {
+    public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress,
+                                           boolean isBlockTranslucent) {
     }
 
     @Override
@@ -1345,11 +1362,11 @@ public final class RtEntityCollector implements SubmitNodeCollector {
     // quads on the block atlas. Capture them block-atlas textured (slot 0).
     @Override
     public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int lightCoords, int overlayCoords,
-                           int outlineColor, int[] tintLayers, List<BakedQuad> quads, ItemStackRenderState.FoilType foilType) {
+                           int outlineColor, int[] tintLayers, ItemQuads quads, ItemStackRenderState.FoilType foilType) {
         if (capture == null) {
             return;
         }
-        addQuads(poseStack.last().pose(), quads, tintLayers);
+        addQuads(poseStack.last().pose(), quads.all(), tintLayers);
     }
 
     @Override
@@ -1467,6 +1484,7 @@ public final class RtEntityCollector implements SubmitNodeCollector {
 
         @Override public VertexConsumer setUv1(int u, int v) { return this; }
         @Override public VertexConsumer setUv2(int u, int v) { return this; }
+        @Override public VertexConsumer setUv3(float u, float v) { return this; }
 
         @Override
         public VertexConsumer setNormal(float x, float y, float z) {
@@ -1593,6 +1611,7 @@ public final class RtEntityCollector implements SubmitNodeCollector {
         @Override public VertexConsumer setUv(float u, float v) { return this; }
         @Override public VertexConsumer setUv1(int u, int v) { return this; }
         @Override public VertexConsumer setUv2(int u, int v) { return this; }
+        @Override public VertexConsumer setUv3(float u, float v) { return this; }
         @Override public VertexConsumer setNormal(float x, float y, float z) { return this; }
         @Override public VertexConsumer setLineWidth(float width) { this.width = width; return this; }
     }
