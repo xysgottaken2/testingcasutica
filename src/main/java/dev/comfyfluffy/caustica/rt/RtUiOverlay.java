@@ -9,7 +9,6 @@ import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
-import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.FilterMode;
@@ -54,7 +53,6 @@ public final class RtUiOverlay {
                     Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_COLOR))
             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
             .build();
-    private static CompiledRenderPipeline compositeCompiled;
 
     private static TextureTarget overlay;
     private static boolean usedThisFrame;
@@ -223,17 +221,15 @@ public final class RtUiOverlay {
         }
         CommandEncoder enc = RenderSystem.getDevice().createCommandEncoder();
         try (RenderPass pass = enc.createRenderPass(() -> "UI overlay composite", main.getColorTextureView(), Optional.empty())) {
-            if (compositeCompiled == null) {
-                compositeCompiled = RenderSystem.getCompiledPipeline(COMPOSITE_PIPELINE);
-            }
-            pass.setPipeline(compositeCompiled);
+            // Re-resolved every frame (cheap cache lookup): vanilla rebuilds its pipeline caches on
+            // resource reload, so a pinned CompiledRenderPipeline could go stale after F3+T.
+            pass.setPipeline(RenderSystem.getCompiledPipeline(COMPOSITE_PIPELINE));
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("InSampler", overlay.getColorTextureView(),
                     RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(3, 1, 0, 0);
         } catch (Throwable t) {
             compositeFailed = true;
-            compositeCompiled = null;
             org.slf4j.LoggerFactory.getLogger("Caustica")
                     .error("UI overlay composite failed; disabling overlay", t);
         }
@@ -251,7 +247,6 @@ public final class RtUiOverlay {
     public static void destroy() {
         usedThisFrame = false;
         overlayClearedThisFrame = false;
-        compositeCompiled = null;
         if (overlay != null) {
             overlay.destroyBuffers();
             overlay = null;
