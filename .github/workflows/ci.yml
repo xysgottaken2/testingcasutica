@@ -227,6 +227,10 @@ jobs:
   package:
     name: Build bundled mod jar
     runs-on: ubuntu-latest
+    # TEMPORARY (arena port debugging): let the job push the trimmed
+    # failure log back to the branch so it can be read without log API.
+    permissions:
+      contents: write
     needs:
       - native-windows
       - native-linux
@@ -307,11 +311,29 @@ jobs:
       - name: Build bundled jar
         env:
           DLSS_SDK: ${{ github.workspace }}/${{ env.DLSS_SDK_PATH }}
-        run: >
-          bash ./gradlew build
-          -PngxPlatforms=windows-x64,linux-x64
-          -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }}
-          -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }}
+        run: |
+          set -o pipefail
+          bash ./gradlew build \
+            -PngxPlatforms=windows-x64,linux-x64 \
+            -PngxVendorConfig=${{ env.NGX_VENDOR_CONFIG }} \
+            -PngxShimConfig=${{ env.NGX_SHIM_CONFIG }} 2>&1 | tee build-ci.log
+
+      # TEMPORARY (arena port debugging): push the trimmed failure log to
+      # the branch. Remove before opening the PR.
+      - name: Report failure log to branch
+        if: failure()
+        run: |
+          {
+            echo "===== error context ====="
+            grep -n -iE "error:|FAILED|what went wrong|Exception|cannot find symbol|package .* does not exist" build-ci.log | head -n 80
+            echo "===== tail ====="
+            tail -n 200 build-ci.log
+          } > build-failure.log
+          git config user.name "arena-ci"
+          git config user.email "arena-ci@local"
+          git add build-failure.log
+          git commit -m "ci: failure log (temporary)" || true
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Upload bundled jar
         uses: actions/upload-artifact@v4
