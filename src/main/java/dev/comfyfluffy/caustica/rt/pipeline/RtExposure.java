@@ -1,6 +1,6 @@
 package dev.comfyfluffy.caustica.rt.pipeline;
 
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
 import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import dev.comfyfluffy.caustica.rt.RtContext;

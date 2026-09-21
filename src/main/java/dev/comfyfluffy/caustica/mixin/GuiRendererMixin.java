@@ -14,8 +14,8 @@ import org.spongepowered.asm.mixin.injection.At;
  * destination via {@code gameRenderer.mainRenderTarget()} once and uses it for every GUI draw range (and the
  * after-blur depth clear), so redirecting that single expression routes all GUI rendering into the overlay.
  * The overlay is composited back over the world after {@code GuiRenderer.render} returns (see {@code
- * GameRendererMixin}) — its {@code draw} TAIL did not fire on in-game HUD frames. Blur is unaffected —
- * {@code GameRenderer.processBlurEffect} operates on the real main target.
+ * GameRendererMixin}) — its {@code draw} TAIL did not fire on in-game HUD frames. Post chains are
+ * unaffected — they operate on the real main target.
  */
 @Mixin(GuiRenderer.class)
 public abstract class GuiRendererMixin {

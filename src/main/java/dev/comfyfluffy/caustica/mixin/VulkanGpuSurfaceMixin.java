@@ -1,11 +1,11 @@
 package dev.comfyfluffy.caustica.mixin;
 
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanGpuSurface;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSurface;
 import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import dev.comfyfluffy.caustica.rt.RtComposite;
@@ -101,7 +101,7 @@ public abstract class VulkanGpuSurfaceMixin {
 	@Unique
 	private int caustica$colorSpace = 0;
 
-	@Inject(method = "<init>(Lcom/mojang/blaze3d/vulkan/VulkanDevice;J)V", at = @At("TAIL"))
+	@Inject(method = "<init>(Lcom/mojang/renderpearl/backend/vulkan/VulkanDevice;J)V", at = @At("TAIL"))
 	private void caustica$logHdrCapabilities(VulkanDevice device, long windowHandle, CallbackInfo ci) {
 		try {
 			RtHdr.logSurfaceCapabilities(this.device.vkDevice().getPhysicalDevice(), this.surface, this.swapchainImageFormat);
@@ -334,7 +334,7 @@ public abstract class VulkanGpuSurfaceMixin {
 
 	@Unique
 	private static long caustica$vkImageView(GpuTextureView view) {
-		return view instanceof com.mojang.blaze3d.vulkan.VulkanGpuTextureView v ? v.vkImageView() : 0L;
+		return view instanceof com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView v ? v.vkImageView() : 0L;
 	}
 
 	/**
@@ -349,7 +349,7 @@ public abstract class VulkanGpuSurfaceMixin {
 		if (this.currentImageIndex < 0 || !RtFramePresenter.INSTANCE.isActive()) {
 			return;
 		}
-		long srcImage = textureView.texture() instanceof com.mojang.blaze3d.vulkan.VulkanGpuTexture t ? t.vkImage() : 0L;
+		long srcImage = textureView.texture() instanceof com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture t ? t.vkImage() : 0L;
 		long srcView = caustica$vkImageView(textureView);
 		if (srcImage == 0L) {
 			return;

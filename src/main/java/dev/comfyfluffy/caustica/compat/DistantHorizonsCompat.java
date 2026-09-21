@@ -1,6 +1,6 @@
 package dev.comfyfluffy.caustica.compat;
 
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;

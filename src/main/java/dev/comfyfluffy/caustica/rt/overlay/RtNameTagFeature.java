@@ -1,8 +1,8 @@
 package dev.comfyfluffy.caustica.rt.overlay;
 
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;

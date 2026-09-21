@@ -1,6 +1,6 @@
 package dev.comfyfluffy.caustica.xess;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 
 import dev.comfyfluffy.caustica.CausticaMod;
 

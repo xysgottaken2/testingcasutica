@@ -10,7 +10,7 @@ import java.nio.ByteBuffer;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 
-import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.level.BlockOutlineRenderState;
