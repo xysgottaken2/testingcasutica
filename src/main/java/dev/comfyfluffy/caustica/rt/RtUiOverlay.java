@@ -4,21 +4,21 @@ import java.util.Optional;
 
 import org.joml.Vector4f;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.BlendFunction;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
-import net.minecraft.client.renderer.RenderPipelines;
 
 /**
  * HDR Phase 2 (step A) — transparent final-UI overlay. World-space overlay features and the vanilla GUI/HUD
@@ -37,22 +37,24 @@ import net.minecraft.client.renderer.RenderPipelines;
  * screen; hence the {@link #enabled()} {@code isGameLoadFinished} guard, plus a defensive try/catch.
  *
  * <p>Depth: the overlay clears depth to 0.0 each frame, exactly as {@code GameRenderer.render} clears the
- * main depth right before the GUI. Blur ({@code GameRenderer.processBlurEffect}) still operates on the real
- * main target, so the world behind screens is blurred as usual and the overlay composites over the result.
+ * main depth right before the GUI. Post chains still operate on the real main target, so the world behind
+ * screens is processed as usual and the overlay composites over the result.
  */
 public final class RtUiOverlay {
     private static final Vector4f TRANSPARENT = new Vector4f(0.0f, 0.0f, 0.0f, 0.0f);
 
     /** Fullscreen blit that composites the premultiplied overlay over the destination (premultiplied-over). */
-    private static final RenderPipeline COMPOSITE_PIPELINE = RenderPipeline.builder(RenderPipelines.GLOBALS_SNIPPET)
+    private static final RenderPipeline COMPOSITE_PIPELINE = RenderPipeline.builder()
             .withLocation("pipeline/caustica_ui_overlay_composite")
             .withVertexShader("core/screenquad")
             .withFragmentShader("core/blit_screen")
+            .withBindGroupLayout(BindGroupLayouts.GLOBALS)
             .withBindGroupLayout(BindGroupLayouts.IN_SAMPLER)
             .withColorTargetState(new ColorTargetState(
                     Optional.of(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA), GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_COLOR))
             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
             .build();
+    private static CompiledRenderPipeline compositeCompiled;
 
     private static TextureTarget overlay;
     private static boolean usedThisFrame;
@@ -100,7 +102,7 @@ public final class RtUiOverlay {
         if (overlay == null || overlay.getColorTextureView() == null) {
             return 0L;
         }
-        if (overlay.getColorTextureView() instanceof com.mojang.blaze3d.vulkan.VulkanGpuTextureView v) {
+        if (overlay.getColorTextureView() instanceof com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView v) {
             return v.vkImageView();
         }
         return 0L;
@@ -112,7 +114,7 @@ public final class RtUiOverlay {
         if (overlay == null || overlay.getColorTexture() == null) {
             return 0L;
         }
-        if (overlay.getColorTexture() instanceof com.mojang.blaze3d.vulkan.VulkanGpuTexture t) {
+        if (overlay.getColorTexture() instanceof com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture t) {
             return t.vkImage();
         }
         return 0L;
@@ -149,7 +151,7 @@ public final class RtUiOverlay {
         TextureTarget target = ensureSized(main);
         if (!overlayClearedThisFrame) {
             CommandEncoder enc = RenderSystem.getDevice().createCommandEncoder();
-            if (target.useDepth && target.getDepthTexture() != null) {
+            if (target.hasDepth() && target.getDepthTexture() != null) {
                 enc.clearColorAndDepthTextures(target.getColorTexture(), TRANSPARENT, target.getDepthTexture(), 0.0);
             } else {
                 enc.clearColorTexture(target.getColorTexture(), TRANSPARENT);
@@ -161,21 +163,42 @@ public final class RtUiOverlay {
     }
 
     /**
-     * HDR mode: redirect a world-space overlay render (the held-item/hand, then the fire/underwater/
-     * view-blocking screen effects) into the overlay so it composites over the HDR world at paper white,
-     * via the render-system output overrides honoured by {@code PreparedRenderType}. Both share the overlay's
-     * color+depth (cleared once per frame), matching vanilla where hand and screen effects share the main
-     * target's depth without a clear between them. Must be paired with {@link #endOutputRedirect()}.
+     * 26.3 has no render-system output overrides; the held-item/hand and fire/underwater/view-blocking
+     * screen-effect passes are redirected into the overlay by {@code GameRendererMixin} argument redirects
+     * on their {@code createRenderPass} calls instead. Both share the overlay's color+depth (cleared once
+     * per frame), matching vanilla where hand and screen effects share the main target's depth without a
+     * clear between them.
+     *
+     * @return the overlay color view to render the pass into, or {@code original} when the overlay is off
      */
-    public static void beginOutputRedirect(RenderTarget main) {
+    public static com.mojang.renderpearl.api.textures.GpuTextureView redirectColor(
+            com.mojang.renderpearl.api.textures.GpuTextureView original) {
+        if (!enabled()) {
+            return original;
+        }
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (main == null) {
+            return original;
+        }
         TextureTarget target = prepare(main);
-        RenderSystem.outputColorTextureOverride = target.getColorTextureView();
-        RenderSystem.outputDepthTextureOverride = target.getDepthTextureView();
+        return target.getColorTextureView() != null ? target.getColorTextureView() : original;
     }
 
-    public static void endOutputRedirect() {
-        RenderSystem.outputColorTextureOverride = null;
-        RenderSystem.outputDepthTextureOverride = null;
+    /**
+     * Depth-view counterpart of {@link #redirectColor}: the overlay depth view, so the redirected pass
+     * depth-tests against the overlay's own (0.0-cleared) depth exactly as it would against main's.
+     */
+    public static com.mojang.renderpearl.api.textures.GpuTextureView redirectDepth(
+            com.mojang.renderpearl.api.textures.GpuTextureView original) {
+        if (!enabled()) {
+            return original;
+        }
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (main == null) {
+            return original;
+        }
+        TextureTarget target = prepare(main);
+        return target.getDepthTextureView() != null ? target.getDepthTextureView() : original;
     }
 
     /**
@@ -200,13 +223,17 @@ public final class RtUiOverlay {
         }
         CommandEncoder enc = RenderSystem.getDevice().createCommandEncoder();
         try (RenderPass pass = enc.createRenderPass(() -> "UI overlay composite", main.getColorTextureView(), Optional.empty())) {
-            pass.setPipeline(COMPOSITE_PIPELINE);
+            if (compositeCompiled == null) {
+                compositeCompiled = RenderSystem.getCompiledPipeline(COMPOSITE_PIPELINE);
+            }
+            pass.setPipeline(compositeCompiled);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture("InSampler", overlay.getColorTextureView(),
+            pass.setUniform("InSampler", overlay.getColorTextureView(),
                     RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(3, 1, 0, 0);
         } catch (Throwable t) {
             compositeFailed = true;
+            compositeCompiled = null;
             org.slf4j.LoggerFactory.getLogger("Caustica")
                     .error("UI overlay composite failed; disabling overlay", t);
         }
@@ -214,7 +241,7 @@ public final class RtUiOverlay {
 
     private static TextureTarget ensureSized(RenderTarget main) {
         if (overlay == null) {
-            overlay = new TextureTarget("caustica UI overlay", main.width, main.height, true, GpuFormat.RGBA8_UNORM);
+            overlay = new TextureTarget("caustica UI overlay", main.width, main.height, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT);
         } else if (overlay.width != main.width || overlay.height != main.height) {
             overlay.resize(main.width, main.height);
         }
@@ -222,10 +249,9 @@ public final class RtUiOverlay {
     }
 
     public static void destroy() {
-        RenderSystem.outputColorTextureOverride = null;
-        RenderSystem.outputDepthTextureOverride = null;
         usedThisFrame = false;
         overlayClearedThisFrame = false;
+        compositeCompiled = null;
         if (overlay != null) {
             overlay.destroyBuffers();
             overlay = null;
