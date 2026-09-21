@@ -1,10 +1,10 @@
 package dev.comfyfluffy.caustica.rt;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
-import com.mojang.blaze3d.vulkan.VulkanUtils;
-import com.mojang.blaze3d.vulkan.init.VulkanFeature;
-import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanUtils;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct;
 import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import org.lwjgl.PointerBuffer;
@@ -36,7 +36,6 @@ import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
 import org.lwjgl.vulkan.VkCheckpointDataNV;
 import org.lwjgl.vulkan.VkQueue;
-import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -49,7 +48,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -181,31 +179,22 @@ public final class VulkanDiagnostics {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    public static void addDeviceFaultFeature(Args args) {
+    public static void addDeviceFaultFeature(Set<VulkanFeature> features) {
         if (!deviceFaultRequested && !nvDiagnosticsRequested) {
             return;
         }
-        Set<VulkanFeature> features = new HashSet<>((Set<VulkanFeature>) args.get(2));
         if (deviceFaultRequested) {
-            VulkanPNextStruct faultStruct = new VulkanPNextStruct(
-                    EXTDeviceFault.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT,
-                    VkPhysicalDeviceFaultFeaturesEXT.SIZEOF);
-            features.add(new VulkanFeature(faultStruct, "deviceFault",
-                    VkPhysicalDeviceFaultFeaturesEXT.DEVICEFAULT));
+            VulkanPNextStruct faultStruct = new VulkanPNextStruct(VkPhysicalDeviceFaultFeaturesEXT.class);
+            features.add(new VulkanFeature(faultStruct, "deviceFault"));
             if (deviceFaultVendorBinaryRequested) {
-                features.add(new VulkanFeature(faultStruct, "deviceFaultVendorBinary",
-                        VkPhysicalDeviceFaultFeaturesEXT.DEVICEFAULTVENDORBINARY));
+                features.add(new VulkanFeature(faultStruct, "deviceFaultVendorBinary"));
             }
         }
         if (nvDiagnosticsRequested) {
-            VulkanPNextStruct diagnosticsStruct = new VulkanPNextStruct(
-                    NVDeviceDiagnosticsConfig.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DIAGNOSTICS_CONFIG_FEATURES_NV,
-                    VkPhysicalDeviceDiagnosticsConfigFeaturesNV.SIZEOF);
-            features.add(new VulkanFeature(diagnosticsStruct, "diagnosticsConfig",
-                    VkPhysicalDeviceDiagnosticsConfigFeaturesNV.DIAGNOSTICSCONFIG));
+            VulkanPNextStruct diagnosticsStruct =
+                    new VulkanPNextStruct(VkPhysicalDeviceDiagnosticsConfigFeaturesNV.class);
+            features.add(new VulkanFeature(diagnosticsStruct, "diagnosticsConfig"));
         }
-        args.set(2, features);
     }
 
     /** Prepend NVIDIA's device-create diagnostics flags while vanilla's creation stack is alive. */

@@ -1,9 +1,9 @@
 package dev.comfyfluffy.caustica.rt;
 
-import com.mojang.blaze3d.vulkan.VulkanBackend;
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
-import com.mojang.blaze3d.vulkan.init.VulkanFeature;
-import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct;
+import com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature;
+import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct;
 import dev.comfyfluffy.caustica.CausticaConfig;
 import dev.comfyfluffy.caustica.CausticaMod;
 import dev.comfyfluffy.caustica.xess.XessRuntime;
@@ -33,31 +33,22 @@ import org.lwjgl.vulkan.VkPhysicalDeviceOpacityMicromapFeaturesEXT;
 import org.lwjgl.vulkan.VkPhysicalDeviceOpacityMicromapPropertiesEXT;
 import org.lwjgl.vulkan.VkPhysicalDevicePresentIdFeaturesKHR;
 import org.lwjgl.vulkan.VkQueueFamilyProperties;
-import org.spongepowered.asm.mixin.injection.invoke.arg.Args;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
 import static org.lwjgl.vulkan.KHRAccelerationStructure.VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
-import static org.lwjgl.vulkan.KHRAccelerationStructure.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 import static org.lwjgl.vulkan.KHRDeferredHostOperations.VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRRayTracingPipeline.VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME;
-import static org.lwjgl.vulkan.KHRRayTracingPipeline.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
 import static org.lwjgl.vulkan.KHRRayTracingPositionFetch.VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME;
-import static org.lwjgl.vulkan.KHRRayTracingPositionFetch.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR;
 import static org.lwjgl.vulkan.KHRRayQuery.VK_KHR_RAY_QUERY_EXTENSION_NAME;
-import static org.lwjgl.vulkan.KHRRayQuery.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 import static org.lwjgl.vulkan.EXTOpacityMicromap.VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME;
-import static org.lwjgl.vulkan.EXTOpacityMicromap.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
-import static org.lwjgl.vulkan.EXTOpacityMicromap.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_PROPERTIES_EXT;
 import static org.lwjgl.vulkan.NVLowLatency2.VK_NV_LOW_LATENCY_2_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME;
-import static org.lwjgl.vulkan.KHRPresentId.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
 import static org.lwjgl.vulkan.EXTRayTracingInvocationReorder.VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME;
-import static org.lwjgl.vulkan.EXTRayTracingInvocationReorder.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT;
 
 /**
  * RT device bring-up. Enables the hardware ray-tracing device extensions and their
@@ -140,71 +131,53 @@ public final class RtDeviceBringup {
     private static volatile int computeQueueIndex = -1;
     private static boolean loggedUnavailable;
 
-    private static final VulkanPNextStruct AS_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
-            VkPhysicalDeviceAccelerationStructureFeaturesKHR.SIZEOF);
-    private static final VulkanPNextStruct RT_PIPELINE_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
-            VkPhysicalDeviceRayTracingPipelineFeaturesKHR.SIZEOF);
-    private static final VulkanPNextStruct POSITION_FETCH_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR,
-            VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR.SIZEOF);
-    private static final VulkanPNextStruct RAY_QUERY_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
-            VkPhysicalDeviceRayQueryFeaturesKHR.SIZEOF);
-    private static final VulkanPNextStruct SER_EXT_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT,
-            VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT.SIZEOF);
-    private static final VulkanPNextStruct OMM_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT,
-            VkPhysicalDeviceOpacityMicromapFeaturesEXT.SIZEOF);
-    private static final VulkanPNextStruct PRESENT_ID_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR,
-            VkPhysicalDevicePresentIdFeaturesKHR.SIZEOF);
-    private static final VulkanPNextStruct VK13_FEATURES_STRUCT = new VulkanPNextStruct(
-            VK13.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            VkPhysicalDeviceVulkan13Features.SIZEOF);
-    private static final VulkanPNextStruct MUTABLE_DESCRIPTOR_TYPE_FEATURES_STRUCT = new VulkanPNextStruct(
-            EXTMutableDescriptorType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT,
-            VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT.SIZEOF);
+    private static final VulkanPNextStruct AS_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceAccelerationStructureFeaturesKHR.class);
+    private static final VulkanPNextStruct RT_PIPELINE_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceRayTracingPipelineFeaturesKHR.class);
+    private static final VulkanPNextStruct POSITION_FETCH_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR.class);
+    private static final VulkanPNextStruct RAY_QUERY_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceRayQueryFeaturesKHR.class);
+    private static final VulkanPNextStruct SER_EXT_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT.class);
+    private static final VulkanPNextStruct OMM_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceOpacityMicromapFeaturesEXT.class);
+    private static final VulkanPNextStruct PRESENT_ID_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDevicePresentIdFeaturesKHR.class);
+    private static final VulkanPNextStruct VK13_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceVulkan13Features.class);
+    private static final VulkanPNextStruct MUTABLE_DESCRIPTOR_TYPE_FEATURES_STRUCT =
+            new VulkanPNextStruct(VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT.class);
 
     private static final VulkanFeature BUFFER_DEVICE_ADDRESS_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "bufferDeviceAddress",
-            VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "bufferDeviceAddress");
     private static final VulkanFeature RUNTIME_DESCRIPTOR_ARRAY_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "runtimeDescriptorArray",
-            VkPhysicalDeviceVulkan12Features.RUNTIMEDESCRIPTORARRAY);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "runtimeDescriptorArray");
     private static final VulkanFeature SAMPLED_IMAGE_NON_UNIFORM_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "shaderSampledImageArrayNonUniformIndexing",
-            VkPhysicalDeviceVulkan12Features.SHADERSAMPLEDIMAGEARRAYNONUNIFORMINDEXING);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "shaderSampledImageArrayNonUniformIndexing");
     private static final VulkanFeature DESCRIPTOR_PARTIALLY_BOUND_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "descriptorBindingPartiallyBound",
-            VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGPARTIALLYBOUND);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "descriptorBindingPartiallyBound");
     private static final VulkanFeature SAMPLED_IMAGE_UPDATE_AFTER_BIND_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "descriptorBindingSampledImageUpdateAfterBind",
-            VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGSAMPLEDIMAGEUPDATEAFTERBIND);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "descriptorBindingSampledImageUpdateAfterBind");
     private static final VulkanFeature SHADER_INT64_FEATURE = new VulkanFeature(
-            VulkanBackend.VK10_FEATURES_STRUCT, "shaderInt64", VkPhysicalDeviceFeatures.SHADERINT64);
+            VulkanFeatureSets.VK10_FEATURES_STRUCT, "shaderInt64");
     private static final VulkanFeature ACCELERATION_STRUCTURE_FEATURE = new VulkanFeature(
-            AS_FEATURES_STRUCT, "accelerationStructure",
-            VkPhysicalDeviceAccelerationStructureFeaturesKHR.ACCELERATIONSTRUCTURE);
+            AS_FEATURES_STRUCT, "accelerationStructure");
     private static final VulkanFeature RAY_TRACING_PIPELINE_FEATURE = new VulkanFeature(
-            RT_PIPELINE_FEATURES_STRUCT, "rayTracingPipeline",
-            VkPhysicalDeviceRayTracingPipelineFeaturesKHR.RAYTRACINGPIPELINE);
+            RT_PIPELINE_FEATURES_STRUCT, "rayTracingPipeline");
     private static final VulkanFeature POSITION_FETCH_FEATURE = new VulkanFeature(
-            POSITION_FETCH_FEATURES_STRUCT, "rayTracingPositionFetch",
-            VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR.RAYTRACINGPOSITIONFETCH);
+            POSITION_FETCH_FEATURES_STRUCT, "rayTracingPositionFetch");
     private static final VulkanFeature RAY_QUERY_FEATURE = new VulkanFeature(
-            RAY_QUERY_FEATURES_STRUCT, "rayQuery", VkPhysicalDeviceRayQueryFeaturesKHR.RAYQUERY);
+            RAY_QUERY_FEATURES_STRUCT, "rayQuery");
     private static final VulkanFeature SER_EXT_FEATURE = new VulkanFeature(
-            SER_EXT_FEATURES_STRUCT, "rayTracingInvocationReorder(EXT)",
-            VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT.RAYTRACINGINVOCATIONREORDER);
+            SER_EXT_FEATURES_STRUCT, "rayTracingInvocationReorder");
     private static final VulkanFeature OMM_FEATURE = new VulkanFeature(
-            OMM_FEATURES_STRUCT, "micromap", VkPhysicalDeviceOpacityMicromapFeaturesEXT.MICROMAP);
+            OMM_FEATURES_STRUCT, "micromap");
     private static final VulkanFeature PRESENT_ID_FEATURE = new VulkanFeature(
-            PRESENT_ID_FEATURES_STRUCT, "presentId", VkPhysicalDevicePresentIdFeaturesKHR.PRESENTID);
+            PRESENT_ID_FEATURES_STRUCT, "presentId");
     private static final VulkanFeature WIDE_LINES_FEATURE = new VulkanFeature(
-            VulkanBackend.VK10_FEATURES_STRUCT, "wideLines", VkPhysicalDeviceFeatures.WIDELINES);
+            VulkanFeatureSets.VK10_FEATURES_STRUCT, "wideLines");
     // Intel XeSS device features, per the XeSS-SR developer guide (v2.1.1 "Requirements"):
     // REQUIRED — shaderStorageImageWriteWithoutFormat (core VK10) + mutableDescriptorType
     // (VK_EXT_mutable_descriptor_type). Without both, xessVKCreateContext cannot run, so they gate
@@ -214,17 +187,13 @@ public final class RtDeviceBringup {
     // RTX 2060 (no XMX, DP4a is its only path) these two ARE the performance, so they are enabled
     // whenever the device supports them alongside the required pair.
     private static final VulkanFeature SHADER_STORAGE_IMAGE_WRITE_WITHOUT_FORMAT_FEATURE = new VulkanFeature(
-            VulkanBackend.VK10_FEATURES_STRUCT, "shaderStorageImageWriteWithoutFormat",
-            VkPhysicalDeviceFeatures.SHADERSTORAGEIMAGEWRITEWITHOUTFORMAT);
+            VulkanFeatureSets.VK10_FEATURES_STRUCT, "shaderStorageImageWriteWithoutFormat");
     private static final VulkanFeature MUTABLE_DESCRIPTOR_TYPE_FEATURE = new VulkanFeature(
-            MUTABLE_DESCRIPTOR_TYPE_FEATURES_STRUCT, "mutableDescriptorType",
-            VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT.MUTABLEDESCRIPTORTYPE);
+            MUTABLE_DESCRIPTOR_TYPE_FEATURES_STRUCT, "mutableDescriptorType");
     private static final VulkanFeature SHADER_INT8_FEATURE = new VulkanFeature(
-            VulkanBackend.VK12_FEATURES_STRUCT, "shaderInt8",
-            VkPhysicalDeviceVulkan12Features.SHADERINT8);
+            VulkanFeatureSets.VK12_FEATURES_STRUCT, "shaderInt8");
     private static final VulkanFeature SHADER_INTEGER_DOT_PRODUCT_FEATURE = new VulkanFeature(
-            VK13_FEATURES_STRUCT, "shaderIntegerDotProduct",
-            VkPhysicalDeviceVulkan13Features.SHADERINTEGERDOTPRODUCT);
+            VK13_FEATURES_STRUCT, "shaderIntegerDotProduct");
 
     private static final List<VulkanFeature> REQUIRED_RT_FEATURES = List.of(
             BUFFER_DEVICE_ADDRESS_FEATURE,
@@ -574,7 +543,7 @@ public final class RtDeviceBringup {
     }
 
     /** Standalone path: add RT extension names to the (mutable) arg0 list. */
-    public static void addExtensions(List<String> augmentedExtensions, VulkanPhysicalDevice physicalDevice) {
+    public static void addExtensions(Collection<String> augmentedExtensions, VulkanPhysicalDevice physicalDevice) {
         captureDeviceIdentity(physicalDevice);
         if (!enabledByProperty() || firstUnsupportedExtension(physicalDevice) != null) {
             return;
@@ -599,9 +568,8 @@ public final class RtDeviceBringup {
         }
     }
 
-    /** Add the RT VulkanFeatures to arg2 after the matching extension names have been requested. */
-    @SuppressWarnings("unchecked")
-    public static void addFeatures(Args args, VulkanPhysicalDevice physicalDevice) {
+    /** Add the RT VulkanFeatures to the feature set after the matching extension names have been requested. */
+    public static void addFeatures(Set<VulkanFeature> features, VulkanPhysicalDevice physicalDevice) {
         if (!enabledByProperty()) {
             return;
         }
@@ -633,7 +601,6 @@ public final class RtDeviceBringup {
             return;
         }
 
-        Set<VulkanFeature> features = new HashSet<>((Set<VulkanFeature>) args.get(2));
         // Core features merge into vanilla's VK10/VK12 structs; extension features create their matching
         // pNext structs. Every boolean here was verified by queryFeatureSupport above.
         features.addAll(REQUIRED_RT_FEATURES);
@@ -699,8 +666,6 @@ public final class RtDeviceBringup {
                 features.add(SHADER_INTEGER_DOT_PRODUCT_FEATURE);
             }
         }
-
-        args.set(2, features);
 
         rtRequested = true;
         serBackend = support.serBackend;
